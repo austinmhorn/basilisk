@@ -1,6 +1,6 @@
-#define main basilisk_v25_main
+#define BASILISK_SIM_V25_NO_MAIN
 #include "main_v25.cpp"
-#undef main
+#undef BASILISK_SIM_V25_NO_MAIN
 
 #include <sstream>
 
@@ -35,10 +35,8 @@ std::unordered_set<CaveId> reachableSafeCaves(const PlayerRoundSnapshot& s) {
     std::queue<CaveId> q;
     reached.insert(s.currentCave);
     q.push(s.currentCave);
-
     while (!q.empty()) {
-        const CaveId cur = q.front();
-        q.pop();
+        const CaveId cur = q.front(); q.pop();
         const auto* view = v25View(s, cur);
         if (!view) continue;
         for (const auto& tunnel : view->exits) {
@@ -60,11 +58,7 @@ std::optional<CaveId> nextSweepStep(const PlayerRoundSnapshot& s,
                                     SweepMemory& sweep,
                                     V26Stats& v26) {
     if (!sweep.initialized) beginSweep(s, sweep);
-
-    if (sweep.pendingTargets.erase(s.currentCave) > 0) {
-        ++v26.sweepTargetsReached;
-    }
-
+    if (sweep.pendingTargets.erase(s.currentCave) > 0) ++v26.sweepTargetsReached;
     if (sweep.pendingTargets.empty()) {
         ++v26.sweepCyclesCompleted;
         beginSweep(s, sweep);
@@ -79,18 +73,15 @@ std::optional<CaveId> nextSweepStep(const PlayerRoundSnapshot& s,
 
     std::optional<CaveId> target;
     while (!q.empty() && !target.has_value()) {
-        const CaveId cur = q.front();
-        q.pop();
+        const CaveId cur = q.front(); q.pop();
         const auto* view = v25View(s, cur);
         if (!view) continue;
-
         std::vector<CaveId> nextCaves;
         for (const auto& tunnel : view->exits) {
             if (!safeKnownConnection(s, cur, tunnel)) continue;
             nextCaves.push_back(*tunnel.destination);
         }
         std::sort(nextCaves.begin(), nextCaves.end());
-
         for (const CaveId next : nextCaves) {
             if (!seen.insert(next).second) continue;
             parent[next] = cur;
@@ -103,17 +94,13 @@ std::optional<CaveId> nextSweepStep(const PlayerRoundSnapshot& s,
     }
 
     if (!target.has_value()) {
-        // Discovery/Pit knowledge can change while a sweep is in progress.
-        // Rebuild the target set once before giving up.
         beginSweep(s, sweep);
         if (sweep.pendingTargets.empty()) return std::nullopt;
         return nextSweepStep(s, sweep, v26);
     }
 
     CaveId step = *target;
-    while (parent.contains(step) && parent.at(step) != s.currentCave) {
-        step = parent.at(step);
-    }
+    while (parent.contains(step) && parent.at(step) != s.currentCave) step = parent.at(step);
     return step;
 }
 
@@ -130,26 +117,18 @@ std::optional<PlayerAction> chooseActionV26(const PlayerRoundSnapshot& s,
                                              V26Stats& v26) {
     if (!s.alive || s.availableActions.empty()) return std::nullopt;
     if (hasObs(s, ObservationType::RivalDied)) memory.rivalDead = true;
-
-    // Preserve all higher-priority V2.5 behavior before entering ammo patrol:
-    // escape, healing, extraction navigation, Pit investigation, and a fresh
-    // post-death objective search all outrank the sweep.
     if (!shouldUseLateGameSweep(s)) {
         sweep.initialized = false;
         sweep.pendingTargets.clear();
         return chooseActionV25(s, memory, matchSeed, stats, legacy);
     }
-
-    for (const auto& a : s.availableActions) {
+    for (const auto& a : s.availableActions)
         if (a.type == ActionType::Contextual && a.contextualAction == ContextualActionType::Escape)
             return chooseActionV25(s, memory, matchSeed, stats, legacy);
-    }
-    if (s.health <= 60) {
-        for (const auto& a : s.availableActions) {
+    if (s.health <= 60)
+        for (const auto& a : s.availableActions)
             if (a.type == ActionType::UseItem && a.targetItem == ItemType::HealingDraught)
                 return chooseActionV25(s, memory, matchSeed, stats, legacy);
-        }
-    }
     if (s.hasHunterSigil && s.extractionCave.has_value())
         return chooseActionV25(s, memory, matchSeed, stats, legacy);
 
@@ -174,8 +153,6 @@ std::optional<PlayerAction> chooseActionV26(const PlayerRoundSnapshot& s,
             return materialize(s.player, *move);
         }
     }
-
-    // Degenerate single-cave-safe-region fallback.
     return chooseActionV25(s, memory, matchSeed, stats, legacy);
 }
 
@@ -183,11 +160,7 @@ void diagnoseV26Stall(const MatchState& state,
                       const std::vector<GameEvent>& previousEvents,
                       V26Stats& v26) {
     ++v26.stalled;
-    bool allZero = true;
-    bool anyLiving = false;
-    bool meaningful = false;
-    bool pitOnly = false;
-
+    bool allZero = true, anyLiving = false, meaningful = false, pitOnly = false;
     for (const auto& p : state.players) {
         if (!p.alive) continue;
         anyLiving = true;
@@ -196,7 +169,6 @@ void diagnoseV26Stall(const MatchState& state,
         meaningful |= hasAnyMeaningfulFrontier(snapshot);
         pitOnly |= hasAnyPitOnlyFrontier(snapshot);
     }
-
     if (anyLiving && allZero) ++v26.stalledAllZeroArrows;
     if (!state.looseArrows.empty()) ++v26.stalledLooseArrowsAvailable;
     if (!meaningful && pitOnly) ++v26.stalledPitOnlyFrontier;
@@ -215,18 +187,14 @@ void runOneV26(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
     while (state.result.status == MatchStatus::Active && state.round <= maxRounds) {
         std::vector<PlayerAction> selected;
         std::unordered_set<PlayerId> zeroBefore;
-
         for (const auto& p : state.players) {
             if (!p.alive) continue;
             const auto snapshot = SnapshotSystem::buildForPlayer(state, p.id, previousEvents);
             if (snapshot.arrows == 0) zeroBefore.insert(p.id);
             if (hasObs(snapshot, ObservationType::PitNearby)) ++stats.pitWarnings;
-            if (const auto action = chooseActionV26(snapshot, memories[p.id], sweeps[p.id],
-                                                     matchSeed, stats, legacy, v26)) {
+            if (const auto action = chooseActionV26(snapshot, memories[p.id], sweeps[p.id], matchSeed, stats, legacy, v26))
                 selected.push_back(*action);
-            }
         }
-
         if (selected.empty()) break;
         bool submitOk = true;
         for (const auto& a : selected) submitOk &= coordinator.submitAction(a);
@@ -238,21 +206,14 @@ void runOneV26(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
         previousEvents = coordinator.lastEvents();
         collectEventStats(previousEvents, stats, state, pitDeadPlayers);
         for (const auto& event : previousEvents) {
-            if (event.type == GameEventType::ArrowFound && event.actor.has_value() &&
-                zeroBefore.contains(*event.actor)) {
+            if (event.type == GameEventType::ArrowFound && event.actor.has_value() && zeroBefore.contains(*event.actor)) {
                 ++v26.zeroArrowRecoveries;
                 sweeps[*event.actor].initialized = false;
                 sweeps[*event.actor].pendingTargets.clear();
             }
         }
-        if (!countedSecond && state.basilisk.trueEncounters >= 2) {
-            ++stats.secondEncounterMatches;
-            countedSecond = true;
-        }
-        if (!countedThird && state.basilisk.trueEncounters >= 3) {
-            ++stats.thirdEncounterMatches;
-            countedThird = true;
-        }
+        if (!countedSecond && state.basilisk.trueEncounters >= 2) { ++stats.secondEncounterMatches; countedSecond = true; }
+        if (!countedThird && state.basilisk.trueEncounters >= 3) { ++stats.thirdEncounterMatches; countedThird = true; }
     }
 
     ++stats.matches;
@@ -270,7 +231,6 @@ void runOneV26(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
         diagnoseV26Stall(state, previousEvents, v26);
         return;
     }
-
     ++stats.completed;
     switch (state.result.outcome) {
         case MatchOutcome::BasiliskKilled: ++stats.basiliskWins; break;
@@ -313,16 +273,11 @@ int main(int argc, char** argv) {
     Stats stats;
     V25Stats legacy;
     V26Stats v26;
-    for (std::uint64_t i = 0; i < matches; ++i) {
-        runOneV26(firstMapSeed + static_cast<MapSeed>(i),
-                  firstMatchSeed + static_cast<MatchSeed>(i),
-                  maxRounds, stats, legacy, v26);
-    }
+    for (std::uint64_t i = 0; i < matches; ++i)
+        runOneV26(firstMapSeed + static_cast<MapSeed>(i), firstMatchSeed + static_cast<MatchSeed>(i), maxRounds, stats, legacy, v26);
 
     std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT (BOT V2.6 CONVERGENCE)\n";
-    std::cout << "Matches: " << stats.matches << " | max rounds/match: " << maxRounds
-              << " | loose-arrow cap: 8\n\n";
-
+    std::cout << "Matches: " << stats.matches << " | max rounds/match: " << maxRounds << " | loose-arrow cap: 8\n\n";
     std::cout << "OUTCOMES\n";
     printPercent("Completed", stats.completed, stats.matches);
     printPercent("Stalled at round cap", stats.stalled, stats.matches);
@@ -330,16 +285,12 @@ int main(int argc, char** argv) {
     printPercent("Simultaneous Basilisk draws", stats.simultaneousBasiliskDraws, stats.matches);
     printPercent("Extraction wins", stats.extractionWins, stats.matches);
     printPercent("Other draws", stats.draws, stats.matches);
-
     printV26(v26);
-
     std::cout << "\nCORE TELEMETRY\n";
     std::cout << "Pit deaths / mutual-Pit draws: " << stats.pitDeaths << '/' << stats.mutualPitDraws << '\n';
     std::cout << "Bodies created/found: " << stats.bodiesCreated << '/' << stats.bodiesFound << '\n';
     std::cout << "Sigils acquired / escapes: " << stats.sigilsAcquired << '/' << stats.escaped << '\n';
-    std::cout << "Loose arrows spawned/found/fired: " << stats.looseArrowSpawns << '/'
-              << stats.arrowsFound << '/' << stats.arrowsFired << '\n';
-    std::cout << "Basilisk true encounters/evades: " << stats.basiliskEncounters << '/'
-              << stats.basiliskEvades << '\n';
+    std::cout << "Loose arrows spawned/found/fired: " << stats.looseArrowSpawns << '/' << stats.arrowsFound << '/' << stats.arrowsFired << '\n';
+    std::cout << "Basilisk true encounters/evades: " << stats.basiliskEncounters << '/' << stats.basiliskEvades << '\n';
     return 0;
 }
