@@ -9,6 +9,7 @@ namespace {
 struct SweepMemory {
     std::unordered_set<CaveId> pendingTargets;
     bool initialized{false};
+    bool pausedWithAmmo{false};
 };
 
 struct V26Stats {
@@ -17,6 +18,9 @@ struct V26Stats {
     std::uint64_t sweepTargetsReached{0};
     std::uint64_t sweepCyclesCompleted{0};
     std::uint64_t zeroArrowRecoveries{0};
+    std::uint64_t sweepPausesWithRecoveredAmmo{0};
+    std::uint64_t sweepResumesAfterAmmoSpent{0};
+    std::uint64_t meaningfulFrontierResets{0};
     std::uint64_t meaningfulFrontierExhausted{0};
     std::uint64_t pitOnlyFrontierRemaining{0};
     std::uint64_t stalled{0};
@@ -52,6 +56,13 @@ void beginSweep(const PlayerRoundSnapshot& s, SweepMemory& sweep) {
     sweep.pendingTargets = reachableSafeCaves(s);
     sweep.pendingTargets.erase(s.currentCave);
     sweep.initialized = true;
+    sweep.pausedWithAmmo = false;
+}
+
+void clearSweep(SweepMemory& sweep) {
+    sweep.pendingTargets.clear();
+    sweep.initialized = false;
+    sweep.pausedWithAmmo = false;
 }
 
 std::optional<CaveId> nextSweepStep(const PlayerRoundSnapshot& s,
@@ -93,6 +104,9 @@ std::optional<CaveId> nextSweepStep(const PlayerRoundSnapshot& s,
         }
     }
 
+    // Discovery or Pit knowledge can change while a sweep is in progress.
+    // If one of the old targets is no longer safely reachable, refresh the
+    // target set from the hunter's current legitimate map knowledge.
     if (!target.has_value()) {
         beginSweep(s, sweep);
         if (sweep.pendingTargets.empty()) return std::nullopt;
@@ -117,11 +131,27 @@ std::optional<PlayerAction> chooseActionV26(const PlayerRoundSnapshot& s,
                                              V26Stats& v26) {
     if (!s.alive || s.availableActions.empty()) return std::nullopt;
     if (hasObs(s, ObservationType::RivalDied)) memory.rivalDead = true;
+
     if (!shouldUseLateGameSweep(s)) {
-        sweep.initialized = false;
-        sweep.pendingTargets.clear();
+        // A genuine newly available frontier invalidates the old patrol because
+        // the hunter has new exploration work to do. Merely recovering one or
+        // more arrows does NOT invalidate it: preserve the unfinished sweep so
+        // a hunter who fires that ammo can resume instead of restarting Cave 1.
+        if (hasAnyMeaningfulFrontier(s)) {
+            if (sweep.initialized) ++v26.meaningfulFrontierResets;
+            clearSweep(sweep);
+        } else if (s.arrows > 0 && sweep.initialized && !sweep.pausedWithAmmo) {
+            sweep.pausedWithAmmo = true;
+            ++v26.sweepPausesWithRecoveredAmmo;
+        }
         return chooseActionV25(s, memory, matchSeed, stats, legacy);
     }
+
+    if (sweep.pausedWithAmmo) {
+        sweep.pausedWithAmmo = false;
+        ++v26.sweepResumesAfterAmmoSpent;
+    }
+
     for (const auto& a : s.availableActions)
         if (a.type == ActionType::Contextual && a.contextualAction == ContextualActionType::Escape)
             return chooseActionV25(s, memory, matchSeed, stats, legacy);
@@ -175,12 +205,15 @@ void diagnoseV26Stall(const MatchState& state,
 }
 
 void printV26(const V26Stats& v26) {
-    std::cout << "\nV2.6 CONVERGENCE TELEMETRY\n";
+    std::cout << "\nV2.6+ CONVERGENCE TELEMETRY\n";
     std::cout << "Zero-arrow player-rounds: " << v26.zeroArrowPlayerRounds << '\n';
     std::cout << "Exhaustive sweep moves: " << v26.exhaustiveSweepMoves << '\n';
     std::cout << "Sweep targets reached: " << v26.sweepTargetsReached << '\n';
     std::cout << "Full sweep cycles completed: " << v26.sweepCyclesCompleted << '\n';
     std::cout << "Zero-arrow recoveries: " << v26.zeroArrowRecoveries << '\n';
+    std::cout << "Sweep pauses with recovered ammo: " << v26.sweepPausesWithRecoveredAmmo << '\n';
+    std::cout << "Sweep resumes after ammo spent: " << v26.sweepResumesAfterAmmoSpent << '\n';
+    std::cout << "Sweep resets for meaningful frontier: " << v26.meaningfulFrontierResets << '\n';
     std::cout << "Meaningful-frontier exhausted player-rounds: " << v26.meaningfulFrontierExhausted << '\n';
     std::cout << "Pit-only frontier remaining player-rounds: " << v26.pitOnlyFrontierRemaining << '\n';
     std::cout << "Stalled matches: " << v26.stalled << '\n';
