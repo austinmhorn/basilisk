@@ -22,7 +22,10 @@ void arrowsSpawnEverySevenCompletedRounds() {
     state.rules.maxLooseArrows = 4;
     RoundController controller;
 
-    for (int i = 0; i < 6; ++i) controller.resolve(state, {search(1), search(2)});
+    for (int i = 0; i < 6; ++i) {
+        const auto ignoredEvents = controller.resolve(state, {search(1), search(2)});
+        (void)ignoredEvents;
+    }
     assert(state.looseArrows.empty());
 
     const auto events = controller.resolve(state, {search(1), search(2)});
@@ -64,7 +67,8 @@ void fullQuiverLeavesLooseArrowOnGround() {
     auto& player = state.players[0];
     player.arrows = state.rules.maxArrows;
     state.looseArrows = {player.cave};
-    controller.resolve(state, {search(1), search(2)});
+    const auto ignoredEvents = controller.resolve(state, {search(1), search(2)});
+    (void)ignoredEvents;
     assert(state.looseArrows.size() == 1);
     assert(player.arrows == state.rules.maxArrows);
 }
