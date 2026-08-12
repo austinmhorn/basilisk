@@ -82,7 +82,20 @@ std::vector<CaveId> safeBasiliskDestinations(const MatchState& state) {
     std::vector<CaveId> destinations;
     if (!state.world.contains(state.basilisk.cave)) return destinations;
     for (const CaveId cave : state.world.cave(state.basilisk.cave).connections) {
-        if (!caveOccupiedByLivingPlayer(state, cave)) destinations.push_back(cave);
+        if (!caveOccupiedByLivingPlayer(state, cave) && !caveContainsActivePit(state, cave)) {
+            destinations.push_back(cave);
+        }
+    }
+    return destinations;
+}
+
+std::vector<CaveId> safeBasiliskEvadeDestinations(const MatchState& state) {
+    std::vector<CaveId> destinations;
+    for (const CaveId cave : state.world.caveIds()) {
+        if (cave == state.basilisk.cave) continue;
+        if (caveContainsActivePit(state, cave)) continue;
+        if (caveOccupiedByLivingPlayer(state, cave)) continue;
+        destinations.push_back(cave);
     }
     return destinations;
 }
@@ -98,6 +111,14 @@ void emitBasiliskMove(MatchState& state, CaveId destination, std::vector<GameEve
 
 void moveBasiliskRandomly(MatchState& state, RandomGenerator& rng, std::vector<GameEvent>& events) {
     auto destinations = safeBasiliskDestinations(state);
+    if (destinations.empty()) return;
+    const auto index = static_cast<std::size_t>(rng.range(0, static_cast<int>(destinations.size()) - 1));
+    emitBasiliskMove(state, destinations[index], events);
+}
+
+void relocateBasiliskAfterEvade(MatchState& state, RandomGenerator& rng,
+                                std::vector<GameEvent>& events) {
+    auto destinations = safeBasiliskEvadeDestinations(state);
     if (destinations.empty()) return;
     const auto index = static_cast<std::size_t>(rng.range(0, static_cast<int>(destinations.size()) - 1));
     emitBasiliskMove(state, destinations[index], events);
@@ -195,6 +216,7 @@ void resolveBasiliskShotBatch(MatchState& state, const std::vector<PlayerId>& sh
 
     events.push_back(GameEvent{GameEventType::BasiliskEvaded, std::nullopt, std::nullopt,
         state.basilisk.cave, encounter, state.basilisk.behavior});
+    relocateBasiliskAfterEvade(state, rng, events);
 
     if (encounter == 1) {
         if (rng.chance(1, 2)) {
