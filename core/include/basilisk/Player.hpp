@@ -24,6 +24,11 @@ struct PlayerState {
     // Successful Pit investigations persist as player knowledge. The TunnelId
     // is local to the keyed cave and does not reveal the hidden destination.
     std::unordered_map<CaveId, TunnelId> knownPitTunnels;
+
+    // Temporary utility effects. Positive values mean the effect is active for
+    // the current round; TurnResolver ticks them down after round resolution.
+    int pitMapRevealRounds{0};
+    int jackalRepellentRounds{0};
 };
 
 } // namespace basilisk
