@@ -97,6 +97,11 @@ struct BotMemory {
     bool rivalDead{false};
 };
 
+struct HuntTiming {
+    std::optional<RoundNumber> firstEvadeRound;
+    std::optional<RoundNumber> secondEvadeRound;
+};
+
 struct StyleStats {
     std::uint64_t assignments{0};
     std::uint64_t wins{0};
@@ -133,6 +138,18 @@ struct Stats {
     std::uint64_t secondEncounterMatches{0}, thirdEncounterMatches{0};
     std::uint64_t restlessAssignments{0}, lurkerAssignments{0}, skittishAssignments{0};
     std::uint64_t territorialAssignments{0}, enragedAssignments{0};
+
+    std::uint64_t evadeRelocations{0};
+    std::uint64_t relocationDistanceTotal{0};
+    std::vector<std::uint64_t> relocationDistanceSamples;
+    std::uint64_t adjacentRelocations{0}, mediumRelocations{0}, longRelocations{0};
+    int maxRelocationDistance{0};
+    std::uint64_t firstRelocations{0}, firstRelocationDistanceTotal{0};
+    std::uint64_t secondRelocations{0}, secondRelocationDistanceTotal{0};
+    std::uint64_t firstReacquisitions{0}, firstReacquireRoundsTotal{0};
+    std::uint64_t secondReacquisitions{0}, secondReacquireRoundsTotal{0};
+    std::array<std::uint64_t, 4> basiliskDeathMatchesByEncounter{};
+    std::array<std::uint64_t, 4> basiliskDeathRoundsByEncounter{};
 
     std::uint64_t bodiesCreated{0}, bodiesFound{0}, sigilsAcquired{0};
     std::uint64_t extractionsActivated{0}, escapeAvailable{0}, escaped{0};
@@ -336,6 +353,26 @@ std::optional<int> safeDistance(const PlayerRoundSnapshot& s, CaveId target) {
         for (const auto& tunnel : view->exits) {
             if (!safeKnownConnection(s, cur, tunnel)) continue;
             const CaveId next = *tunnel.destination;
+            if (!seen.insert(next).second) continue;
+            if (next == target) return distance + 1;
+            q.push({next, distance + 1});
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<int> worldDistance(const WorldGraph& world, CaveId start, CaveId target) {
+    if (!world.contains(start) || !world.contains(target)) return std::nullopt;
+    if (start == target) return 0;
+
+    std::queue<std::pair<CaveId, int>> q;
+    std::unordered_set<CaveId> seen;
+    q.push({start, 0});
+    seen.insert(start);
+
+    while (!q.empty()) {
+        const auto [current, distance] = q.front(); q.pop();
+        for (const CaveId next : world.cave(current).connections) {
             if (!seen.insert(next).second) continue;
             if (next == target) return distance + 1;
             q.push({next, distance + 1});
@@ -656,9 +693,12 @@ void collectEvents(
     std::unordered_set<PlayerId>& pitDeadPlayers,
     const std::unordered_set<PlayerId>& zeroBefore,
     const std::unordered_set<PlayerId>& stalenessMovers,
-    std::unordered_map<PlayerId, BotMemory>& memories) {
+    std::unordered_map<PlayerId, BotMemory>& memories,
+    HuntTiming& huntTiming) {
 
     std::unordered_map<PlayerId, PlayerId> pvpAttackerByTarget;
+    std::optional<int> pendingEvadeEncounter;
+    std::optional<CaveId> pendingEvadeOrigin;
 
     for (const auto& event : events) {
         auto styleStats = [&](PlayerId id) -> StyleStats* {
@@ -678,8 +718,51 @@ void collectEvents(
             case GameEventType::ArrowReachedBasilisk:
                 ++stats.basiliskEncounters;
                 if (event.actor.has_value()) if (auto* ss = styleStats(*event.actor)) ++ss->basiliskEncounters;
+                if (event.amount == 2 && huntTiming.firstEvadeRound.has_value()) {
+                    const RoundNumber elapsed = state.round >= *huntTiming.firstEvadeRound
+                        ? state.round - *huntTiming.firstEvadeRound : 0;
+                    stats.firstReacquireRoundsTotal += static_cast<std::uint64_t>(elapsed);
+                    ++stats.firstReacquisitions;
+                    huntTiming.firstEvadeRound.reset();
+                } else if (event.amount == 3 && huntTiming.secondEvadeRound.has_value()) {
+                    const RoundNumber elapsed = state.round >= *huntTiming.secondEvadeRound
+                        ? state.round - *huntTiming.secondEvadeRound : 0;
+                    stats.secondReacquireRoundsTotal += static_cast<std::uint64_t>(elapsed);
+                    ++stats.secondReacquisitions;
+                    huntTiming.secondEvadeRound.reset();
+                }
                 break;
-            case GameEventType::BasiliskEvaded: ++stats.basiliskEvades; break;
+            case GameEventType::BasiliskEvaded:
+                ++stats.basiliskEvades;
+                pendingEvadeEncounter = event.amount;
+                pendingEvadeOrigin = event.cave;
+                if (event.amount == 1) huntTiming.firstEvadeRound = state.round;
+                else if (event.amount == 2) huntTiming.secondEvadeRound = state.round;
+                break;
+            case GameEventType::BasiliskMoved:
+                if (pendingEvadeEncounter.has_value() && pendingEvadeOrigin.has_value() && event.cave.has_value()) {
+                    if (const auto distance = worldDistance(state.world, *pendingEvadeOrigin, *event.cave); distance.has_value()) {
+                        const auto measured = static_cast<std::uint64_t>(*distance);
+                        ++stats.evadeRelocations;
+                        stats.relocationDistanceTotal += measured;
+                        stats.relocationDistanceSamples.push_back(measured);
+                        stats.maxRelocationDistance = std::max(stats.maxRelocationDistance, *distance);
+                        if (*distance <= 1) ++stats.adjacentRelocations;
+                        else if (*distance <= 3) ++stats.mediumRelocations;
+                        else ++stats.longRelocations;
+
+                        if (*pendingEvadeEncounter == 1) {
+                            ++stats.firstRelocations;
+                            stats.firstRelocationDistanceTotal += measured;
+                        } else if (*pendingEvadeEncounter == 2) {
+                            ++stats.secondRelocations;
+                            stats.secondRelocationDistanceTotal += measured;
+                        }
+                    }
+                    pendingEvadeEncounter.reset();
+                    pendingEvadeOrigin.reset();
+                }
+                break;
             case GameEventType::PitTriggered:
                 ++stats.pitDeaths;
                 if (event.targetPlayer.has_value()) pitDeadPlayers.insert(*event.targetPlayer);
@@ -801,6 +884,7 @@ void runOne(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds, Stats
     std::unordered_map<PlayerId, BotMemory> memories;
     std::unordered_set<PlayerId> pitDeadPlayers;
     std::vector<GameEvent> previousEvents;
+    HuntTiming huntTiming;
     bool countedSecond = false, countedThird = false;
 
     for (const auto& player : state.players) {
@@ -848,7 +932,7 @@ void runOne(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds, Stats
         if (!lockOk) break;
 
         previousEvents = coordinator.lastEvents();
-        collectEvents(previousEvents, state, stats, styles, pitDeadPlayers, zeroBefore, stalenessMovers, memories);
+        collectEvents(previousEvents, state, stats, styles, pitDeadPlayers, zeroBefore, stalenessMovers, memories, huntTiming);
 
         if (!countedSecond && state.basilisk.trueEncounters >= 2) {
             ++stats.secondEncounterMatches;
@@ -874,6 +958,13 @@ void runOne(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds, Stats
         ++stats.stalled;
         diagnoseStall(state, previousEvents, stats);
         return;
+    }
+
+    if (state.result.outcome == MatchOutcome::BasiliskKilled ||
+        state.result.outcome == MatchOutcome::SimultaneousBasiliskKill) {
+        const auto encounter = static_cast<std::size_t>(std::clamp(state.basilisk.trueEncounters, 1, 3));
+        ++stats.basiliskDeathMatchesByEncounter[encounter];
+        stats.basiliskDeathRoundsByEncounter[encounter] += rounds;
     }
 
     ++stats.completed;
@@ -926,7 +1017,7 @@ void printReport(const Stats& stats, std::uint64_t maxRounds) {
     const double avgCaves = stats.matches ? static_cast<double>(stats.totalCaves) / (stats.matches * 2.0) : 0.0;
     const double avgArrows = stats.matches ? static_cast<double>(stats.totalFinalArrows) / (stats.matches * 2.0) : 0.0;
 
-    std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT (BOT V3.2 PVP + SCAVENGER CONVERSION)\n";
+    std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT (BOT V3.4 HUNT-LENGTH TELEMETRY)\n";
     std::cout << "Matches: " << stats.matches << " | max rounds/match: " << maxRounds
               << " | loose-arrow cap: " << rules.maxLooseArrows
               << " | spawn cadence: every " << rules.looseArrowSpawnIntervalRounds << " rounds"
@@ -1006,6 +1097,45 @@ void printReport(const Stats& stats, std::uint64_t maxRounds) {
     std::cout << "Restless/Lurker/Skittish/Territorial/Enraged assignments: "
               << stats.restlessAssignments << '/' << stats.lurkerAssignments << '/' << stats.skittishAssignments << '/'
               << stats.territorialAssignments << '/' << stats.enragedAssignments << '\n';
+
+    const double avgRelocation = stats.evadeRelocations
+        ? static_cast<double>(stats.relocationDistanceTotal) / stats.evadeRelocations : 0.0;
+    const double avgFirstRelocation = stats.firstRelocations
+        ? static_cast<double>(stats.firstRelocationDistanceTotal) / stats.firstRelocations : 0.0;
+    const double avgSecondRelocation = stats.secondRelocations
+        ? static_cast<double>(stats.secondRelocationDistanceTotal) / stats.secondRelocations : 0.0;
+    const double avgFirstReacquire = stats.firstReacquisitions
+        ? static_cast<double>(stats.firstReacquireRoundsTotal) / stats.firstReacquisitions : 0.0;
+    const double avgSecondReacquire = stats.secondReacquisitions
+        ? static_cast<double>(stats.secondReacquireRoundsTotal) / stats.secondReacquisitions : 0.0;
+
+    std::cout << "\nEVADE RELOCATION / HUNT-LENGTH TELEMETRY\n";
+    std::cout << "Immediate evade relocations: " << stats.evadeRelocations << '\n';
+    std::cout << "Average relocation distance: " << avgRelocation << " caves\n";
+    std::cout << "Median relocation distance: " << percentile(stats.relocationDistanceSamples, .50) << '\n';
+    std::cout << "P90 relocation distance: " << percentile(stats.relocationDistanceSamples, .90) << '\n';
+    std::cout << "Maximum relocation distance: " << stats.maxRelocationDistance << '\n';
+    std::cout << "Adjacent / 2-3 cave / 4+ cave relocations: "
+              << stats.adjacentRelocations << '/' << stats.mediumRelocations << '/' << stats.longRelocations << '\n';
+    std::cout << "First-evade average relocation distance: " << avgFirstRelocation << " caves\n";
+    std::cout << "Second-evade average relocation distance: " << avgSecondRelocation << " caves\n";
+    std::cout << "First-evade reacquisitions measured: " << stats.firstReacquisitions << '/' << stats.firstRelocations << '\n';
+    std::cout << "Average rounds first evade -> next true encounter: " << avgFirstReacquire << '\n';
+    std::cout << "Second-evade reacquisitions measured: " << stats.secondReacquisitions << '/' << stats.secondRelocations << '\n';
+    std::cout << "Average rounds second evade -> next true encounter: " << avgSecondReacquire << '\n';
+    std::cout << "Basilisk-death matches by 1/2/3 encounters: "
+              << stats.basiliskDeathMatchesByEncounter[1] << '/'
+              << stats.basiliskDeathMatchesByEncounter[2] << '/'
+              << stats.basiliskDeathMatchesByEncounter[3] << '\n';
+    std::cout << "Average rounds for 1/2/3-encounter Basilisk-death matches: ";
+    for (std::size_t encounter = 1; encounter <= 3; ++encounter) {
+        if (encounter > 1) std::cout << '/';
+        const auto count = stats.basiliskDeathMatchesByEncounter[encounter];
+        const double average = count
+            ? static_cast<double>(stats.basiliskDeathRoundsByEncounter[encounter]) / count : 0.0;
+        std::cout << average;
+    }
+    std::cout << '\n';
 
     std::cout << "\nOBJECTIVE TELEMETRY\n";
     std::cout << "Bodies created/found: " << stats.bodiesCreated << '/' << stats.bodiesFound << '\n';
