@@ -40,7 +40,14 @@ MatchState makeWorld() {
     return state;
 }
 
-void movingIntoPitKillsHunterAndCreatesBody() {
+void jackalDamageCapabilityDefaultsOff() {
+    Rules rules;
+    assert(!rules.jackalDamageEnabled);
+    assert(rules.jackalDamageMin == 5);
+    assert(rules.jackalDamageMax == 10);
+}
+
+void movingIntoPitKillsHunterAndEjectsSigil() {
     auto state = makeWorld();
     state.players = {
         PlayerState{1, 1, 100, 3, true},
@@ -59,10 +66,45 @@ void movingIntoPitKillsHunterAndCreatesBody() {
     assert(hasEvent(events, GameEventType::PitTriggered));
     assert(hasEvent(events, GameEventType::PlayerKilled));
     assert(hasEvent(events, GameEventType::BodyCreated));
+    assert(hasEvent(events, GameEventType::SigilEjected));
     assert(state.bodies.size() == 1);
     assert(state.bodies[0].owner == 1);
     assert(state.bodies[0].cave == 2);
+    assert(state.bodies[0].sigilCave.has_value());
+    assert(*state.bodies[0].sigilCave != 2);
+    assert(state.world.areConnected(2, *state.bodies[0].sigilCave));
     assert(state.result.status == MatchStatus::Active);
+}
+
+void ejectedPitSigilCanBeRecoveredBySearch() {
+    auto state = makeWorld();
+    state.players = {
+        PlayerState{1, 1, 100, 3, true},
+        PlayerState{2, 5, 100, 3, true}
+    };
+    state.pits = {PitState{2, true}};
+
+    TurnResolver resolver;
+    const auto deathEvents = resolver.resolve(state, {
+        PlayerAction{1, ActionType::Move, CaveId{2}},
+        PlayerAction{2, ActionType::Search}
+    });
+    (void)deathEvents;
+
+    assert(state.bodies[0].sigilCave.has_value());
+    const CaveId sigilCave = *state.bodies[0].sigilCave;
+
+    // Put the survivor in the ejected Sigil cave to isolate the dynamic-search
+    // behavior from pathfinding for this unit test.
+    state.players[1].cave = sigilCave;
+    const auto searchEvents = resolver.resolve(state, {
+        PlayerAction{2, ActionType::Search}
+    });
+
+    assert(hasEvent(searchEvents, GameEventType::SigilAcquired));
+    assert(state.players[1].heldSigilFrom == PlayerId{1});
+    assert(state.extraction.active);
+    assert(state.extraction.sigilHolder == PlayerId{2});
 }
 
 void twoHuntersFallingIntoPitsDraws() {
@@ -178,7 +220,9 @@ void jackalRobberyRemovesExactlyOneArrow() {
 } // namespace
 
 int main() {
-    movingIntoPitKillsHunterAndCreatesBody();
+    jackalDamageCapabilityDefaultsOff();
+    movingIntoPitKillsHunterAndEjectsSigil();
+    ejectedPitSigilCanBeRecoveredBySearch();
     twoHuntersFallingIntoPitsDraws();
     stunnedJackalSuppressesMovementAndAttack();
     jackalAvoidsPitAndBasiliskWhenRoaming();
