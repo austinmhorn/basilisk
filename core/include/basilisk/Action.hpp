@@ -15,11 +15,16 @@ enum class ActionType {
     Contextual
 };
 
+enum class ContextualActionType {
+    Escape
+};
+
 struct PlayerAction {
     PlayerId player{};
     ActionType type{ActionType::Search};
     std::optional<CaveId> targetCave;
     std::optional<ItemType> targetItem;
+    std::optional<ContextualActionType> contextualAction;
 };
 
 } // namespace basilisk
