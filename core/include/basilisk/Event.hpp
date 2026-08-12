@@ -40,6 +40,7 @@ enum class GameEventType {
     JackalKnockedOutPlayer,
     SearchCompleted,
     CaveAlreadySearched,
+    LooseArrowSpawned,
     ArrowFound,
     ItemFound,
     InventoryFull,
