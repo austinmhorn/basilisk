@@ -171,6 +171,7 @@ void runOneV211(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
 
 } // namespace
 
+#ifndef BASILISK_SIM_V211_NO_MAIN
 int main(int argc, char** argv) {
     std::uint64_t matches = 1000, maxRounds = 250;
     MapSeed firstMapSeed = 100000;
@@ -235,3 +236,4 @@ int main(int argc, char** argv) {
               << stats.basiliskEvades << '\n';
     return 0;
 }
+#endif
