@@ -20,6 +20,12 @@ struct Rules {
     int jackalStunPhases{3};
     int cavesPerJackal{15};
 
+    // Multiplayer timing. Reserve is consumed only while another living hunter
+    // is already locked and waiting. Disconnect grace is intentionally
+    // configurable; 30 seconds is the initial prototype value.
+    std::uint64_t multiplayerReserveMs{300000};
+    std::uint64_t disconnectGraceMs{30000};
+
     // Static/classic maps can expose their complete topology while procedural
     // maps use player-specific discovery and opaque unknown tunnel choices.
     MapDiscoveryMode mapDiscoveryMode{MapDiscoveryMode::FullMap};
