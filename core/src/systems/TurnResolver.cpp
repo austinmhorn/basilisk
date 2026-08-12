@@ -367,17 +367,22 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
 
     resolveBasiliskShotBatch(state, basiliskShooters, rng, events);
 
+    std::unordered_map<PlayerId, PlayerId> lethalAttackerByTarget;
     for (const auto& damage : pendingDamage) {
         auto& target = playerById(state, damage.target);
         target.health = std::max(0, target.health - damage.amount);
         events.push_back(GameEvent{GameEventType::PlayerDamaged, damage.attacker, target.id,
             damage.cave, damage.amount});
+        if (target.health <= 0) lethalAttackerByTarget[target.id] = damage.attacker;
     }
 
     for (auto& player : state.players) {
         if (player.alive && player.health <= 0) {
             player.alive = false;
-            events.push_back(GameEvent{GameEventType::PlayerKilled, std::nullopt, player.id, player.cave});
+            std::optional<PlayerId> killer;
+            const auto killerIt = lethalAttackerByTarget.find(player.id);
+            if (killerIt != lethalAttackerByTarget.end()) killer = killerIt->second;
+            events.push_back(GameEvent{GameEventType::PlayerKilled, killer, player.id, player.cave});
             createBodyIfMissing(state, player, events);
         }
     }
