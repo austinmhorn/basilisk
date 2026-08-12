@@ -29,6 +29,13 @@ public:
         CaveId cave,
         std::vector<GameEvent>& events);
 
+    [[nodiscard]] static bool revealTunnelDestination(
+        const MatchState& state,
+        PlayerState& player,
+        CaveId from,
+        TunnelId tunnel,
+        std::vector<GameEvent>& events);
+
     [[nodiscard]] static PlayerMapView buildView(
         const MatchState& state,
         const PlayerState& player);
