@@ -26,9 +26,8 @@ struct Rules {
     std::uint64_t multiplayerReserveMs{300000};
     std::uint64_t disconnectGraceMs{30000};
 
-    // Original-game loose arrow economy: one world arrow every seven rounds.
-    // V2.6 balance experiment raises the simultaneous loose-arrow pool from
-    // four to eight while leaving spawn frequency unchanged.
+    // Loose-arrow economy: one world arrow every seven rounds, with up to
+    // eight arrows waiting on the map at once during the current prototype.
     std::uint32_t looseArrowSpawnIntervalRounds{7};
     std::size_t maxLooseArrows{8};
 
@@ -42,22 +41,30 @@ struct Rules {
     std::uint32_t pitInvestigationNumerator{3};
     std::uint32_t pitInvestigationDenominator{4};
 
+    // Temporary utility-item durations. Effects begin immediately during the
+    // item-use phase and then tick down once at the end of each resolved round.
+    int oldMinersMapRevealRounds{3};
+    int jackalRepellentRounds{3};
+
     // Reserved Jackal damage capability. Disabled by default so current
     // gameplay remains faithful to the classic ROB / SCARE / KNOCKOUT model.
-    // These values let us introduce a damaging Jackal attack later without
-    // changing the public rules/state shape.
     bool jackalDamageEnabled{false};
     int jackalDamageMin{5};
     int jackalDamageMax{10};
 
-    // Search loot probabilities are intentionally configurable and default to
-    // disabled until balancing establishes production drop rates.
+    // Search loot. Loose world arrows remain the primary ammunition source, so
+    // direct Search arrows stay disabled for this balance pass. Item rolls are
+    // independent and inventory capacity still applies.
     std::uint32_t searchArrowNumerator{0};
     std::uint32_t searchArrowDenominator{1};
-    std::uint32_t searchHealingNumerator{0};
-    std::uint32_t searchHealingDenominator{1};
-    std::uint32_t searchExoticNumerator{0};
-    std::uint32_t searchExoticDenominator{1};
+    std::uint32_t searchHealingNumerator{1};
+    std::uint32_t searchHealingDenominator{12};
+    std::uint32_t searchOldMinersMapNumerator{1};
+    std::uint32_t searchOldMinersMapDenominator{20};
+    std::uint32_t searchJackalRepellentNumerator{1};
+    std::uint32_t searchJackalRepellentDenominator{16};
+    std::uint32_t searchExoticNumerator{1};
+    std::uint32_t searchExoticDenominator{1000};
 };
 
 } // namespace basilisk
