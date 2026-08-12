@@ -11,6 +11,7 @@
 #include "basilisk/Types.hpp"
 #include "basilisk/actors/Basilisk.hpp"
 #include "basilisk/actors/Jackal.hpp"
+#include "basilisk/world/Pit.hpp"
 #include "basilisk/world/WorldGraph.hpp"
 
 namespace basilisk {
@@ -23,6 +24,7 @@ struct MatchState {
     std::vector<PlayerState> players;
     BasiliskState basilisk;
     std::vector<JackalState> jackals;
+    std::vector<PitState> pits;
     std::vector<BodyState> bodies;
     ExtractionState extraction;
     MatchResult result;
