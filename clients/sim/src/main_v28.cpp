@@ -1,6 +1,6 @@
-#define main basilisk_v27_main
+#define BASILISK_SIM_V27_NO_MAIN
 #include "main_v27.cpp"
-#undef main
+#undef BASILISK_SIM_V27_NO_MAIN
 
 namespace {
 
@@ -28,7 +28,6 @@ std::optional<PlayerAction> chooseActionV28(const PlayerRoundSnapshot& s,
                                              Stats& stats,
                                              V25Stats& legacy,
                                              V26Stats& v26) {
-    // Preserve V2.7's survival utility priorities first.
     if (s.health <= 60)
         if (const auto* heal = useItemAction(s, ItemType::HealingDraught))
             return materialize(s.player, *heal);
@@ -41,14 +40,10 @@ std::optional<PlayerAction> chooseActionV28(const PlayerRoundSnapshot& s,
         if (const auto* map = useItemAction(s, ItemType::OldMinersMap))
             return materialize(s.player, *map);
 
-    // Blood Bait is used as an ambush tool only when the hunter has ammunition
-    // and legitimate evidence that the Basilisk is nearby.
     if (s.arrows > 0 && basiliskClue(s))
         if (const auto* bait = useItemAction(s, ItemType::BloodBait))
             return materialize(s.player, *bait);
 
-    // Survey Fragment is spent on a player-chosen unknown tunnel at a genuine
-    // exploration frontier; the bot receives no hidden destination knowledge.
     if (const auto* survey = firstSurveyAction(s))
         return materialize(s.player, *survey);
 
@@ -84,7 +79,6 @@ void runOneV28(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
     while (state.result.status == MatchStatus::Active && state.round <= maxRounds) {
         std::vector<PlayerAction> selected;
         std::unordered_set<PlayerId> zeroBefore;
-
         for (const auto& p : state.players) {
             if (!p.alive) continue;
             const auto snapshot = SnapshotSystem::buildForPlayer(state, p.id, previousEvents);
@@ -94,7 +88,6 @@ void runOneV28(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
                                                      matchSeed, stats, legacy, v26))
                 selected.push_back(*action);
         }
-
         if (selected.empty()) break;
         bool submitOk = true;
         for (const auto& a : selected) submitOk &= coordinator.submitAction(a);
@@ -107,7 +100,6 @@ void runOneV28(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
         collectEventStats(previousEvents, stats, state, pitDeadPlayers);
         collectV27Events(previousEvents, v27);
         collectV28Events(previousEvents, v28);
-
         for (const auto& event : previousEvents) {
             if (event.type == GameEventType::ArrowFound && event.actor.has_value() &&
                 zeroBefore.contains(*event.actor)) {
