@@ -77,3 +77,11 @@ add_executable(BasiliskMatchCoordinatorTests
 target_link_libraries(BasiliskMatchCoordinatorTests PRIVATE Basilisk::Core)
 
 add_test(NAME BasiliskMatchCoordinatorTests COMMAND BasiliskMatchCoordinatorTests)
+
+add_executable(BasiliskSoloCoordinatorTests
+    solo_coordinator_tests.cpp
+)
+
+target_link_libraries(BasiliskSoloCoordinatorTests PRIVATE Basilisk::Core)
+
+add_test(NAME BasiliskSoloCoordinatorTests COMMAND BasiliskSoloCoordinatorTests)
