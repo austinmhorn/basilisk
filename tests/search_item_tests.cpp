@@ -11,7 +11,9 @@
 #include "basilisk/items/Item.hpp"
 #include "basilisk/systems/ItemSystem.hpp"
 #include "basilisk/systems/SearchSystem.hpp"
+#include "basilisk/systems/SnapshotSystem.hpp"
 #include "basilisk/systems/TurnResolver.hpp"
+#include "basilisk/systems/WorldDangerSystem.hpp"
 
 using namespace basilisk;
 
@@ -19,9 +21,7 @@ namespace {
 
 bool hasEvent(const std::vector<GameEvent>& events, GameEventType type) {
     for (const auto& event : events) {
-        if (event.type == type) {
-            return true;
-        }
+        if (event.type == type) return true;
     }
     return false;
 }
@@ -32,6 +32,10 @@ Rules guaranteedSearchRules() {
     rules.searchArrowDenominator = 1;
     rules.searchHealingNumerator = 1;
     rules.searchHealingDenominator = 1;
+    rules.searchOldMinersMapNumerator = 1;
+    rules.searchOldMinersMapDenominator = 1;
+    rules.searchJackalRepellentNumerator = 1;
+    rules.searchJackalRepellentDenominator = 1;
     rules.searchExoticNumerator = 1;
     rules.searchExoticDenominator = 1;
     return rules;
@@ -46,8 +50,10 @@ void firstSearchCanAwardConfiguredLoot() {
 
     assert(player.searchedCaves.contains(7));
     assert(player.arrows == 5);
-    assert(player.inventory.items.size() == 1);
+    assert(player.inventory.items.size() == 3);
     assert(player.inventory.contains(ItemType::HealingDraught));
+    assert(player.inventory.contains(ItemType::OldMinersMap));
+    assert(player.inventory.contains(ItemType::JackalRepellent));
     assert(hasEvent(events, GameEventType::SearchCompleted));
     assert(hasEvent(events, GameEventType::ArrowFound));
     assert(hasEvent(events, GameEventType::ItemFound));
@@ -79,6 +85,10 @@ void arrowsNeverExceedCapacity() {
     Rules rules;
     rules.searchArrowNumerator = 1;
     rules.searchArrowDenominator = 1;
+    rules.searchHealingNumerator = 0;
+    rules.searchOldMinersMapNumerator = 0;
+    rules.searchJackalRepellentNumerator = 0;
+    rules.searchExoticNumerator = 0;
     RandomGenerator rng{987};
 
     const auto events = SearchSystem::search(player, rules, rng);
@@ -98,6 +108,9 @@ void fullInventoryRejectsFoundItem() {
     Rules rules;
     rules.searchHealingNumerator = 1;
     rules.searchHealingDenominator = 1;
+    rules.searchOldMinersMapNumerator = 0;
+    rules.searchJackalRepellentNumerator = 0;
+    rules.searchExoticNumerator = 0;
     RandomGenerator rng{444};
 
     const auto events = SearchSystem::search(player, rules, rng);
@@ -109,8 +122,7 @@ void fullInventoryRejectsFoundItem() {
 
 void healingDraughtRestoresFortyAndIsConsumed() {
     PlayerState player{1, 1, 20, 3, true};
-    const bool added = player.inventory.add(ItemInstance{ItemType::HealingDraught}, 3);
-    assert(added);
+    assert(player.inventory.add(ItemInstance{ItemType::HealingDraught}, 3));
 
     Rules rules;
     const auto events = ItemSystem::use(player, ItemType::HealingDraught, rules);
@@ -123,14 +135,56 @@ void healingDraughtRestoresFortyAndIsConsumed() {
 
 void healingCapsAtMaximumHealth() {
     PlayerState player{1, 1, 80, 3, true};
-    const bool added = player.inventory.add(ItemInstance{ItemType::HealingDraught}, 3);
-    assert(added);
+    assert(player.inventory.add(ItemInstance{ItemType::HealingDraught}, 3));
 
     Rules rules;
     const auto events = ItemSystem::use(player, ItemType::HealingDraught, rules);
 
     assert(player.health == 100);
     assert(hasEvent(events, GameEventType::PlayerHealed));
+}
+
+void oldMinersMapTemporarilyRevealsActivePit() {
+    MatchState state;
+    state.world.addCave(1);
+    state.world.addCave(2);
+    state.world.connect(1, 2);
+    state.players = {PlayerState{1, 1, 100, 3, true}};
+    state.pits.push_back(PitState{2, true});
+    assert(state.players[0].inventory.add(ItemInstance{ItemType::OldMinersMap}, 3));
+
+    TurnResolver resolver;
+    static_cast<void>(resolver.resolve(state, {
+        PlayerAction{1, ActionType::UseItem, std::nullopt, ItemType::OldMinersMap}
+    }));
+
+    assert(state.players[0].pitMapRevealRounds == state.rules.oldMinersMapRevealRounds);
+    assert(!state.players[0].inventory.contains(ItemType::OldMinersMap));
+    const auto snapshot = SnapshotSystem::buildForPlayer(state, 1, {});
+    assert(snapshot.temporarilyRevealedPitCaves.size() == 1);
+    assert(snapshot.temporarilyRevealedPitCaves[0] == CaveId{2});
+}
+
+void jackalRepellentBlocksAttack() {
+    MatchState state;
+    state.matchSeed = 4444;
+    state.world.addCave(1);
+    state.players = {PlayerState{1, 1, 100, 3, true}};
+    state.jackals.push_back(JackalState{1});
+    assert(state.players[0].inventory.add(ItemInstance{ItemType::JackalRepellent}, 3));
+
+    TurnResolver resolver;
+    const auto events = resolver.resolve(state, {
+        PlayerAction{1, ActionType::UseItem, std::nullopt, ItemType::JackalRepellent}
+    });
+
+    assert(state.players[0].jackalRepellentRounds == state.rules.jackalRepellentRounds);
+    assert(state.players[0].arrows == 3);
+    assert(hasEvent(events, GameEventType::ItemUsed));
+    assert(hasEvent(events, GameEventType::JackalRepelled));
+    assert(!hasEvent(events, GameEventType::JackalRobbedArrow));
+    assert(!hasEvent(events, GameEventType::JackalScaredPlayer));
+    assert(!hasEvent(events, GameEventType::JackalKnockedOutPlayer));
 }
 
 void turnResolverUsesSearchSystem() {
@@ -148,7 +202,7 @@ void turnResolverUsesSearchSystem() {
 
     assert(state.players[0].searchedCaves.contains(1));
     assert(state.players[0].arrows == 5);
-    assert(state.players[0].inventory.contains(ItemType::HealingDraught));
+    assert(state.players[0].inventory.items.size() == 3);
     assert(hasEvent(events, GameEventType::ExoticCallingCardFound));
 }
 
@@ -158,10 +212,9 @@ void turnResolverUsesHealingItem() {
     state.mapSeed = 404;
     state.world.addCave(1);
     state.players = {PlayerState{1, 1, 20, 3, true}};
-    const bool added = state.players[0].inventory.add(
+    assert(state.players[0].inventory.add(
         ItemInstance{ItemType::HealingDraught},
-        state.rules.maxInventoryItems);
-    assert(added);
+        state.rules.maxInventoryItems));
 
     TurnResolver resolver;
     const auto events = resolver.resolve(state, {
@@ -182,6 +235,8 @@ int main() {
     fullInventoryRejectsFoundItem();
     healingDraughtRestoresFortyAndIsConsumed();
     healingCapsAtMaximumHealth();
+    oldMinersMapTemporarilyRevealsActivePit();
+    jackalRepellentBlocksAttack();
     turnResolverUsesSearchSystem();
     turnResolverUsesHealingItem();
 
