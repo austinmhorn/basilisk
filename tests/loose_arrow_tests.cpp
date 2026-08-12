@@ -17,12 +17,15 @@ PlayerAction search(PlayerId player) {
     return action;
 }
 
-void arrowsSpawnEverySevenCompletedRounds() {
+void arrowsSpawnAtConfiguredCadence() {
     auto state = MapGenerator::generate(7001, 7002);
     state.rules.maxLooseArrows = 4;
     RoundController controller;
 
-    for (int i = 0; i < 6; ++i) {
+    const auto cadence = state.rules.looseArrowSpawnIntervalRounds;
+    assert(cadence > 0);
+
+    for (std::uint32_t i = 0; i + 1 < cadence; ++i) {
         const auto ignoredEvents = controller.resolve(state, {search(1), search(2)});
         (void)ignoredEvents;
     }
@@ -76,7 +79,7 @@ void fullQuiverLeavesLooseArrowOnGround() {
 } // namespace
 
 int main() {
-    arrowsSpawnEverySevenCompletedRounds();
+    arrowsSpawnAtConfiguredCadence();
     enteringLooseArrowCaveAutomaticallyCollectsIt();
     fullQuiverLeavesLooseArrowOnGround();
     std::cout << "Basilisk loose arrow tests passed.\n";
