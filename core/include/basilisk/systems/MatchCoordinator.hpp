@@ -26,9 +26,11 @@ class MatchCoordinator {
 public:
     explicit MatchCoordinator(MatchState& state);
 
+    // Actions may be replaced until lockAction() succeeds. A lock is final for
+    // that round; once all required living hunters are locked, resolution is
+    // immediate.
     [[nodiscard]] bool submitAction(const PlayerAction& action);
     [[nodiscard]] bool lockAction(PlayerId player);
-    [[nodiscard]] bool unlockAction(PlayerId player);
 
     void disconnect(PlayerId player);
     void reconnect(PlayerId player);
