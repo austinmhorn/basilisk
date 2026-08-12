@@ -1,0 +1,171 @@
+#include "basilisk/systems/MapDiscoverySystem.hpp"
+
+#include <algorithm>
+#include <cstdint>
+
+namespace basilisk {
+namespace {
+
+std::uint64_t connectionKey(CaveId a, CaveId b) {
+    const auto low = std::min(a, b);
+    const auto high = std::max(a, b);
+    return (static_cast<std::uint64_t>(low) << 32U) |
+           static_cast<std::uint64_t>(high);
+}
+
+std::optional<TunnelId> tunnelIdForDestination(
+    const MatchState& state,
+    CaveId from,
+    CaveId to) {
+
+    if (!state.world.contains(from)) return std::nullopt;
+    const auto& connections = state.world.cave(from).connections;
+    const auto it = std::find(connections.begin(), connections.end(), to);
+    if (it == connections.end()) return std::nullopt;
+
+    return static_cast<TunnelId>(std::distance(connections.begin(), it) + 1);
+}
+
+} // namespace
+
+void MapDiscoverySystem::initializePlayer(MatchState& state, PlayerState& player) {
+    if (state.rules.mapDiscoveryMode == MapDiscoveryMode::FullMap) {
+        for (const CaveId cave : state.world.caveIds()) {
+            player.discovery.knownCaves.insert(cave);
+            for (const CaveId destination : state.world.cave(cave).connections) {
+                player.discovery.knownConnections.insert(connectionKey(cave, destination));
+            }
+        }
+        return;
+    }
+
+    // In fog-of-war mode, a hunter initially knows only the cave they occupy.
+    // The number of exits from that cave is visible, but the destination CaveId
+    // of each exit stays hidden until that connection is traversed/revealed.
+    player.discovery.knownCaves.insert(player.cave);
+}
+
+std::optional<CaveId> MapDiscoverySystem::resolveMoveDestination(
+    const MatchState& state,
+    const PlayerState& player,
+    const PlayerAction& action) {
+
+    if (!state.world.contains(player.cave)) return std::nullopt;
+
+    if (action.targetTunnel.has_value()) {
+        const auto& connections = state.world.cave(player.cave).connections;
+        const TunnelId tunnel = *action.targetTunnel;
+        if (tunnel == 0 || tunnel > connections.size()) return std::nullopt;
+        return connections[static_cast<std::size_t>(tunnel - 1)];
+    }
+
+    if (!action.targetCave.has_value() ||
+        !state.world.areConnected(player.cave, *action.targetCave)) {
+        return std::nullopt;
+    }
+
+    if (state.rules.mapDiscoveryMode == MapDiscoveryMode::FogOfWar &&
+        !knowsConnection(player, player.cave, *action.targetCave)) {
+        // A client cannot bypass fog of war by submitting a hidden CaveId.
+        // Unknown exits must be selected through their opaque local TunnelId.
+        return std::nullopt;
+    }
+
+    return *action.targetCave;
+}
+
+void MapDiscoverySystem::discoverTraversal(
+    PlayerState& player,
+    CaveId from,
+    CaveId to,
+    std::vector<GameEvent>& events) {
+
+    const bool caveWasNew = player.discovery.knownCaves.insert(to).second;
+    const bool connectionWasNew =
+        player.discovery.knownConnections.insert(connectionKey(from, to)).second;
+
+    if (caveWasNew) {
+        events.push_back(GameEvent{
+            GameEventType::CaveDiscovered,
+            player.id,
+            std::nullopt,
+            to
+        });
+    }
+
+    if (connectionWasNew) {
+        events.push_back(GameEvent{
+            GameEventType::TunnelDestinationRevealed,
+            player.id,
+            std::nullopt,
+            to,
+            static_cast<int>(from),
+            std::nullopt,
+            std::nullopt,
+            std::nullopt
+        });
+    }
+}
+
+void MapDiscoverySystem::discoverCave(
+    PlayerState& player,
+    CaveId cave,
+    std::vector<GameEvent>& events) {
+
+    if (!player.discovery.knownCaves.insert(cave).second) return;
+
+    events.push_back(GameEvent{
+        GameEventType::CaveDiscovered,
+        player.id,
+        std::nullopt,
+        cave
+    });
+}
+
+PlayerMapView MapDiscoverySystem::buildView(
+    const MatchState& state,
+    const PlayerState& player) {
+
+    PlayerMapView view;
+    view.currentCave = player.cave;
+
+    std::vector<CaveId> knownCaves(
+        player.discovery.knownCaves.begin(),
+        player.discovery.knownCaves.end());
+    std::sort(knownCaves.begin(), knownCaves.end());
+
+    for (const CaveId caveId : knownCaves) {
+        if (!state.world.contains(caveId)) continue;
+
+        DiscoveredCaveView caveView;
+        caveView.cave = caveId;
+        const auto& connections = state.world.cave(caveId).connections;
+
+        for (std::size_t index = 0; index < connections.size(); ++index) {
+            const CaveId destination = connections[index];
+            TunnelView tunnel;
+            tunnel.id = static_cast<TunnelId>(index + 1);
+
+            if (state.rules.mapDiscoveryMode == MapDiscoveryMode::FullMap ||
+                knowsConnection(player, caveId, destination)) {
+                tunnel.destination = destination;
+            }
+
+            caveView.exits.push_back(tunnel);
+        }
+
+        view.caves.push_back(std::move(caveView));
+    }
+
+    return view;
+}
+
+bool MapDiscoverySystem::knowsConnection(
+    const PlayerState& player,
+    CaveId a,
+    CaveId b) {
+
+    return player.discovery.knownConnections.contains(connectionKey(a, b));
+}
+
+} // namespace basilisk
