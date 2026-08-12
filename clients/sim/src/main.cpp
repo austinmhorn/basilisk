@@ -3,7 +3,9 @@
 #include <cstdlib>
 #include <iostream>
 #include <optional>
+#include <queue>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -69,10 +71,27 @@ struct SimulationStats {
     std::uint64_t rivalWarningPlayerRounds{0};
     std::uint64_t jackalWarningPlayerRounds{0};
 
+    // Bot-v2 decision telemetry. These counters help separate game balance
+    // from the quality of the deterministic test policy itself.
+    std::uint64_t pitWarningsAvoidedWithKnownRoute{0};
+    std::uint64_t pitWarningsWithForcedUnknownRisk{0};
+    std::uint64_t objectiveSearches{0};
+    std::uint64_t extractionPathMoves{0};
+    std::uint64_t unexploredMoves{0};
+    std::uint64_t knownMoves{0};
+
     std::uint64_t totalRounds{0};
     std::uint64_t totalCavesDiscovered{0};
     std::uint64_t totalFinalArrows{0};
     std::vector<std::uint64_t> roundSamples;
+};
+
+struct BotMemory {
+    std::unordered_set<CaveId> searchedCaves;
+    std::unordered_set<CaveId> visitedCaves;
+    std::optional<CaveId> previousCave;
+    bool rivalDead{false};
+    bool hasSeenPitWarning{false};
 };
 
 bool hasObservation(const PlayerRoundSnapshot& snapshot, ObservationType type) {
@@ -109,6 +128,13 @@ std::vector<const AvailableAction*> actionsOfType(
     return out;
 }
 
+const AvailableAction* searchAction(const PlayerRoundSnapshot& snapshot) {
+    for (const auto& action : snapshot.availableActions) {
+        if (action.type == ActionType::Search) return &action;
+    }
+    return nullptr;
+}
+
 const AvailableAction* deterministicPick(
     const std::vector<const AvailableAction*>& choices,
     std::uint64_t salt) {
@@ -117,16 +143,95 @@ const AvailableAction* deterministicPick(
     return choices[static_cast<std::size_t>(salt % choices.size())];
 }
 
-std::optional<PlayerAction> chooseBotAction(
+const DiscoveredCaveView* discoveredCave(
     const PlayerRoundSnapshot& snapshot,
-    MatchSeed matchSeed) {
+    CaveId cave) {
+
+    const auto it = std::find_if(snapshot.map.caves.begin(), snapshot.map.caves.end(),
+        [cave](const DiscoveredCaveView& view) { return view.cave == cave; });
+    return it == snapshot.map.caves.end() ? nullptr : &*it;
+}
+
+// Pathfinding intentionally uses only the graph that is present in the safe
+// player snapshot. Unknown tunnel destinations are never inferred.
+std::optional<CaveId> nextKnownStepToward(
+    const PlayerRoundSnapshot& snapshot,
+    CaveId target) {
+
+    if (snapshot.currentCave == target) return std::nullopt;
+    if (discoveredCave(snapshot, target) == nullptr) return std::nullopt;
+
+    std::queue<CaveId> frontier;
+    std::unordered_map<CaveId, CaveId> parent;
+    frontier.push(snapshot.currentCave);
+    parent.emplace(snapshot.currentCave, snapshot.currentCave);
+
+    while (!frontier.empty()) {
+        const CaveId current = frontier.front();
+        frontier.pop();
+        const auto* view = discoveredCave(snapshot, current);
+        if (view == nullptr) continue;
+
+        for (const auto& exit : view->exits) {
+            if (!exit.destination.has_value()) continue;
+            const CaveId next = *exit.destination;
+            if (parent.contains(next)) continue;
+            parent.emplace(next, current);
+            if (next == target) {
+                CaveId step = target;
+                while (parent.at(step) != snapshot.currentCave) step = parent.at(step);
+                return step;
+            }
+            frontier.push(next);
+        }
+    }
+
+    return std::nullopt;
+}
+
+const AvailableAction* moveToKnownCave(
+    const PlayerRoundSnapshot& snapshot,
+    CaveId cave) {
+
+    for (const auto& action : snapshot.availableActions) {
+        if (action.type == ActionType::Move && action.targetCave == cave) return &action;
+    }
+    return nullptr;
+}
+
+const AvailableAction* shootKnownCave(
+    const PlayerRoundSnapshot& snapshot,
+    CaveId cave) {
+
+    for (const auto& action : snapshot.availableActions) {
+        if (action.type == ActionType::Shoot && action.targetCave == cave) return &action;
+    }
+    return nullptr;
+}
+
+void updateMemory(const PlayerRoundSnapshot& snapshot, BotMemory& memory) {
+    if (!memory.visitedCaves.contains(snapshot.currentCave)) {
+        if (!memory.visitedCaves.empty()) memory.previousCave = snapshot.map.currentCave;
+        memory.visitedCaves.insert(snapshot.currentCave);
+    }
+    if (hasObservation(snapshot, ObservationType::RivalDied)) memory.rivalDead = true;
+    if (hasObservation(snapshot, ObservationType::PitNearby)) memory.hasSeenPitWarning = true;
+}
+
+std::optional<PlayerAction> chooseBotActionV2(
+    const PlayerRoundSnapshot& snapshot,
+    BotMemory& memory,
+    MatchSeed matchSeed,
+    SimulationStats& stats) {
 
     if (!snapshot.alive || snapshot.availableActions.empty()) return std::nullopt;
+    updateMemory(snapshot, memory);
 
     const std::uint64_t salt = static_cast<std::uint64_t>(matchSeed) ^
         (static_cast<std::uint64_t>(snapshot.round) * 0x9E3779B97F4A7C15ULL) ^
         (static_cast<std::uint64_t>(snapshot.player) * 0xBF58476D1CE4E5B9ULL);
 
+    // Winning contextual actions always outrank every other choice.
     for (const auto& action : snapshot.availableActions) {
         if (action.type == ActionType::Contextual &&
             action.contextualAction == ContextualActionType::Escape) {
@@ -134,6 +239,7 @@ std::optional<PlayerAction> chooseBotAction(
         }
     }
 
+    // Healing is a survival action, but do not waste it for chip damage.
     if (snapshot.health <= 60) {
         for (const auto& action : snapshot.availableActions) {
             if (action.type == ActionType::UseItem &&
@@ -143,41 +249,124 @@ std::optional<PlayerAction> chooseBotAction(
         }
     }
 
-    const bool threatNearby = hasBasiliskClue(snapshot) ||
-        hasObservation(snapshot, ObservationType::RivalNearby);
+    // Once extraction is known, use only discovered information to pathfind to
+    // it. If no known route exists yet, normal exploration continues below.
+    if (snapshot.hasHunterSigil && snapshot.extractionCave.has_value()) {
+        if (const auto next = nextKnownStepToward(snapshot, *snapshot.extractionCave);
+            next.has_value()) {
+            if (const auto* move = moveToKnownCave(snapshot, *next); move != nullptr) {
+                ++stats.extractionPathMoves;
+                return materialize(snapshot.player, *move);
+            }
+        }
+    }
 
-    if (threatNearby && snapshot.arrows > 0) {
+    // Enraged gives an actual last-known CaveId. If that cave is directly
+    // shootable, prefer the informed shot instead of choosing a random exit.
+    if (snapshot.arrows > 0) {
+        for (const auto& observation : snapshot.observations) {
+            if (observation.type == ObservationType::EnragedLastKnownCave &&
+                observation.cave.has_value()) {
+                if (const auto* shot = shootKnownCave(snapshot, *observation.cave);
+                    shot != nullptr) {
+                    return materialize(snapshot.player, *shot);
+                }
+            }
+        }
+    }
+
+    // Adjacent Basilisk/rival clues justify a shot. This remains uncertain on
+    // purpose: the observation says something is nearby, not which tunnel.
+    const bool combatThreat = hasObservation(snapshot, ObservationType::BasiliskNearby) ||
+        hasObservation(snapshot, ObservationType::BasiliskNearbySubtle) ||
+        hasObservation(snapshot, ObservationType::RivalNearby);
+    if (combatThreat && snapshot.arrows > 0) {
         const auto shoots = actionsOfType(snapshot, ActionType::Shoot);
         if (const auto* choice = deterministicPick(shoots, salt); choice != nullptr) {
             return materialize(snapshot.player, *choice);
         }
     }
 
-    if ((snapshot.round + snapshot.player) % 4 == 0) {
-        for (const auto& action : snapshot.availableActions) {
-            if (action.type == ActionType::Search) {
-                return materialize(snapshot.player, action);
+    const bool pitWarning = hasObservation(snapshot, ObservationType::PitNearby);
+    const auto moves = actionsOfType(snapshot, ActionType::Move);
+    std::vector<const AvailableAction*> knownMoves;
+    std::vector<const AvailableAction*> unexploredMoves;
+    for (const auto* move : moves) {
+        if (move->targetCave.has_value()) knownMoves.push_back(move);
+        else if (move->targetTunnel.has_value()) unexploredMoves.push_back(move);
+    }
+
+    // A cold draft means one adjacent cave is dangerous, but not which one.
+    // Prefer a tunnel already survived before. If this is the first visit, use
+    // Search once as a deliberate hesitation before accepting unknown risk.
+    if (pitWarning) {
+        if (!knownMoves.empty()) {
+            ++stats.pitWarningsAvoidedWithKnownRoute;
+            if (const auto* choice = deterministicPick(knownMoves, salt >> 5U); choice != nullptr) {
+                ++stats.knownMoves;
+                return materialize(snapshot.player, *choice);
             }
         }
+
+        if (!memory.searchedCaves.contains(snapshot.currentCave)) {
+            if (const auto* search = searchAction(snapshot); search != nullptr) {
+                memory.searchedCaves.insert(snapshot.currentCave);
+                return materialize(snapshot.player, *search);
+            }
+        }
+
+        if (!unexploredMoves.empty()) ++stats.pitWarningsWithForcedUnknownRisk;
     }
 
-    const auto moves = actionsOfType(snapshot, ActionType::Move);
-    std::vector<const AvailableAction*> unexplored;
-    for (const auto* move : moves) {
-        if (move->targetTunnel.has_value() && !move->targetCave.has_value()) {
-            unexplored.push_back(move);
+    // After a rival death, Search every newly reached cave once. This models a
+    // hunter actively looking for the body or an ejected Sigil without knowing
+    // its hidden location.
+    if (memory.rivalDead && !snapshot.hasHunterSigil &&
+        !memory.searchedCaves.contains(snapshot.currentCave)) {
+        if (const auto* search = searchAction(snapshot); search != nullptr) {
+            memory.searchedCaves.insert(snapshot.currentCave);
+            ++stats.objectiveSearches;
+            return materialize(snapshot.player, *search);
         }
     }
 
-    if (const auto* choice = deterministicPick(
-            unexplored.empty() ? moves : unexplored,
-            salt >> 7U); choice != nullptr) {
-        return materialize(snapshot.player, *choice);
+    // General resource Search is once per cave and deliberately occasional.
+    if (!memory.searchedCaves.contains(snapshot.currentCave) &&
+        ((snapshot.round + snapshot.player) % 5 == 0)) {
+        if (const auto* search = searchAction(snapshot); search != nullptr) {
+            memory.searchedCaves.insert(snapshot.currentCave);
+            return materialize(snapshot.player, *search);
+        }
     }
 
-    for (const auto& action : snapshot.availableActions) {
-        if (action.type == ActionType::Search) {
-            return materialize(snapshot.player, action);
+    // Exploration remains the default objective. Prefer genuinely unknown
+    // tunnels unless a Pit warning above forced a safer known route.
+    if (!unexploredMoves.empty()) {
+        if (const auto* choice = deterministicPick(unexploredMoves, salt >> 7U); choice != nullptr) {
+            ++stats.unexploredMoves;
+            return materialize(snapshot.player, *choice);
+        }
+    }
+
+    if (!knownMoves.empty()) {
+        // Avoid immediately reversing direction when another known route exists.
+        std::vector<const AvailableAction*> forwardKnown;
+        for (const auto* move : knownMoves) {
+            if (!memory.previousCave.has_value() || move->targetCave != memory.previousCave) {
+                forwardKnown.push_back(move);
+            }
+        }
+        const auto& choices = forwardKnown.empty() ? knownMoves : forwardKnown;
+        if (const auto* choice = deterministicPick(choices, salt >> 11U); choice != nullptr) {
+            ++stats.knownMoves;
+            return materialize(snapshot.player, *choice);
+        }
+    }
+
+    if (!memory.searchedCaves.contains(snapshot.currentCave)) {
+        if (const auto* search = searchAction(snapshot); search != nullptr) {
+            memory.searchedCaves.insert(snapshot.currentCave);
+            return materialize(snapshot.player, *search);
         }
     }
 
@@ -312,6 +501,8 @@ void runOne(
     auto state = MapGenerator::generate(mapSeed, matchSeed);
     MatchCoordinator coordinator(state);
     std::vector<GameEvent> previousEvents;
+    std::unordered_map<PlayerId, BotMemory> memories;
+    for (const auto& player : state.players) memories.emplace(player.id, BotMemory{});
 
     while (state.result.status == MatchStatus::Active && state.round <= maxRounds) {
         std::vector<PlayerId> living;
@@ -326,7 +517,8 @@ void runOne(
         for (const PlayerId player : living) {
             const auto snapshot = SnapshotSystem::buildForPlayer(state, player, previousEvents);
             accumulateSnapshotTelemetry(snapshot, stats, pitWarnedThisRound);
-            if (const auto action = chooseBotAction(snapshot, matchSeed); action.has_value()) {
+            if (const auto action = chooseBotActionV2(
+                    snapshot, memories.at(player), matchSeed, stats); action.has_value()) {
                 accumulateSelectedAction(snapshot, *action, stats);
                 selected.push_back(*action);
             }
@@ -393,7 +585,7 @@ int main(int argc, char** argv) {
             stats);
     }
 
-    std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT\n";
+    std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT (BOT V2)\n";
     std::cout << "Matches: " << stats.matches << " | max rounds/match: " << maxRounds << "\n\n";
 
     std::cout << "OUTCOMES\n";
@@ -424,6 +616,8 @@ int main(int argc, char** argv) {
     std::cout << "Pit deaths: " << stats.pitDeaths << '\n';
     std::cout << "Pit warning player-rounds: " << stats.pitWarningPlayerRounds << '\n';
     std::cout << "Pit deaths after warning that round: " << stats.pitDeathsAfterWarning << '\n';
+    std::cout << "Pit warnings avoided via known route: " << stats.pitWarningsAvoidedWithKnownRoute << '\n';
+    std::cout << "Pit warnings with forced unknown risk: " << stats.pitWarningsWithForcedUnknownRisk << '\n';
     std::cout << "PvP hits: " << stats.pvpHits << '\n';
     std::cout << "PvP deaths: " << stats.pvpDeaths << '\n';
     std::cout << "Rival warning player-rounds: " << stats.rivalWarningPlayerRounds << '\n';
@@ -445,7 +639,9 @@ int main(int argc, char** argv) {
     std::cout << "Bodies created: " << stats.bodiesCreated << '\n';
     std::cout << "Bodies found: " << stats.bodiesFound << '\n';
     std::cout << "Sigils acquired: " << stats.sigilsAcquired << '\n';
+    std::cout << "Objective-driven searches: " << stats.objectiveSearches << '\n';
     std::cout << "Extractions activated: " << stats.extractionsActivated << '\n';
+    std::cout << "Extraction path moves: " << stats.extractionPathMoves << '\n';
     std::cout << "Escape-available events: " << stats.escapeAvailableEvents << '\n';
     std::cout << "Players escaped: " << stats.playerEscapes << '\n';
 
@@ -456,7 +652,7 @@ int main(int argc, char** argv) {
     std::cout << "Stuns: " << stats.jackalStuns << '\n';
     std::cout << "Jackal warning player-rounds: " << stats.jackalWarningPlayerRounds << '\n';
 
-    std::cout << "\nRESOURCE TELEMETRY\n";
+    std::cout << "\nRESOURCE / BOT DECISION TELEMETRY\n";
     std::cout << "Arrows fired: " << stats.arrowsFired << '\n';
     std::cout << "Blind shots: " << stats.blindShots << '\n';
     std::cout << "Average arrows remaining/hunter: " << avgFinalArrows << '\n';
@@ -464,6 +660,8 @@ int main(int argc, char** argv) {
     std::cout << "Arrows found: " << stats.arrowsFound << '\n';
     std::cout << "Items found: " << stats.itemsFound << '\n';
     std::cout << "Heals used: " << stats.heals << '\n';
+    std::cout << "Unexplored moves: " << stats.unexploredMoves << '\n';
+    std::cout << "Known-route moves: " << stats.knownMoves << '\n';
 
     return 0;
 }
