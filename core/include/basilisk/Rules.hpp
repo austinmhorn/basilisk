@@ -5,6 +5,11 @@
 
 namespace basilisk {
 
+enum class MapDiscoveryMode {
+    FullMap,
+    FogOfWar
+};
+
 struct Rules {
     int maxHealth{100};
     int arrowDamage{40};
@@ -14,6 +19,10 @@ struct Rules {
     int healingAmount{40};
     int jackalStunPhases{3};
     int cavesPerJackal{15};
+
+    // Static/classic maps can expose their complete topology while procedural
+    // maps use player-specific discovery and opaque unknown tunnel choices.
+    MapDiscoveryMode mapDiscoveryMode{MapDiscoveryMode::FullMap};
 
     // Reserved Jackal damage capability. Disabled by default so current
     // gameplay remains faithful to the classic ROB / SCARE / KNOCKOUT model.
