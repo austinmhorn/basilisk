@@ -19,11 +19,22 @@ std::uint64_t looseArrowSeed(const MatchState& state) {
         (static_cast<std::uint64_t>(state.round) * 0xD6E8FEB86659FD93ULL);
 }
 
+void tickTemporaryEffects(MatchState& state) {
+    for (auto& player : state.players) {
+        if (player.pitMapRevealRounds > 0) --player.pitMapRevealRounds;
+        if (player.jackalRepellentRounds > 0) --player.jackalRepellentRounds;
+    }
+}
+
 } // namespace
 
 std::vector<GameEvent> RoundController::resolve(
     MatchState& state,
     const std::vector<PlayerAction>& actions) const {
+
+    // Effects activated during the previous resolution remain visible until
+    // the player commits their next round, then spend one remaining round.
+    tickTemporaryEffects(state);
 
     for (auto& player : state.players) {
         MapDiscoverySystem::initializePlayer(state, player);
