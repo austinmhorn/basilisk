@@ -21,3 +21,11 @@ add_executable(BasiliskObjectiveTests
 target_link_libraries(BasiliskObjectiveTests PRIVATE Basilisk::Core)
 
 add_test(NAME BasiliskObjectiveTests COMMAND BasiliskObjectiveTests)
+
+add_executable(BasiliskSimultaneousTests
+    basilisk_simultaneous_tests.cpp
+)
+
+target_link_libraries(BasiliskSimultaneousTests PRIVATE Basilisk::Core)
+
+add_test(NAME BasiliskSimultaneousTests COMMAND BasiliskSimultaneousTests)
