@@ -10,9 +10,12 @@ enum class GameEventType {
     PlayerMoved,
     ArrowFired,
     ArrowHitPlayer,
+    ArrowHitBasilisk,
+    ArrowHitJackal,
     ArrowMissed,
     PlayerDamaged,
     PlayerKilled,
+    JackalStunned,
     SearchCompleted
 };
 
