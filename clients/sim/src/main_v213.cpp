@@ -132,7 +132,6 @@ std::optional<PlayerAction> chooseActionV213(
     choseStalenessMove = false;
     stale.lastVisitedRound[s.currentCave] = s.round;
 
-    // Maintain honest current-cave ammo memory before making a decision.
     if (s.looseArrowPresent) {
         const bool newlySeen = ammo.seenLooseArrowCaves.insert(s.currentCave).second;
         if (newlySeen && s.arrows >= s.maxArrows)
@@ -141,7 +140,6 @@ std::optional<PlayerAction> chooseActionV213(
         ++v210.rememberedArrowLocationsInvalidated;
     }
 
-    // Outside the exact late-game ammo-recovery state, retain V2.11 behavior.
     if (s.arrows != 0 || hasAnyMeaningfulFrontier(s)) {
         return chooseActionV211(
             s, memory, sweep, ammo, matchSeed, stats, legacy, v26, v210, v211);
@@ -150,7 +148,6 @@ std::optional<PlayerAction> chooseActionV213(
     if (!s.alive || s.availableActions.empty()) return std::nullopt;
     if (hasObs(s, ObservationType::RivalDied)) memory.rivalDead = true;
 
-    // Preserve higher-priority gameplay decisions before patrol movement.
     for (const auto& a : s.availableActions)
         if (a.type == ActionType::Contextual && a.contextualAction == ContextualActionType::Escape)
             return materialize(s.player, a);
@@ -198,7 +195,6 @@ std::optional<PlayerAction> chooseActionV213(
         }
     }
 
-    // Explicitly remembered loose arrows remain highest-priority ammo targets.
     if (!s.hasHunterSigil) {
         if (const auto step = safeNextStepToRememberedArrow(s, ammo);
             step.has_value() && *step != s.currentCave) {
@@ -369,9 +365,9 @@ int main(int argc, char** argv) {
                    firstMatchSeed + static_cast<MatchSeed>(i),
                    maxRounds, stats, legacy, v26, v27, v28, v210, v211, v213);
 
-    std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT (BOT V2.13 STALENESS PATROL)\n";
+    std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT (BOT V2.14 CADENCE A/B)\n";
     std::cout << "Matches: " << stats.matches << " | max rounds/match: " << maxRounds
-              << " | loose-arrow cap: 8\n\n";
+              << " | loose-arrow cap: 8 | spawn cadence: every 5 rounds\n\n";
 
     std::cout << "OUTCOMES\n";
     printPercent("Completed", stats.completed, stats.matches);
