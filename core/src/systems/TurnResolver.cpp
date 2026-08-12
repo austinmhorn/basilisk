@@ -11,6 +11,7 @@
 #include "basilisk/Random.hpp"
 #include "basilisk/systems/ItemSystem.hpp"
 #include "basilisk/systems/SearchSystem.hpp"
+#include "basilisk/systems/WorldDangerSystem.hpp"
 
 namespace basilisk {
 namespace {
@@ -42,19 +43,14 @@ void applyOrRefreshStun(JackalState& jackal, int applications) {
     }
 }
 
-void advanceJackalStatuses(JackalState& jackal) {
-    for (auto& status : jackal.statuses) {
-        if (status.type == StatusEffectType::Stunned && status.remainingApplications > 0) {
-            --status.remainingApplications;
-        }
-    }
-    std::erase_if(jackal.statuses,
-        [](const StatusEffect& status) { return status.remainingApplications <= 0; });
-}
-
 bool caveOccupiedByLivingPlayer(const MatchState& state, CaveId cave) {
     return std::any_of(state.players.begin(), state.players.end(),
         [cave](const PlayerState& player) { return player.alive && player.cave == cave; });
+}
+
+bool caveContainsActivePit(const MatchState& state, CaveId cave) {
+    return std::any_of(state.pits.begin(), state.pits.end(),
+        [cave](const PitState& pit) { return pit.active && pit.cave == cave; });
 }
 
 std::optional<int> distanceTo(const WorldGraph& world, CaveId start, CaveId target) {
@@ -166,8 +162,6 @@ void resolveBasiliskShotBatch(MatchState& state, const std::vector<PlayerId>& sh
                               RandomGenerator& rng, std::vector<GameEvent>& events) {
     if (!state.basilisk.alive || shooters.empty()) return;
 
-    // One or more correct Basilisk shots during the same round constitute one
-    // true encounter. Every shooter uses the same encounter-stage odds.
     ++state.basilisk.trueEncounters;
     const int encounter = state.basilisk.trueEncounters;
 
@@ -199,8 +193,6 @@ void resolveBasiliskShotBatch(MatchState& state, const std::vector<PlayerId>& sh
         return;
     }
 
-    // All correct shots failed. The encounter advances only once, and any
-    // resulting behavior transition is rolled/applied once for the round.
     events.push_back(GameEvent{GameEventType::BasiliskEvaded, std::nullopt, std::nullopt,
         state.basilisk.cave, encounter, state.basilisk.behavior});
 
@@ -241,7 +233,7 @@ CaveId chooseExtractionCave(const MatchState& state, CaveId from) {
     CaveId best = from;
     int bestDistance = -1;
     for (const CaveId cave : state.world.caveIds()) {
-        if (cave == from) continue;
+        if (cave == from || caveContainsActivePit(state, cave)) continue;
         const auto distance = distanceTo(state.world, from, cave);
         if (!distance.has_value()) continue;
         if (*distance > bestDistance || (*distance == bestDistance && cave < best)) {
@@ -418,18 +410,21 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
         events.insert(events.end(), itemEvents.begin(), itemEvents.end());
     }
 
-    // 5. Contextual interactions. ESCAPE is intentionally hidden unless the
-    // client derives availability from the authoritative extraction state.
-    for (const auto& action : orderedActions) {
-        if (action.type != ActionType::Contextual ||
-            action.contextualAction != ContextualActionType::Escape) continue;
-        auto& player = playerById(state, action.player);
-        resolveEscape(state, player, events);
+    // 5. Environmental hazards. A hunter can still complete already-committed
+    // earlier phases before the Pit resolves, matching the simultaneous model.
+    WorldDangerSystem::resolvePits(state, events);
+    if (state.result.status == MatchStatus::Active) {
+        resolveMutualDeathDraw(state, events);
     }
 
-    // 6. NPC/status phase.
-    for (auto& jackal : state.jackals) advanceJackalStatuses(jackal);
+    // 6. Jackal/NPC phase. Stunned Jackals consume one suppressed NPC phase;
+    // active Jackals move and can rob, scare, or knock out a hunter.
+    WorldDangerSystem::resolveJackals(state, rng, events);
+    if (state.result.status == MatchStatus::Active) {
+        resolveMutualDeathDraw(state, events);
+    }
 
+    // 7. Basilisk behavior phase.
     if (state.basilisk.alive && state.result.status == MatchStatus::Active) {
         ++state.basilisk.roundsSinceMove;
         const int interval = movementInterval(state.basilisk.behavior);
@@ -441,6 +436,17 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
             } else {
                 moveBasiliskRandomly(state, rng, events);
             }
+        }
+    }
+
+    // 8. Contextual escape resolves only after hazards/NPCs. Reaching the exit
+    // is not enough: the Sigil holder must survive the round and still be there.
+    if (state.result.status == MatchStatus::Active) {
+        for (const auto& action : orderedActions) {
+            if (action.type != ActionType::Contextual ||
+                action.contextualAction != ContextualActionType::Escape) continue;
+            auto& player = playerById(state, action.player);
+            resolveEscape(state, player, events);
         }
     }
 
