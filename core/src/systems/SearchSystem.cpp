@@ -3,6 +3,36 @@
 #include <algorithm>
 
 namespace basilisk {
+namespace {
+
+void tryAddItem(PlayerState& player,
+                ItemType item,
+                const Rules& rules,
+                std::vector<GameEvent>& events) {
+    if (player.inventory.add(ItemInstance{item}, rules.maxInventoryItems)) {
+        events.push_back(GameEvent{
+            GameEventType::ItemFound,
+            player.id,
+            std::nullopt,
+            player.cave,
+            1,
+            std::nullopt,
+            item
+        });
+    } else {
+        events.push_back(GameEvent{
+            GameEventType::InventoryFull,
+            player.id,
+            std::nullopt,
+            player.cave,
+            0,
+            std::nullopt,
+            item
+        });
+    }
+}
+
+} // namespace
 
 std::vector<GameEvent> SearchSystem::search(
     PlayerState& player,
@@ -42,29 +72,17 @@ std::vector<GameEvent> SearchSystem::search(
     }
 
     if (rng.chance(rules.searchHealingNumerator, rules.searchHealingDenominator)) {
-        if (player.inventory.add(
-                ItemInstance{ItemType::HealingDraught},
-                rules.maxInventoryItems)) {
-            events.push_back(GameEvent{
-                GameEventType::ItemFound,
-                player.id,
-                std::nullopt,
-                player.cave,
-                1,
-                std::nullopt,
-                ItemType::HealingDraught
-            });
-        } else {
-            events.push_back(GameEvent{
-                GameEventType::InventoryFull,
-                player.id,
-                std::nullopt,
-                player.cave,
-                0,
-                std::nullopt,
-                ItemType::HealingDraught
-            });
-        }
+        tryAddItem(player, ItemType::HealingDraught, rules, events);
+    }
+
+    if (rng.chance(rules.searchOldMinersMapNumerator,
+                   rules.searchOldMinersMapDenominator)) {
+        tryAddItem(player, ItemType::OldMinersMap, rules, events);
+    }
+
+    if (rng.chance(rules.searchJackalRepellentNumerator,
+                   rules.searchJackalRepellentDenominator)) {
+        tryAddItem(player, ItemType::JackalRepellent, rules, events);
     }
 
     if (rng.chance(rules.searchExoticNumerator, rules.searchExoticDenominator)) {
