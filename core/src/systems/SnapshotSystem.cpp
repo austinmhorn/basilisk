@@ -12,7 +12,8 @@ namespace {
 
 PlayerState& playerById(MatchState& state, PlayerId id) {
     const auto it = std::find_if(
-        state.players.begin(), state.players.end(),
+        state.players.begin(),
+        state.players.end(),
         [id](const PlayerState& player) { return player.id == id; });
     if (it == state.players.end()) throw std::invalid_argument("Snapshot requested for an unknown player.");
     return *it;
@@ -122,6 +123,10 @@ PlayerRoundSnapshot SnapshotSystem::buildForPlayer(
     snapshot.alive = player.alive;
     snapshot.currentCave = player.cave;
     snapshot.map = MapDiscoverySystem::buildView(visibleState, player);
+    snapshot.looseArrowPresent = std::find(
+        visibleState.looseArrows.begin(),
+        visibleState.looseArrows.end(),
+        player.cave) != visibleState.looseArrows.end();
 
     if (player.pitMapRevealRounds > 0) {
         for (const auto& pit : visibleState.pits)
