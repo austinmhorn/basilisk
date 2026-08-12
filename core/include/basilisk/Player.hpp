@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "basilisk/Types.hpp"
@@ -19,6 +20,10 @@ struct PlayerState {
     std::unordered_set<CaveId> searchedCaves;
     std::optional<PlayerId> heldSigilFrom;
     DiscoveryState discovery;
+
+    // Successful Pit investigations persist as player knowledge. The TunnelId
+    // is local to the keyed cave and does not reveal the hidden destination.
+    std::unordered_map<CaveId, TunnelId> knownPitTunnels;
 };
 
 } // namespace basilisk
