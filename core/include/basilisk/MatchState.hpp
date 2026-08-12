@@ -3,6 +3,9 @@
 #include <optional>
 #include <vector>
 
+#include "basilisk/Body.hpp"
+#include "basilisk/Extraction.hpp"
+#include "basilisk/MatchResult.hpp"
 #include "basilisk/Player.hpp"
 #include "basilisk/Rules.hpp"
 #include "basilisk/Types.hpp"
@@ -20,6 +23,9 @@ struct MatchState {
     std::vector<PlayerState> players;
     BasiliskState basilisk;
     std::vector<JackalState> jackals;
+    std::vector<BodyState> bodies;
+    ExtractionState extraction;
+    MatchResult result;
 
     // Persistent environmental activity used by behaviors such as Territorial.
     std::optional<CaveId> mostRecentSearchCave;
