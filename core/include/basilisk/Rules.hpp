@@ -26,10 +26,11 @@ struct Rules {
     std::uint64_t multiplayerReserveMs{300000};
     std::uint64_t disconnectGraceMs{30000};
 
-    // Original-game loose arrow economy: one world arrow every seven rounds,
-    // with at most four loose arrows waiting on the map at once.
+    // Original-game loose arrow economy: one world arrow every seven rounds.
+    // V2.6 balance experiment raises the simultaneous loose-arrow pool from
+    // four to eight while leaving spawn frequency unchanged.
     std::uint32_t looseArrowSpawnIntervalRounds{7};
-    std::size_t maxLooseArrows{4};
+    std::size_t maxLooseArrows{8};
 
     // Static/classic maps can expose their complete topology while procedural
     // maps use player-specific discovery and opaque unknown tunnel choices.
