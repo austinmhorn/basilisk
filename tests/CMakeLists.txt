@@ -53,3 +53,11 @@ add_executable(BasiliskMapGeneratorTests
 target_link_libraries(BasiliskMapGeneratorTests PRIVATE Basilisk::Core)
 
 add_test(NAME BasiliskMapGeneratorTests COMMAND BasiliskMapGeneratorTests)
+
+add_executable(BasiliskObservationTests
+    observation_tests.cpp
+)
+
+target_link_libraries(BasiliskObservationTests PRIVATE Basilisk::Core)
+
+add_test(NAME BasiliskObservationTests COMMAND BasiliskObservationTests)
