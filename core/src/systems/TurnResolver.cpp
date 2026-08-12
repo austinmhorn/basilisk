@@ -89,12 +89,18 @@ std::vector<CaveId> safeBasiliskDestinations(const MatchState& state) {
     return destinations;
 }
 
-std::vector<CaveId> safeBasiliskEvadeDestinations(const MatchState& state) {
+std::vector<CaveId> safeBasiliskEvadeDestinations(const MatchState& state,
+                                                    int minDistance,
+                                                    int maxDistance) {
     std::vector<CaveId> destinations;
     for (const CaveId cave : state.world.caveIds()) {
         if (cave == state.basilisk.cave) continue;
         if (caveContainsActivePit(state, cave)) continue;
         if (caveOccupiedByLivingPlayer(state, cave)) continue;
+
+        const auto distance = distanceTo(state.world, state.basilisk.cave, cave);
+        if (!distance.has_value()) continue;
+        if (*distance < minDistance || *distance > maxDistance) continue;
         destinations.push_back(cave);
     }
     return destinations;
@@ -116,9 +122,19 @@ void moveBasiliskRandomly(MatchState& state, RandomGenerator& rng, std::vector<G
     emitBasiliskMove(state, destinations[index], events);
 }
 
-void relocateBasiliskAfterEvade(MatchState& state, RandomGenerator& rng,
-                                std::vector<GameEvent>& events) {
-    auto destinations = safeBasiliskEvadeDestinations(state);
+void relocateBasiliskAfterEvade(MatchState& state, int encounter,
+                                RandomGenerator& rng, std::vector<GameEvent>& events) {
+    const int minDistance = encounter == 1 ? 2 : 1;
+    const int maxDistance = encounter == 1 ? 3 : 2;
+    auto destinations = safeBasiliskEvadeDestinations(state, minDistance, maxDistance);
+
+    // Extremely constrained maps can occasionally have no legal cave in the
+    // preferred band. Fall back to any safe non-current cave rather than leave
+    // an evading Basilisk in place.
+    if (destinations.empty()) {
+        destinations = safeBasiliskEvadeDestinations(
+            state, 1, std::numeric_limits<int>::max());
+    }
     if (destinations.empty()) return;
     const auto index = static_cast<std::size_t>(rng.range(0, static_cast<int>(destinations.size()) - 1));
     emitBasiliskMove(state, destinations[index], events);
@@ -216,7 +232,7 @@ void resolveBasiliskShotBatch(MatchState& state, const std::vector<PlayerId>& sh
 
     events.push_back(GameEvent{GameEventType::BasiliskEvaded, std::nullopt, std::nullopt,
         state.basilisk.cave, encounter, state.basilisk.behavior});
-    relocateBasiliskAfterEvade(state, rng, events);
+    relocateBasiliskAfterEvade(state, encounter, rng, events);
 
     if (encounter == 1) {
         if (rng.chance(1, 2)) {
