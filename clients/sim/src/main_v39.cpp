@@ -38,6 +38,8 @@ enum class Playstyle : std::size_t {
 
 constexpr std::size_t kStyleCount = static_cast<std::size_t>(Playstyle::Count);
 constexpr std::size_t kItemCount = 5;
+constexpr std::size_t kBehaviorCount = 6;
+constexpr std::size_t kPersonalityCount = 5;
 
 const char* styleName(Playstyle style) {
     switch (style) {
@@ -72,6 +74,45 @@ std::size_t itemIndex(ItemType item) {
     return 0;
 }
 
+std::size_t behaviorIndex(BasiliskBehavior behavior) {
+    return static_cast<std::size_t>(behavior);
+}
+
+std::optional<std::size_t> personalityIndex(BasiliskBehavior behavior) {
+    switch (behavior) {
+        case BasiliskBehavior::Restless: return 0;
+        case BasiliskBehavior::Lurker: return 1;
+        case BasiliskBehavior::Skittish: return 2;
+        case BasiliskBehavior::Territorial: return 3;
+        case BasiliskBehavior::Enraged: return 4;
+        case BasiliskBehavior::Normal: return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+const char* behaviorName(BasiliskBehavior behavior) {
+    switch (behavior) {
+        case BasiliskBehavior::Normal: return "Normal";
+        case BasiliskBehavior::Restless: return "Restless";
+        case BasiliskBehavior::Lurker: return "Lurker";
+        case BasiliskBehavior::Skittish: return "Skittish";
+        case BasiliskBehavior::Territorial: return "Territorial";
+        case BasiliskBehavior::Enraged: return "Enraged";
+    }
+    return "Unknown";
+}
+
+BasiliskBehavior personalityBehavior(std::size_t index) {
+    switch (index) {
+        case 0: return BasiliskBehavior::Restless;
+        case 1: return BasiliskBehavior::Lurker;
+        case 2: return BasiliskBehavior::Skittish;
+        case 3: return BasiliskBehavior::Territorial;
+        case 4: return BasiliskBehavior::Enraged;
+        default: return BasiliskBehavior::Normal;
+    }
+}
+
 std::uint64_t mix64(std::uint64_t value) {
     value += 0x9E3779B97F4A7C15ULL;
     value = (value ^ (value >> 30U)) * 0xBF58476D1CE4E5B9ULL;
@@ -102,6 +143,12 @@ struct HuntTiming {
     std::optional<RoundNumber> secondEvadeRound;
 };
 
+struct PersonalityMatchTracker {
+    BasiliskBehavior active{BasiliskBehavior::Normal};
+    std::optional<RoundNumber> firstAssignmentRound;
+    std::uint64_t changes{0};
+};
+
 struct StyleStats {
     std::uint64_t assignments{0};
     std::uint64_t wins{0};
@@ -118,6 +165,21 @@ struct StyleStats {
     std::uint64_t itemsFound{0};
     std::uint64_t itemsUsed{0};
     std::uint64_t roundsAlive{0};
+};
+
+struct PersonalityStats {
+    std::uint64_t assignments{0};
+    std::uint64_t activeRounds{0};
+    std::uint64_t encounters{0};
+    std::uint64_t evades{0};
+    std::uint64_t defeats{0};
+    std::uint64_t contactKills{0};
+    std::uint64_t reacquisitions{0};
+    std::uint64_t reacquireRounds{0};
+    std::uint64_t matchesEnded{0};
+    std::uint64_t basiliskDefeatEnds{0};
+    std::uint64_t extractionEnds{0};
+    std::uint64_t drawEnds{0};
 };
 
 struct Stats {
@@ -139,6 +201,12 @@ struct Stats {
     std::uint64_t secondEncounterMatches{0}, thirdEncounterMatches{0};
     std::uint64_t restlessAssignments{0}, lurkerAssignments{0}, skittishAssignments{0};
     std::uint64_t territorialAssignments{0}, enragedAssignments{0};
+
+    std::array<PersonalityStats, kPersonalityCount> personality{};
+    std::array<std::array<std::uint64_t, kBehaviorCount>, kBehaviorCount> personalityTransitions{};
+    std::uint64_t firstPersonalityAssignmentRoundTotal{0};
+    std::uint64_t firstPersonalityAssignmentCount{0};
+    std::array<std::uint64_t, 4> personalityChangesPerMatch{};
 
     std::uint64_t evadeRelocations{0};
     std::uint64_t relocationDistanceTotal{0};
@@ -696,7 +764,8 @@ void collectEvents(
     const std::unordered_set<PlayerId>& zeroBefore,
     const std::unordered_set<PlayerId>& stalenessMovers,
     std::unordered_map<PlayerId, BotMemory>& memories,
-    HuntTiming& huntTiming) {
+    HuntTiming& huntTiming,
+    PersonalityMatchTracker& personalityTracker) {
 
     std::unordered_map<PlayerId, PlayerId> pvpAttackerByTarget;
     std::unordered_set<PlayerId> jackalDamageTargets;
@@ -707,6 +776,10 @@ void collectEvents(
         auto styleStats = [&](PlayerId id) -> StyleStats* {
             const auto it = styles.find(id);
             return it == styles.end() ? nullptr : &stats.style[static_cast<std::size_t>(it->second)];
+        };
+        auto activePersonalityStats = [&]() -> PersonalityStats* {
+            const auto index = personalityIndex(personalityTracker.active);
+            return index.has_value() ? &stats.personality[*index] : nullptr;
         };
 
         switch (event.type) {
@@ -724,23 +797,33 @@ void collectEvents(
             case GameEventType::ArrowHitJackal: ++stats.jackalHits; break;
             case GameEventType::ArrowReachedBasilisk:
                 ++stats.basiliskEncounters;
+                if (auto* ps = activePersonalityStats()) ++ps->encounters;
                 if (event.actor.has_value()) if (auto* ss = styleStats(*event.actor)) ++ss->basiliskEncounters;
                 if (event.amount == 2 && huntTiming.firstEvadeRound.has_value()) {
                     const RoundNumber elapsed = state.round >= *huntTiming.firstEvadeRound
                         ? state.round - *huntTiming.firstEvadeRound : 0;
                     stats.firstReacquireRoundsTotal += static_cast<std::uint64_t>(elapsed);
                     ++stats.firstReacquisitions;
+                    if (auto* ps = activePersonalityStats()) {
+                        ++ps->reacquisitions;
+                        ps->reacquireRounds += static_cast<std::uint64_t>(elapsed);
+                    }
                     huntTiming.firstEvadeRound.reset();
                 } else if (event.amount == 3 && huntTiming.secondEvadeRound.has_value()) {
                     const RoundNumber elapsed = state.round >= *huntTiming.secondEvadeRound
                         ? state.round - *huntTiming.secondEvadeRound : 0;
                     stats.secondReacquireRoundsTotal += static_cast<std::uint64_t>(elapsed);
                     ++stats.secondReacquisitions;
+                    if (auto* ps = activePersonalityStats()) {
+                        ++ps->reacquisitions;
+                        ps->reacquireRounds += static_cast<std::uint64_t>(elapsed);
+                    }
                     huntTiming.secondEvadeRound.reset();
                 }
                 break;
             case GameEventType::BasiliskEvaded:
                 ++stats.basiliskEvades;
+                if (auto* ps = activePersonalityStats()) ++ps->evades;
                 pendingEvadeEncounter = event.amount;
                 pendingEvadeOrigin = event.cave;
                 if (event.amount == 1) huntTiming.firstEvadeRound = state.round;
@@ -824,7 +907,22 @@ void collectEvents(
             case GameEventType::BasiliskBaitInfluencedMove: ++stats.baitInfluencedMoves; break;
             case GameEventType::BasiliskBehaviorChanged:
                 if (event.basiliskBehavior.has_value()) {
-                    switch (*event.basiliskBehavior) {
+                    const BasiliskBehavior previous = personalityTracker.active;
+                    const BasiliskBehavior next = *event.basiliskBehavior;
+                    if (previous != next) {
+                        ++stats.personalityTransitions[behaviorIndex(previous)][behaviorIndex(next)];
+                        ++personalityTracker.changes;
+                    }
+                    personalityTracker.active = next;
+                    if (const auto index = personalityIndex(next); index.has_value()) {
+                        ++stats.personality[*index].assignments;
+                        if (!personalityTracker.firstAssignmentRound.has_value()) {
+                            personalityTracker.firstAssignmentRound = state.round;
+                            stats.firstPersonalityAssignmentRoundTotal += state.round;
+                            ++stats.firstPersonalityAssignmentCount;
+                        }
+                    }
+                    switch (next) {
                         case BasiliskBehavior::Restless: ++stats.restlessAssignments; break;
                         case BasiliskBehavior::Lurker: ++stats.lurkerAssignments; break;
                         case BasiliskBehavior::Skittish: ++stats.skittishAssignments; break;
@@ -853,6 +951,7 @@ void collectEvents(
                         // Counted by PitTriggered; do not double-attribute it.
                     } else if (basiliskContact) {
                         ++stats.basiliskContactKills;
+                        ++stats.personality[4].contactKills;
                     } else if (jackalDeath) {
                         ++stats.jackalKnockoutDeaths;
                     } else if (killer.has_value()) {
@@ -864,6 +963,7 @@ void collectEvents(
                 }
                 break;
             case GameEventType::BasiliskKilled:
+                if (auto* ps = activePersonalityStats()) ++ps->defeats;
                 if (state.basilisk.trueEncounters <= 1) ++stats.firstKills;
                 else if (state.basilisk.trueEncounters == 2) ++stats.secondKills;
                 else ++stats.thirdKills;
@@ -911,6 +1011,8 @@ void runOne(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds, Stats
     std::unordered_set<PlayerId> pitDeadPlayers;
     std::vector<GameEvent> previousEvents;
     HuntTiming huntTiming;
+    PersonalityMatchTracker personalityTracker;
+    personalityTracker.active = state.basilisk.behavior;
     bool countedSecond = false, countedThird = false;
 
     for (const auto& player : state.players) {
@@ -925,6 +1027,9 @@ void runOne(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds, Stats
     }
 
     while (state.result.status == MatchStatus::Active && state.round <= maxRounds) {
+        if (const auto index = personalityIndex(personalityTracker.active); index.has_value())
+            ++stats.personality[*index].activeRounds;
+
         std::vector<PlayerAction> selected;
         std::unordered_set<PlayerId> zeroBefore;
         std::unordered_set<PlayerId> stalenessMovers;
@@ -958,7 +1063,7 @@ void runOne(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds, Stats
         if (!lockOk) break;
 
         previousEvents = coordinator.lastEvents();
-        collectEvents(previousEvents, state, stats, styles, pitDeadPlayers, zeroBefore, stalenessMovers, memories, huntTiming);
+        collectEvents(previousEvents, state, stats, styles, pitDeadPlayers, zeroBefore, stalenessMovers, memories, huntTiming, personalityTracker);
 
         if (!countedSecond && state.basilisk.trueEncounters >= 2) {
             ++stats.secondEncounterMatches;
@@ -971,6 +1076,7 @@ void runOne(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds, Stats
     }
 
     ++stats.matches;
+    ++stats.personalityChangesPerMatch[std::min<std::size_t>(3, static_cast<std::size_t>(personalityTracker.changes))];
     const auto rounds = std::min<std::uint64_t>(state.round, maxRounds);
     stats.totalRounds += rounds;
     stats.roundSamples.push_back(rounds);
@@ -978,6 +1084,20 @@ void runOne(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds, Stats
         const auto snapshot = SnapshotSystem::buildForPlayer(state, player.id, previousEvents);
         stats.totalCaves += snapshot.map.caves.size();
         stats.totalFinalArrows += static_cast<std::uint64_t>(std::max(0, player.arrows));
+    }
+
+    if (const auto index = personalityIndex(personalityTracker.active); index.has_value()) {
+        auto& ps = stats.personality[*index];
+        ++ps.matchesEnded;
+        if (state.result.status == MatchStatus::Completed) {
+            switch (state.result.outcome) {
+                case MatchOutcome::BasiliskKilled:
+                case MatchOutcome::SimultaneousBasiliskKill: ++ps.basiliskDefeatEnds; break;
+                case MatchOutcome::EscapedWithSigil: ++ps.extractionEnds; break;
+                case MatchOutcome::Draw: ++ps.drawEnds; break;
+                case MatchOutcome::None: break;
+            }
+        }
     }
 
     if (state.result.status != MatchStatus::Completed) {
@@ -1043,7 +1163,7 @@ void printReport(const Stats& stats, std::uint64_t maxRounds) {
     const double avgCaves = stats.matches ? static_cast<double>(stats.totalCaves) / (stats.matches * 2.0) : 0.0;
     const double avgArrows = stats.matches ? static_cast<double>(stats.totalFinalArrows) / (stats.matches * 2.0) : 0.0;
 
-    std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT (BOT V3.8 JACKAL DAMAGE)\n";
+    std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT (BOT V3.9 PERSONALITY TELEMETRY)\n";
     std::cout << "Matches: " << stats.matches << " | max rounds/match: " << maxRounds
               << " | loose-arrow cap: " << rules.maxLooseArrows
               << " | spawn cadence: every " << rules.looseArrowSpawnIntervalRounds << " rounds"
@@ -1125,6 +1245,49 @@ void printReport(const Stats& stats, std::uint64_t maxRounds) {
               << stats.restlessAssignments << '/' << stats.lurkerAssignments << '/' << stats.skittishAssignments << '/'
               << stats.territorialAssignments << '/' << stats.enragedAssignments << '\n';
     std::cout << "Enraged Basilisk contact kills: " << stats.basiliskContactKills << '\n';
+
+    std::cout << "\nBASILISK PERSONALITY PERFORMANCE\n";
+    for (std::size_t i = 0; i < kPersonalityCount; ++i) {
+        const auto behavior = personalityBehavior(i);
+        const auto& p = stats.personality[i];
+        const double avgActive = p.assignments ? static_cast<double>(p.activeRounds) / p.assignments : 0.0;
+        const double avgReacquire = p.reacquisitions ? static_cast<double>(p.reacquireRounds) / p.reacquisitions : 0.0;
+        std::cout << behaviorName(behavior)
+                  << " | assignments=" << p.assignments
+                  << " activeRounds=" << p.activeRounds
+                  << " avgActive=" << avgActive
+                  << " encounters=" << p.encounters
+                  << " evades=" << p.evades
+                  << " defeats=" << p.defeats
+                  << " contactKills=" << p.contactKills
+                  << " reacquisitions=" << p.reacquisitions
+                  << " avgReacquire=" << avgReacquire
+                  << " matchEnds=" << p.matchesEnded
+                  << " basiliskEnds=" << p.basiliskDefeatEnds
+                  << " extractionEnds=" << p.extractionEnds
+                  << " drawEnds=" << p.drawEnds
+                  << '\n';
+    }
+    std::cout << "Average round first personality assigned: "
+              << (stats.firstPersonalityAssignmentCount
+                  ? static_cast<double>(stats.firstPersonalityAssignmentRoundTotal) / stats.firstPersonalityAssignmentCount
+                  : 0.0)
+              << '\n';
+    std::cout << "Matches with 0/1/2/3+ personality changes: "
+              << stats.personalityChangesPerMatch[0] << '/'
+              << stats.personalityChangesPerMatch[1] << '/'
+              << stats.personalityChangesPerMatch[2] << '/'
+              << stats.personalityChangesPerMatch[3] << '\n';
+
+    std::cout << "\nBASILISK PERSONALITY TRANSITIONS\n";
+    for (std::size_t from = 0; from < kBehaviorCount; ++from) {
+        for (std::size_t to = 0; to < kBehaviorCount; ++to) {
+            const auto count = stats.personalityTransitions[from][to];
+            if (count == 0) continue;
+            std::cout << behaviorName(static_cast<BasiliskBehavior>(from)) << " -> "
+                      << behaviorName(static_cast<BasiliskBehavior>(to)) << ": " << count << '\n';
+        }
+    }
 
     const double avgRelocation = stats.evadeRelocations
         ? static_cast<double>(stats.relocationDistanceTotal) / stats.evadeRelocations : 0.0;
