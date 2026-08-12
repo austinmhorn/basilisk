@@ -61,3 +61,11 @@ add_executable(BasiliskObservationTests
 target_link_libraries(BasiliskObservationTests PRIVATE Basilisk::Core)
 
 add_test(NAME BasiliskObservationTests COMMAND BasiliskObservationTests)
+
+add_executable(BasiliskSnapshotTests
+    snapshot_tests.cpp
+)
+
+target_link_libraries(BasiliskSnapshotTests PRIVATE Basilisk::Core)
+
+add_test(NAME BasiliskSnapshotTests COMMAND BasiliskSnapshotTests)
