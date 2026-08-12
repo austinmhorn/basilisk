@@ -69,3 +69,9 @@ add_executable(BasiliskLooseArrowTests
 )
 target_link_libraries(BasiliskLooseArrowTests PRIVATE Basilisk::Core)
 add_test(NAME BasiliskLooseArrowTests COMMAND BasiliskLooseArrowTests)
+
+add_executable(BasiliskPitInvestigationTests
+    pit_investigation_tests.cpp
+)
+target_link_libraries(BasiliskPitInvestigationTests PRIVATE Basilisk::Core)
+add_test(NAME BasiliskPitInvestigationTests COMMAND BasiliskPitInvestigationTests)
