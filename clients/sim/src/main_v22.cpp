@@ -397,7 +397,7 @@ void inspectObjectiveMisses(const MatchState& state,
                             const std::vector<PlayerAction>& selected,
                             MatchTelemetry& matchTelemetry) {
     for (const auto& player : state.players) {
-        if (!player.alive || playerSearchedThisRound(selected, player)) continue;
+        if (!player.alive || playerSearchedThisRound(selected, player.id)) continue;
         for (const auto& body : state.bodies) {
             if (!body.sigilAvailable || body.owner == player.id) continue;
             if (body.cave == player.cave || body.sigilCave == player.cave) {
