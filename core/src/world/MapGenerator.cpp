@@ -70,6 +70,31 @@ std::optional<int> distanceBetween(const WorldGraph& world, CaveId start, CaveId
     return it->second;
 }
 
+bool isDeadEnd(const WorldGraph& world, CaveId cave) {
+    return world.cave(cave).connections.size() == 1;
+}
+
+bool atLeastDistance(
+    const WorldGraph& world,
+    CaveId a,
+    CaveId b,
+    int minimum) {
+
+    const auto distance = distanceBetween(world, a, b);
+    return distance.has_value() && *distance >= minimum;
+}
+
+bool farEnoughFromAll(
+    const WorldGraph& world,
+    CaveId cave,
+    const std::vector<CaveId>& others,
+    int minimum) {
+
+    return std::all_of(others.begin(), others.end(), [&](CaveId other) {
+        return atLeastDistance(world, cave, other, minimum);
+    });
+}
+
 WorldGraph generateTopology(
     const ProceduralMapConfig& config,
     RandomGenerator& rng) {
@@ -109,14 +134,10 @@ WorldGraph generateTopology(
     std::vector<CaveId> core(order.begin(), order.begin() + static_cast<std::ptrdiff_t>(coreCount));
     std::vector<CaveId> branches(order.begin() + static_cast<std::ptrdiff_t>(coreCount), order.end());
 
-    // Build a loop-rich core. Every core cave starts with degree 2, guaranteeing
-    // connectivity and multiple routes while leaving one slot for branches/chords.
     for (std::size_t i = 0; i < core.size(); ++i) {
         world.connect(core[i], core[(i + 1) % core.size()]);
     }
 
-    // Attach each branch as a leaf to a different eligible core cave where
-    // possible. This gives us intentional dead ends without long mandatory tails.
     auto branchParents = core;
     shuffle(branchParents, rng);
 
@@ -134,8 +155,6 @@ WorldGraph generateTopology(
         ++parentIndex;
     }
 
-    // Add extra cross-links only inside the core so dead-end count remains a
-    // deliberate tuning knob rather than accidentally disappearing.
     std::size_t added = 0;
     const std::size_t maxTries = config.caveCount * config.caveCount * 12;
     for (std::size_t tries = 0; tries < maxTries && added < config.extraConnections; ++tries) {
@@ -173,7 +192,11 @@ std::optional<std::pair<CaveId, CaveId>> chooseHunterSpawns(
 
     std::vector<std::pair<CaveId, CaveId>> candidates;
     for (std::size_t i = 0; i < caves.size(); ++i) {
+        if (!config.allowHunterSpawnInDeadEnd && isDeadEnd(world, caves[i])) continue;
+
         for (std::size_t j = i + 1; j < caves.size(); ++j) {
+            if (!config.allowHunterSpawnInDeadEnd && isDeadEnd(world, caves[j])) continue;
+
             const auto distance = distanceBetween(world, caves[i], caves[j]);
             if (distance.has_value() && *distance >= config.minHunterSeparation) {
                 candidates.emplace_back(caves[i], caves[j]);
@@ -197,6 +220,7 @@ std::optional<CaveId> chooseBasiliskSpawn(
     std::vector<CaveId> candidates;
     for (const CaveId cave : world.caveIds()) {
         if (cave == hunterA || cave == hunterB) continue;
+        if (!config.allowBasiliskInDeadEnd && isDeadEnd(world, cave)) continue;
 
         const auto aDistance = distanceBetween(world, hunterA, cave);
         const auto bDistance = distanceBetween(world, hunterB, cave);
@@ -223,20 +247,39 @@ void placePits(
     auto candidates = state.world.caveIds();
     shuffle(candidates, rng);
 
+    std::vector<CaveId> placedPits;
     for (const CaveId cave : candidates) {
         if (state.pits.size() >= config.pitCount) break;
         if (isReserved(cave, reserved)) continue;
+        if (!farEnoughFromAll(
+                state.world,
+                cave,
+                {state.players[0].cave, state.players[1].cave},
+                config.minHunterPitDistance)) continue;
+        if (!atLeastDistance(
+                state.world,
+                cave,
+                state.basilisk.cave,
+                config.minBasiliskPitDistance)) continue;
+        if (!farEnoughFromAll(
+                state.world,
+                cave,
+                placedPits,
+                config.minPitSeparation)) continue;
+
         state.pits.push_back(PitState{cave, true});
+        placedPits.push_back(cave);
         reserved.insert(cave);
     }
 
     if (state.pits.size() != config.pitCount) {
-        throw std::runtime_error("Unable to place requested Pit count.");
+        throw std::runtime_error("Unable to place requested Pit count with quality constraints.");
     }
 }
 
 void placeJackals(
     MatchState& state,
+    const ProceduralMapConfig& config,
     RandomGenerator& rng,
     std::unordered_set<CaveId>& reserved) {
 
@@ -249,18 +292,30 @@ void placeJackals(
     auto candidates = state.world.caveIds();
     shuffle(candidates, rng);
 
+    std::vector<CaveId> placedJackals;
     for (const CaveId cave : candidates) {
         if (state.jackals.size() >= count) break;
         if (isReserved(cave, reserved)) continue;
+        if (!farEnoughFromAll(
+                state.world,
+                cave,
+                {state.players[0].cave, state.players[1].cave},
+                config.minHunterJackalDistance)) continue;
+        if (!farEnoughFromAll(
+                state.world,
+                cave,
+                placedJackals,
+                config.minJackalSeparation)) continue;
 
         JackalState jackal;
         jackal.cave = cave;
         state.jackals.push_back(jackal);
+        placedJackals.push_back(cave);
         reserved.insert(cave);
     }
 
     if (state.jackals.size() != count) {
-        throw std::runtime_error("Unable to place requested Jackal count.");
+        throw std::runtime_error("Unable to place requested Jackal count with quality constraints.");
     }
 }
 
@@ -318,7 +373,7 @@ MatchState populateMatch(
     };
 
     placePits(state, config, hazardRng, reserved);
-    placeJackals(state, aiRng, reserved);
+    placeJackals(state, config, aiRng, reserved);
 
     return state;
 }
@@ -382,8 +437,6 @@ MapTopologyMetrics MapGenerator::analyzeTopology(const WorldGraph& world) {
     metrics.averageDegree = static_cast<double>(degreeSum) /
         static_cast<double>(world.size());
 
-    // For a connected undirected graph, E - V + 1 is the cycle rank: the
-    // number of independent loops available to navigation.
     if (metrics.edgeCount >= metrics.caveCount - 1) {
         metrics.loopCount = metrics.edgeCount - metrics.caveCount + 1;
     }
@@ -430,26 +483,50 @@ bool MapGenerator::validateFairness(
 
     if (state.players.size() != 2 || !state.basilisk.alive) return false;
 
-    const auto hunterDistance = distanceBetween(
-        state.world,
-        state.players[0].cave,
-        state.players[1].cave);
+    const auto& hunterA = state.players[0];
+    const auto& hunterB = state.players[1];
+
+    if (!config.allowHunterSpawnInDeadEnd &&
+        (isDeadEnd(state.world, hunterA.cave) || isDeadEnd(state.world, hunterB.cave))) {
+        return false;
+    }
+    if (!config.allowBasiliskInDeadEnd && isDeadEnd(state.world, state.basilisk.cave)) {
+        return false;
+    }
+
+    const auto hunterDistance = distanceBetween(state.world, hunterA.cave, hunterB.cave);
     if (!hunterDistance.has_value() || *hunterDistance < config.minHunterSeparation) return false;
 
-    const auto aDistance = distanceBetween(
-        state.world,
-        state.players[0].cave,
-        state.basilisk.cave);
-    const auto bDistance = distanceBetween(
-        state.world,
-        state.players[1].cave,
-        state.basilisk.cave);
-
+    const auto aDistance = distanceBetween(state.world, hunterA.cave, state.basilisk.cave);
+    const auto bDistance = distanceBetween(state.world, hunterB.cave, state.basilisk.cave);
     if (!aDistance.has_value() || !bDistance.has_value()) return false;
     if (*aDistance < config.minHunterBasiliskDistance ||
         *bDistance < config.minHunterBasiliskDistance) return false;
+    if (std::abs(*aDistance - *bDistance) > config.maxHunterBasiliskDistanceDelta) return false;
 
-    return std::abs(*aDistance - *bDistance) <= config.maxHunterBasiliskDistanceDelta;
+    std::vector<CaveId> pitCaves;
+    for (const auto& pit : state.pits) {
+        if (!pit.active) continue;
+        if (!atLeastDistance(state.world, hunterA.cave, pit.cave, config.minHunterPitDistance) ||
+            !atLeastDistance(state.world, hunterB.cave, pit.cave, config.minHunterPitDistance) ||
+            !atLeastDistance(state.world, state.basilisk.cave, pit.cave, config.minBasiliskPitDistance) ||
+            !farEnoughFromAll(state.world, pit.cave, pitCaves, config.minPitSeparation)) {
+            return false;
+        }
+        pitCaves.push_back(pit.cave);
+    }
+
+    std::vector<CaveId> jackalCaves;
+    for (const auto& jackal : state.jackals) {
+        if (!atLeastDistance(state.world, hunterA.cave, jackal.cave, config.minHunterJackalDistance) ||
+            !atLeastDistance(state.world, hunterB.cave, jackal.cave, config.minHunterJackalDistance) ||
+            !farEnoughFromAll(state.world, jackal.cave, jackalCaves, config.minJackalSeparation)) {
+            return false;
+        }
+        jackalCaves.push_back(jackal.cave);
+    }
+
+    return true;
 }
 
 } // namespace basilisk
