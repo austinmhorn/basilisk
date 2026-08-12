@@ -153,7 +153,7 @@ void recordSingleBasiliskKill(MatchState& state, PlayerId shooter,
 }
 
 bool basiliskKillRoll(int encounter, RandomGenerator& rng) {
-    if (encounter == 1) return rng.chance(3, 4);
+    if (encounter == 1) return rng.chance(3, 5);
     if (encounter == 2) return rng.chance(1, 2);
     return true;
 }
