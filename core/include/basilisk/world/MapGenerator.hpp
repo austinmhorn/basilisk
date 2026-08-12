@@ -23,9 +23,20 @@ struct ProceduralMapConfig {
 
     std::size_t pitCount{1};
 
+    // Competitive spawn fairness.
     int minHunterSeparation{6};
     int minHunterBasiliskDistance{4};
     int maxHunterBasiliskDistanceDelta{2};
+
+    // Placement-quality constraints. These prevent technically legal worlds
+    // from opening with hazards/NPCs stacked directly on top of either hunter.
+    int minHunterPitDistance{2};
+    int minHunterJackalDistance{2};
+    int minJackalSeparation{4};
+    int minPitSeparation{3};
+    int minBasiliskPitDistance{2};
+    bool allowHunterSpawnInDeadEnd{false};
+    bool allowBasiliskInDeadEnd{false};
 
     std::size_t maxGenerationAttempts{128};
 };
