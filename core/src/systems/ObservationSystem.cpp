@@ -126,6 +126,11 @@ void addEventFeedback(
 
     bool viewerReachedBasilisk = false;
     bool viewerKilledBasilisk = false;
+    const bool viewerFellIntoPit = std::any_of(events.begin(), events.end(),
+        [&](const GameEvent& event) {
+            return event.type == GameEventType::PitTriggered &&
+                   event.targetPlayer == viewer.id;
+        });
 
     for (const auto& event : events) {
         if (event.type == GameEventType::ArrowReachedBasilisk && event.actor == viewer.id) {
@@ -160,12 +165,32 @@ void addEventFeedback(
                 }
                 break;
 
-            case GameEventType::PlayerKilled:
+            case GameEventType::PitTriggered:
                 if (event.targetPlayer == viewer.id) {
                     observations.push_back(PlayerObservation{
-                        ObservationType::YouDied,
+                        ObservationType::FellIntoPit,
                         viewer.id,
                         event.cave
+                    });
+                }
+                break;
+
+            case GameEventType::PlayerKilled:
+                if (event.targetPlayer == viewer.id) {
+                    if (!viewerFellIntoPit) {
+                        observations.push_back(PlayerObservation{
+                            ObservationType::YouDied,
+                            viewer.id,
+                            event.cave
+                        });
+                    }
+                } else if (event.targetPlayer.has_value() && viewer.alive) {
+                    // The surviving hunter is told that the rival is dead, but
+                    // the death location remains hidden. They must still find the
+                    // body/Sigil through exploration.
+                    observations.push_back(PlayerObservation{
+                        ObservationType::RivalDied,
+                        viewer.id
                     });
                 }
                 break;
