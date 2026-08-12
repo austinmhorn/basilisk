@@ -41,12 +41,11 @@ void shuffle(std::vector<T>& values, RandomGenerator& rng) {
     }
 }
 
-std::optional<int> distanceBetween(const WorldGraph& world, CaveId start, CaveId target) {
-    if (!world.contains(start) || !world.contains(target)) return std::nullopt;
-    if (start == target) return 0;
+std::unordered_map<CaveId, int> distancesFrom(const WorldGraph& world, CaveId start) {
+    std::unordered_map<CaveId, int> distance;
+    if (!world.contains(start)) return distance;
 
     std::queue<CaveId> frontier;
-    std::unordered_map<CaveId, int> distance;
     frontier.push(start);
     distance.emplace(start, 0);
 
@@ -56,25 +55,36 @@ std::optional<int> distanceBetween(const WorldGraph& world, CaveId start, CaveId
 
         for (const CaveId next : world.cave(current).connections) {
             if (distance.contains(next)) continue;
-            const int nextDistance = distance.at(current) + 1;
-            if (next == target) return nextDistance;
-            distance.emplace(next, nextDistance);
+            distance.emplace(next, distance.at(current) + 1);
             frontier.push(next);
         }
     }
 
-    return std::nullopt;
+    return distance;
+}
+
+std::optional<int> distanceBetween(const WorldGraph& world, CaveId start, CaveId target) {
+    const auto distances = distancesFrom(world, start);
+    const auto it = distances.find(target);
+    if (it == distances.end()) return std::nullopt;
+    return it->second;
 }
 
 WorldGraph generateTopology(
     const ProceduralMapConfig& config,
     RandomGenerator& rng) {
 
-    if (config.caveCount < 4) {
-        throw std::invalid_argument("Procedural maps require at least four caves.");
+    if (config.caveCount < 6) {
+        throw std::invalid_argument("Procedural maps require at least six caves.");
     }
     if (config.minDegree < 1 || config.maxDegree < config.minDegree) {
         throw std::invalid_argument("Invalid procedural map degree constraints.");
+    }
+    if (config.maxDegree < 3) {
+        throw std::invalid_argument("Organic procedural maps require maxDegree >= 3.");
+    }
+    if (config.targetDeadEnds >= config.caveCount - 2) {
+        throw std::invalid_argument("Too many dead ends requested for cave count.");
     }
 
     WorldGraph world;
@@ -89,19 +99,50 @@ WorldGraph generateTopology(
 
     shuffle(order, rng);
 
-    // A randomized cycle gives every initial profile a connected backbone with
-    // no isolated regions. Extra chords then create asymmetric route choices.
-    for (std::size_t i = 0; i < order.size(); ++i) {
-        world.connect(order[i], order[(i + 1) % order.size()]);
+    const std::size_t branchCount = config.targetDeadEnds;
+    const std::size_t coreCount = config.caveCount - branchCount;
+
+    if (coreCount < 3) {
+        throw std::invalid_argument("Organic map core requires at least three caves.");
     }
 
+    std::vector<CaveId> core(order.begin(), order.begin() + static_cast<std::ptrdiff_t>(coreCount));
+    std::vector<CaveId> branches(order.begin() + static_cast<std::ptrdiff_t>(coreCount), order.end());
+
+    // Build a loop-rich core. Every core cave starts with degree 2, guaranteeing
+    // connectivity and multiple routes while leaving one slot for branches/chords.
+    for (std::size_t i = 0; i < core.size(); ++i) {
+        world.connect(core[i], core[(i + 1) % core.size()]);
+    }
+
+    // Attach each branch as a leaf to a different eligible core cave where
+    // possible. This gives us intentional dead ends without long mandatory tails.
+    auto branchParents = core;
+    shuffle(branchParents, rng);
+
+    std::size_t parentIndex = 0;
+    for (const CaveId branch : branches) {
+        while (parentIndex < branchParents.size() &&
+               world.cave(branchParents[parentIndex]).connections.size() >= config.maxDegree) {
+            ++parentIndex;
+        }
+        if (parentIndex >= branchParents.size()) {
+            throw std::runtime_error("Unable to attach requested dead-end branches.");
+        }
+
+        world.connect(branchParents[parentIndex], branch);
+        ++parentIndex;
+    }
+
+    // Add extra cross-links only inside the core so dead-end count remains a
+    // deliberate tuning knob rather than accidentally disappearing.
     std::size_t added = 0;
-    const std::size_t maxTries = config.caveCount * config.caveCount * 8;
+    const std::size_t maxTries = config.caveCount * config.caveCount * 12;
     for (std::size_t tries = 0; tries < maxTries && added < config.extraConnections; ++tries) {
-        const CaveId a = order[static_cast<std::size_t>(
-            rng.range(0, static_cast<int>(order.size()) - 1))];
-        const CaveId b = order[static_cast<std::size_t>(
-            rng.range(0, static_cast<int>(order.size()) - 1))];
+        const CaveId a = core[static_cast<std::size_t>(
+            rng.range(0, static_cast<int>(core.size()) - 1))];
+        const CaveId b = core[static_cast<std::size_t>(
+            rng.range(0, static_cast<int>(core.size()) - 1))];
 
         if (a == b || world.areConnected(a, b)) continue;
         if (world.cave(a).connections.size() >= config.maxDegree) continue;
@@ -109,6 +150,10 @@ WorldGraph generateTopology(
 
         world.connect(a, b);
         ++added;
+    }
+
+    if (added < config.extraConnections) {
+        throw std::runtime_error("Unable to add requested extra map connections.");
     }
 
     return world;
@@ -294,14 +339,14 @@ MatchState MapGenerator::generate(
         const auto attemptSeed = mapSeed + static_cast<MapSeed>(attempt);
         RandomGenerator topologyRng{derivedSeed(attemptSeed, kTopologySalt)};
 
-        auto world = generateTopology(config, topologyRng);
-        if (!validateTopology(world, config)) continue;
-
-        RandomGenerator spawnRng{derivedSeed(matchSeed ^ attemptSeed, kSpawnSalt)};
-        RandomGenerator hazardRng{derivedSeed(matchSeed ^ attemptSeed, kHazardSalt)};
-        RandomGenerator aiRng{derivedSeed(matchSeed ^ attemptSeed, kAiSalt)};
-
         try {
+            auto world = generateTopology(config, topologyRng);
+            if (!validateTopology(world, config)) continue;
+
+            RandomGenerator spawnRng{derivedSeed(matchSeed ^ attemptSeed, kSpawnSalt)};
+            RandomGenerator hazardRng{derivedSeed(matchSeed ^ attemptSeed, kHazardSalt)};
+            RandomGenerator aiRng{derivedSeed(matchSeed ^ attemptSeed, kAiSalt)};
+
             auto state = populateMatch(
                 std::move(world),
                 mapSeed,
@@ -321,6 +366,39 @@ MatchState MapGenerator::generate(
     throw std::runtime_error("Unable to generate a valid procedural map within attempt limit.");
 }
 
+MapTopologyMetrics MapGenerator::analyzeTopology(const WorldGraph& world) {
+    MapTopologyMetrics metrics;
+    metrics.caveCount = world.size();
+    if (world.size() == 0) return metrics;
+
+    std::size_t degreeSum = 0;
+    for (const CaveId cave : world.caveIds()) {
+        const std::size_t degree = world.cave(cave).connections.size();
+        degreeSum += degree;
+        if (degree == 1) ++metrics.deadEndCount;
+    }
+
+    metrics.edgeCount = degreeSum / 2;
+    metrics.averageDegree = static_cast<double>(degreeSum) /
+        static_cast<double>(world.size());
+
+    // For a connected undirected graph, E - V + 1 is the cycle rank: the
+    // number of independent loops available to navigation.
+    if (metrics.edgeCount >= metrics.caveCount - 1) {
+        metrics.loopCount = metrics.edgeCount - metrics.caveCount + 1;
+    }
+
+    for (const CaveId start : world.caveIds()) {
+        const auto distances = distancesFrom(world, start);
+        for (const auto& [cave, distance] : distances) {
+            (void)cave;
+            metrics.diameter = std::max(metrics.diameter, distance);
+        }
+    }
+
+    return metrics;
+}
+
 bool MapGenerator::validateTopology(
     const WorldGraph& world,
     const ProceduralMapConfig& config) {
@@ -333,21 +411,17 @@ bool MapGenerator::validateTopology(
         if (degree < config.minDegree || degree > config.maxDegree) return false;
     }
 
-    std::unordered_set<CaveId> visited;
-    std::queue<CaveId> frontier;
-    frontier.push(ids.front());
-    visited.insert(ids.front());
+    const auto visited = distancesFrom(world, ids.front());
+    if (visited.size() != world.size()) return false;
 
-    while (!frontier.empty()) {
-        const CaveId current = frontier.front();
-        frontier.pop();
+    const auto metrics = analyzeTopology(world);
+    if (metrics.deadEndCount < config.minDeadEnds ||
+        metrics.deadEndCount > config.maxDeadEnds) return false;
+    if (metrics.loopCount < config.minLoopCount) return false;
+    if (metrics.diameter < config.minDiameter ||
+        metrics.diameter > config.maxDiameter) return false;
 
-        for (const CaveId next : world.cave(current).connections) {
-            if (visited.insert(next).second) frontier.push(next);
-        }
-    }
-
-    return visited.size() == world.size();
+    return true;
 }
 
 bool MapGenerator::validateFairness(
