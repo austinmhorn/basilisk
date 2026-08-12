@@ -17,6 +17,7 @@ public:
     [[nodiscard]] bool contains(CaveId id) const noexcept;
     [[nodiscard]] bool areConnected(CaveId a, CaveId b) const;
     [[nodiscard]] const Cave& cave(CaveId id) const;
+    [[nodiscard]] std::vector<CaveId> caveIds() const;
     [[nodiscard]] std::size_t size() const noexcept;
 
 private:
