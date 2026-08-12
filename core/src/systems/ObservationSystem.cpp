@@ -51,10 +51,7 @@ void addEnvironmentalClues(
     for (const auto& player : state.players) {
         if (!player.alive || player.id == viewer.id) continue;
         if (state.world.areConnected(viewer.cave, player.cave)) {
-            observations.push_back(PlayerObservation{
-                ObservationType::RivalNearby,
-                viewer.id
-            });
+            observations.push_back(PlayerObservation{ObservationType::RivalNearby, viewer.id});
             break;
         }
     }
@@ -62,20 +59,14 @@ void addEnvironmentalClues(
     for (const auto& pit : state.pits) {
         if (!pit.active) continue;
         if (state.world.areConnected(viewer.cave, pit.cave)) {
-            observations.push_back(PlayerObservation{
-                ObservationType::PitNearby,
-                viewer.id
-            });
+            observations.push_back(PlayerObservation{ObservationType::PitNearby, viewer.id});
             break;
         }
     }
 
     for (const auto& jackal : state.jackals) {
         if (state.world.areConnected(viewer.cave, jackal.cave)) {
-            observations.push_back(PlayerObservation{
-                ObservationType::JackalNearby,
-                viewer.id
-            });
+            observations.push_back(PlayerObservation{ObservationType::JackalNearby, viewer.id});
             break;
         }
     }
@@ -99,10 +90,7 @@ void addEnvironmentalClues(
         if (movedThisRound) {
             const auto distance = distanceBetween(state.world, viewer.cave, state.basilisk.cave);
             if (distance.has_value() && *distance == 2) {
-                observations.push_back(PlayerObservation{
-                    ObservationType::RestlessBasiliskNoise,
-                    viewer.id
-                });
+                observations.push_back(PlayerObservation{ObservationType::RestlessBasiliskNoise, viewer.id});
             }
         }
     }
@@ -144,54 +132,54 @@ void addEventFeedback(
             case GameEventType::ArrowHitPlayer:
                 if (event.targetPlayer == viewer.id) {
                     observations.push_back(PlayerObservation{
-                        ObservationType::ArrowHitYou,
-                        viewer.id,
-                        event.cave,
-                        event.actor,
-                        event.amount
-                    });
+                        ObservationType::ArrowHitYou, viewer.id, event.cave, event.actor, event.amount});
                 }
                 break;
 
             case GameEventType::PlayerDamaged:
                 if (event.targetPlayer == viewer.id) {
                     observations.push_back(PlayerObservation{
-                        ObservationType::YouWereDamaged,
-                        viewer.id,
-                        event.cave,
-                        event.actor,
-                        event.amount
-                    });
+                        ObservationType::YouWereDamaged, viewer.id, event.cave, event.actor, event.amount});
                 }
                 break;
 
             case GameEventType::PitTriggered:
                 if (event.targetPlayer == viewer.id) {
-                    observations.push_back(PlayerObservation{
-                        ObservationType::FellIntoPit,
-                        viewer.id,
-                        event.cave
-                    });
+                    observations.push_back(PlayerObservation{ObservationType::FellIntoPit, viewer.id, event.cave});
+                }
+                break;
+
+            case GameEventType::PlayerDisconnected:
+                if (event.actor.has_value() && event.actor != viewer.id) {
+                    observations.push_back(PlayerObservation{ObservationType::RivalDisconnected, viewer.id});
+                }
+                break;
+
+            case GameEventType::PlayerReconnected:
+                if (event.actor.has_value() && event.actor != viewer.id) {
+                    observations.push_back(PlayerObservation{ObservationType::RivalReconnected, viewer.id});
+                }
+                break;
+
+            case GameEventType::PlayerReserveExpired:
+                if (event.actor.has_value() && event.actor != viewer.id) {
+                    observations.push_back(PlayerObservation{ObservationType::RivalReserveExpired, viewer.id});
+                }
+                break;
+
+            case GameEventType::PlayerDisconnectTimedOut:
+                if (event.actor.has_value() && event.actor != viewer.id) {
+                    observations.push_back(PlayerObservation{ObservationType::RivalDisconnectTimedOut, viewer.id});
                 }
                 break;
 
             case GameEventType::PlayerKilled:
                 if (event.targetPlayer == viewer.id) {
                     if (!viewerFellIntoPit) {
-                        observations.push_back(PlayerObservation{
-                            ObservationType::YouDied,
-                            viewer.id,
-                            event.cave
-                        });
+                        observations.push_back(PlayerObservation{ObservationType::YouDied, viewer.id, event.cave});
                     }
                 } else if (event.targetPlayer.has_value() && viewer.alive) {
-                    // The surviving hunter is told that the rival is dead, but
-                    // the death location remains hidden. They must still find the
-                    // body/Sigil through exploration.
-                    observations.push_back(PlayerObservation{
-                        ObservationType::RivalDied,
-                        viewer.id
-                    });
+                    observations.push_back(PlayerObservation{ObservationType::RivalDied, viewer.id});
                 }
                 break;
 
@@ -207,61 +195,37 @@ void addEventFeedback(
             case GameEventType::ArrowFound:
                 if (event.actor == viewer.id) {
                     observations.push_back(PlayerObservation{
-                        ObservationType::ArrowFound,
-                        viewer.id,
-                        event.cave,
-                        std::nullopt,
-                        event.amount
-                    });
+                        ObservationType::ArrowFound, viewer.id, event.cave, std::nullopt, event.amount});
                 }
                 break;
 
             case GameEventType::ExoticCallingCardFound:
                 if (event.actor == viewer.id) {
-                    observations.push_back(PlayerObservation{
-                        ObservationType::ExoticCallingCardFound,
-                        viewer.id,
-                        event.cave
-                    });
+                    observations.push_back(PlayerObservation{ObservationType::ExoticCallingCardFound, viewer.id, event.cave});
                 }
                 break;
 
             case GameEventType::SigilAcquired:
                 if (event.actor == viewer.id) {
                     observations.push_back(PlayerObservation{
-                        ObservationType::SigilAcquired,
-                        viewer.id,
-                        event.cave,
-                        event.targetPlayer
-                    });
+                        ObservationType::SigilAcquired, viewer.id, event.cave, event.targetPlayer});
                 }
                 break;
 
             case GameEventType::ExtractionActivated:
                 if (event.actor == viewer.id) {
-                    observations.push_back(PlayerObservation{
-                        ObservationType::ExtractionRevealed,
-                        viewer.id,
-                        event.cave
-                    });
+                    observations.push_back(PlayerObservation{ObservationType::ExtractionRevealed, viewer.id, event.cave});
                 }
                 break;
 
             case GameEventType::EscapeAvailable:
                 if (event.actor == viewer.id) {
-                    observations.push_back(PlayerObservation{
-                        ObservationType::EscapeAvailable,
-                        viewer.id,
-                        event.cave
-                    });
+                    observations.push_back(PlayerObservation{ObservationType::EscapeAvailable, viewer.id, event.cave});
                 }
                 break;
 
             case GameEventType::MatchDrawn:
-                observations.push_back(PlayerObservation{
-                    ObservationType::MatchDrawn,
-                    viewer.id
-                });
+                observations.push_back(PlayerObservation{ObservationType::MatchDrawn, viewer.id});
                 break;
 
             default:
@@ -270,19 +234,9 @@ void addEventFeedback(
     }
 
     if (viewerKilledBasilisk) {
-        observations.push_back(PlayerObservation{
-            ObservationType::BasiliskKilled,
-            viewer.id,
-            state.basilisk.cave
-        });
-    } else if (viewerReachedBasilisk) {
-        const bool basiliskStillAlive = state.basilisk.alive;
-        if (basiliskStillAlive) {
-            observations.push_back(PlayerObservation{
-                ObservationType::BasiliskEvaded,
-                viewer.id
-            });
-        }
+        observations.push_back(PlayerObservation{ObservationType::BasiliskKilled, viewer.id, state.basilisk.cave});
+    } else if (viewerReachedBasilisk && state.basilisk.alive) {
+        observations.push_back(PlayerObservation{ObservationType::BasiliskEvaded, viewer.id});
     }
 }
 
