@@ -23,7 +23,9 @@ std::vector<GameEvent> RoundController::resolve(
 
     std::vector<PlayerAction> prepared = actions;
     for (auto& action : prepared) {
-        if (action.type != ActionType::Move) continue;
+        if (action.type != ActionType::Move && action.type != ActionType::Shoot) {
+            continue;
+        }
 
         const auto it = std::find_if(state.players.begin(), state.players.end(),
             [&](const PlayerState& player) { return player.id == action.player; });
@@ -38,6 +40,8 @@ std::vector<GameEvent> RoundController::resolve(
             continue;
         }
 
+        // The authoritative destination is materialized only for the low-level
+        // resolver. The client may have supplied only an opaque TunnelId.
         action.targetCave = *destination;
         action.targetTunnel.reset();
     }
