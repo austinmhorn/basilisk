@@ -39,6 +39,10 @@ struct PlayerRoundSnapshot {
     CaveId currentCave{};
     PlayerMapView map;
 
+    // Temporary exact Pit markers supplied by utility items such as the Old
+    // Miner's Map. These do not mutate permanent fog-of-war discovery.
+    std::vector<CaveId> temporarilyRevealedPitCaves;
+
     std::vector<AvailableAction> availableActions;
     std::vector<PlayerObservation> observations;
 
