@@ -38,6 +38,12 @@ struct ProceduralMapConfig {
     bool allowHunterSpawnInDeadEnd{false};
     bool allowBasiliskInDeadEnd{false};
 
+    // Treat active Pit caves as impassable when validating placement. With the
+    // default enabled, all remaining non-Pit caves must stay in one connected
+    // region. This prevents a Pit from occupying an articulation/chokepoint cave
+    // or multiple Pits from jointly sealing off part of the map.
+    bool preventPitsBlockingRegions{true};
+
     std::size_t maxGenerationAttempts{128};
 };
 
