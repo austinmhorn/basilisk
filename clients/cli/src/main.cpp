@@ -42,6 +42,12 @@ std::string observationText(const PlayerObservation& observation) {
             return observation.cave.has_value()
                 ? "The enraged Basilisk was last seen in Cave " + std::to_string(*observation.cave) + "."
                 : "The enraged Basilisk left a recent trail.";
+        case ObservationType::PitInvestigationSucceeded:
+            return observation.tunnel.has_value()
+                ? "The cold draft is strongest from Tunnel " + std::to_string(*observation.tunnel) + "."
+                : "You identify the direction of the cold draft.";
+        case ObservationType::PitInvestigationInconclusive:
+            return "The air shifts unpredictably. You can't tell which tunnel the draft is coming from.";
         case ObservationType::ArrowHitYou: return "An arrow strikes you.";
         case ObservationType::YouWereDamaged: return "You take " + std::to_string(observation.amount) + " damage.";
         case ObservationType::YouKilledRival: return "The rival hunter falls.";
@@ -128,6 +134,7 @@ void printCurrentCave(const PlayerRoundSnapshot& snapshot) {
         std::cout << "  Tunnel " << exit.id << " -> ";
         if (exit.destination.has_value()) std::cout << "Cave " << *exit.destination;
         else std::cout << "UNKNOWN";
+        if (exit.strongColdDraft) std::cout << "  [STRONG COLD DRAFT]";
         std::cout << '\n';
     }
 }
@@ -143,6 +150,7 @@ void printExplorationHistory(const PlayerRoundSnapshot& snapshot) {
             const auto& exit = cave.exits[i];
             if (exit.destination.has_value()) std::cout << *exit.destination;
             else std::cout << "?";
+            if (exit.strongColdDraft) std::cout << "!";
             if (i + 1 < cave.exits.size()) std::cout << " | ";
         }
         std::cout << '\n';
