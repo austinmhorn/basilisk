@@ -12,70 +12,48 @@ namespace {
 
 PlayerState& playerById(MatchState& state, PlayerId id) {
     const auto it = std::find_if(
-        state.players.begin(),
-        state.players.end(),
+        state.players.begin(), state.players.end(),
         [id](const PlayerState& player) { return player.id == id; });
-
-    if (it == state.players.end()) {
-        throw std::invalid_argument("Snapshot requested for an unknown player.");
-    }
+    if (it == state.players.end()) throw std::invalid_argument("Snapshot requested for an unknown player.");
     return *it;
 }
 
-bool extractionVisibleTo(
-    const MatchState& state,
-    const PlayerState& player) {
-
-    if (!state.extraction.active ||
-        !state.extraction.cave.has_value() ||
-        state.extraction.sigilHolder != player.id) {
-        return false;
-    }
-
+bool extractionVisibleTo(const MatchState& state, const PlayerState& player) {
+    if (!state.extraction.active || !state.extraction.cave.has_value() ||
+        state.extraction.sigilHolder != player.id) return false;
     const CaveId extraction = *state.extraction.cave;
     switch (state.extraction.revealPolicy) {
-        case ExtractionRevealPolicy::RevealImmediately:
-            return true;
+        case ExtractionRevealPolicy::RevealImmediately: return true;
         case ExtractionRevealPolicy::DiscoverThroughExploration:
             return player.discovery.knownCaves.contains(extraction);
         case ExtractionRevealPolicy::ProximityOnly:
-            return player.cave == extraction ||
-                   state.world.areConnected(player.cave, extraction);
-        case ExtractionRevealPolicy::Hidden:
-            return false;
+            return player.cave == extraction || state.world.areConnected(player.cave, extraction);
+        case ExtractionRevealPolicy::Hidden: return false;
     }
-
     return false;
 }
 
-void appendTravelActions(
-    const PlayerMapView& map,
-    ActionType type,
-    std::vector<AvailableAction>& actions) {
-
-    const auto currentIt = std::find_if(
-        map.caves.begin(),
-        map.caves.end(),
+const DiscoveredCaveView* currentCaveView(const PlayerMapView& map) {
+    const auto it = std::find_if(map.caves.begin(), map.caves.end(),
         [&](const DiscoveredCaveView& cave) { return cave.cave == map.currentCave; });
+    return it == map.caves.end() ? nullptr : &*it;
+}
 
-    if (currentIt == map.caves.end()) return;
-
-    for (const auto& exit : currentIt->exits) {
+void appendTravelActions(const PlayerMapView& map, ActionType type,
+                         std::vector<AvailableAction>& actions) {
+    const auto* current = currentCaveView(map);
+    if (!current) return;
+    for (const auto& exit : current->exits) {
         AvailableAction action;
         action.type = type;
-        if (exit.destination.has_value()) {
-            action.targetCave = *exit.destination;
-        } else {
-            action.targetTunnel = exit.id;
-        }
+        if (exit.destination.has_value()) action.targetCave = *exit.destination;
+        else action.targetTunnel = exit.id;
         actions.push_back(action);
     }
 }
 
-void appendUseItemAction(
-    const PlayerState& player,
-    ItemType item,
-    std::vector<AvailableAction>& actions) {
+void appendUseItemAction(const PlayerState& player, ItemType item,
+                         std::vector<AvailableAction>& actions) {
     if (!player.inventory.contains(item)) return;
     AvailableAction action;
     action.type = ActionType::UseItem;
@@ -83,55 +61,53 @@ void appendUseItemAction(
     actions.push_back(action);
 }
 
-std::vector<AvailableAction> buildAvailableActions(
-    const MatchState& state,
-    const PlayerState& player,
-    const PlayerMapView& map) {
-
-    std::vector<AvailableAction> actions;
-    if (!player.alive || state.result.status != MatchStatus::Active) {
-        return actions;
+void appendSurveyActions(const PlayerState& player, const PlayerMapView& map,
+                         std::vector<AvailableAction>& actions) {
+    if (!player.inventory.contains(ItemType::SurveyFragment)) return;
+    const auto* current = currentCaveView(map);
+    if (!current) return;
+    for (const auto& exit : current->exits) {
+        if (exit.destination.has_value()) continue;
+        AvailableAction action;
+        action.type = ActionType::UseItem;
+        action.targetItem = ItemType::SurveyFragment;
+        action.targetTunnel = exit.id;
+        actions.push_back(action);
     }
+}
+
+std::vector<AvailableAction> buildAvailableActions(
+    const MatchState& state, const PlayerState& player, const PlayerMapView& map) {
+    std::vector<AvailableAction> actions;
+    if (!player.alive || state.result.status != MatchStatus::Active) return actions;
 
     appendTravelActions(map, ActionType::Move, actions);
-
     AvailableAction search;
     search.type = ActionType::Search;
     actions.push_back(search);
+    if (player.arrows > 0) appendTravelActions(map, ActionType::Shoot, actions);
 
-    if (player.arrows > 0) {
-        appendTravelActions(map, ActionType::Shoot, actions);
-    }
-
-    if (player.health < state.rules.maxHealth) {
+    if (player.health < state.rules.maxHealth)
         appendUseItemAction(player, ItemType::HealingDraught, actions);
-    }
     appendUseItemAction(player, ItemType::OldMinersMap, actions);
     appendUseItemAction(player, ItemType::JackalRepellent, actions);
+    appendSurveyActions(player, map, actions);
+    appendUseItemAction(player, ItemType::BloodBait, actions);
 
-    if (player.heldSigilFrom.has_value() &&
-        state.extraction.active &&
-        state.extraction.sigilHolder == player.id &&
-        state.extraction.cave == player.cave) {
+    if (player.heldSigilFrom.has_value() && state.extraction.active &&
+        state.extraction.sigilHolder == player.id && state.extraction.cave == player.cave) {
         AvailableAction escape;
         escape.type = ActionType::Contextual;
         escape.contextualAction = ContextualActionType::Escape;
         actions.push_back(escape);
     }
-
     return actions;
 }
 
 } // namespace
 
 PlayerRoundSnapshot SnapshotSystem::buildForPlayer(
-    const MatchState& state,
-    PlayerId viewer,
-    const std::vector<GameEvent>& events) {
-
-    // Discovery initialization is logically player-visible state. Work on a
-    // copy so snapshot generation remains a const/read-only operation for the
-    // authoritative MatchState.
+    const MatchState& state, PlayerId viewer, const std::vector<GameEvent>& events) {
     MatchState visibleState = state;
     auto& player = playerById(visibleState, viewer);
     MapDiscoverySystem::initializePlayer(visibleState, player);
@@ -148,37 +124,23 @@ PlayerRoundSnapshot SnapshotSystem::buildForPlayer(
     snapshot.map = MapDiscoverySystem::buildView(visibleState, player);
 
     if (player.pitMapRevealRounds > 0) {
-        for (const auto& pit : visibleState.pits) {
+        for (const auto& pit : visibleState.pits)
             if (pit.active) snapshot.temporarilyRevealedPitCaves.push_back(pit.cave);
-        }
         std::sort(snapshot.temporarilyRevealedPitCaves.begin(),
                   snapshot.temporarilyRevealedPitCaves.end());
     }
 
     snapshot.inventory.capacity = visibleState.rules.maxInventoryItems;
-    snapshot.inventory.items.reserve(player.inventory.items.size());
-    for (const auto& item : player.inventory.items) {
-        snapshot.inventory.items.push_back(item.type);
-    }
+    for (const auto& item : player.inventory.items) snapshot.inventory.items.push_back(item.type);
 
     snapshot.hasHunterSigil = player.heldSigilFrom.has_value();
-    if (extractionVisibleTo(visibleState, player)) {
-        snapshot.extractionCave = visibleState.extraction.cave;
-    }
+    if (extractionVisibleTo(visibleState, player)) snapshot.extractionCave = visibleState.extraction.cave;
 
-    snapshot.availableActions = buildAvailableActions(
-        visibleState,
-        player,
-        snapshot.map);
-    snapshot.observations = ObservationSystem::buildForPlayer(
-        visibleState,
-        viewer,
-        events);
-
+    snapshot.availableActions = buildAvailableActions(visibleState, player, snapshot.map);
+    snapshot.observations = ObservationSystem::buildForPlayer(visibleState, viewer, events);
     snapshot.matchStatus = visibleState.result.status;
     snapshot.matchOutcome = visibleState.result.outcome;
     snapshot.winner = visibleState.result.winner;
-
     return snapshot;
 }
 
