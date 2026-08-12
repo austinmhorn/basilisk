@@ -131,6 +131,31 @@ void opaqueTunnelTraversalRevealsDestination() {
     assert(hiddenExits == 2);
 }
 
+void shootingUnknownTunnelDoesNotRevealDestination() {
+    auto state = makeFogWorld();
+    RoundController controller;
+
+    PlayerAction shoot;
+    shoot.player = 1;
+    shoot.type = ActionType::Shoot;
+    shoot.targetTunnel = TunnelId{1};
+
+    const auto events = controller.resolve(state, {
+        shoot,
+        PlayerAction{2, ActionType::Search}
+    });
+
+    assert(state.players[0].arrows == 2);
+    assert(state.players[0].cave == 1);
+    assert(!state.players[0].discovery.knownCaves.contains(2));
+    assert(!MapDiscoverySystem::knowsConnection(state.players[0], 1, 2));
+    assert(!hasEventForPlayer(events, GameEventType::CaveDiscovered, 1));
+    assert(!hasEventForPlayer(events, GameEventType::TunnelDestinationRevealed, 1));
+
+    const auto view = MapDiscoverySystem::buildView(state, state.players[0]);
+    assert(!caveView(view, 1).exits[0].destination.has_value());
+}
+
 void discoveriesRemainPlayerSpecific() {
     auto state = makeFogWorld();
     RoundController controller;
@@ -172,6 +197,7 @@ int main() {
     initialFogShowsExitsButHidesDestinations();
     hiddenDestinationCannotBeSubmittedDirectly();
     opaqueTunnelTraversalRevealsDestination();
+    shootingUnknownTunnelDoesNotRevealDestination();
     discoveriesRemainPlayerSpecific();
     fullMapModeRevealsCompleteTopology();
 
