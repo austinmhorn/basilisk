@@ -133,7 +133,7 @@ struct Stats {
     std::uint64_t knownPitTunnelAvoidances{0}, pitDeaths{0}, mutualPitDraws{0};
 
     std::uint64_t arrowsFired{0}, arrowMisses{0}, pvpHits{0}, pvpDeaths{0};
-    std::uint64_t basiliskContactKills{0}, unattributedPlayerDeaths{0}, jackalHits{0};
+    std::uint64_t basiliskContactKills{0}, jackalKnockoutDeaths{0}, unattributedPlayerDeaths{0}, jackalHits{0};
     std::uint64_t basiliskEncounters{0}, basiliskEvades{0};
     std::uint64_t firstKills{0}, secondKills{0}, thirdKills{0};
     std::uint64_t secondEncounterMatches{0}, thirdEncounterMatches{0};
@@ -158,6 +158,7 @@ struct Stats {
 
     std::uint64_t jackalMoves{0}, jackalStuns{0}, jackalRepelled{0};
     std::uint64_t jackalRobberies{0}, jackalScares{0}, jackalKnockouts{0};
+    std::uint64_t jackalDamageEvents{0}, jackalDamageTotal{0};
 
     std::uint64_t looseArrowSpawns{0}, arrowsFound{0}, searches{0};
     std::array<std::uint64_t, kItemCount> itemsFound{};
@@ -698,6 +699,7 @@ void collectEvents(
     HuntTiming& huntTiming) {
 
     std::unordered_map<PlayerId, PlayerId> pvpAttackerByTarget;
+    std::unordered_set<PlayerId> jackalDamageTargets;
     std::optional<int> pendingEvadeEncounter;
     std::optional<CaveId> pendingEvadeOrigin;
 
@@ -712,8 +714,12 @@ void collectEvents(
             case GameEventType::ArrowMissed: ++stats.arrowMisses; break;
             case GameEventType::ArrowHitPlayer: ++stats.pvpHits; break;
             case GameEventType::PlayerDamaged:
-                if (event.actor.has_value() && event.targetPlayer.has_value())
+                if (event.actor.has_value() && event.targetPlayer.has_value()) {
                     pvpAttackerByTarget[*event.targetPlayer] = *event.actor;
+                } else if (event.targetPlayer.has_value() && jackalDamageTargets.contains(*event.targetPlayer)) {
+                    ++stats.jackalDamageEvents;
+                    stats.jackalDamageTotal += static_cast<std::uint64_t>(std::max(0, event.amount));
+                }
                 break;
             case GameEventType::ArrowHitJackal: ++stats.jackalHits; break;
             case GameEventType::ArrowReachedBasilisk:
@@ -787,7 +793,11 @@ void collectEvents(
             case GameEventType::JackalRepelled: ++stats.jackalRepelled; break;
             case GameEventType::JackalRobbedArrow: ++stats.jackalRobberies; break;
             case GameEventType::JackalScaredPlayer: ++stats.jackalScares; break;
-            case GameEventType::JackalKnockedOutPlayer: ++stats.jackalKnockouts; break;
+            case GameEventType::JackalKnockedOutPlayer:
+                ++stats.jackalKnockouts;
+                if (event.targetPlayer.has_value() && event.amount > 0)
+                    jackalDamageTargets.insert(*event.targetPlayer);
+                break;
             case GameEventType::SearchCompleted: ++stats.searches; break;
             case GameEventType::LooseArrowSpawned: ++stats.looseArrowSpawns; break;
             case GameEventType::ArrowFound:
@@ -831,9 +841,10 @@ void collectEvents(
 
                     const bool pitDeath = pitDeadPlayers.contains(dead);
                     const bool basiliskContact = event.basiliskBehavior == BasiliskBehavior::Enraged;
+                    const bool jackalDeath = jackalDamageTargets.contains(dead);
 
                     std::optional<PlayerId> killer = event.actor;
-                    if (!killer.has_value() && !basiliskContact) {
+                    if (!killer.has_value() && !basiliskContact && !jackalDeath) {
                         const auto it = pvpAttackerByTarget.find(dead);
                         if (it != pvpAttackerByTarget.end()) killer = it->second;
                     }
@@ -842,6 +853,8 @@ void collectEvents(
                         // Counted by PitTriggered; do not double-attribute it.
                     } else if (basiliskContact) {
                         ++stats.basiliskContactKills;
+                    } else if (jackalDeath) {
+                        ++stats.jackalKnockoutDeaths;
                     } else if (killer.has_value()) {
                         ++stats.pvpDeaths;
                         if (auto* ss = styleStats(*killer)) ++ss->pvpKills;
@@ -1030,12 +1043,13 @@ void printReport(const Stats& stats, std::uint64_t maxRounds) {
     const double avgCaves = stats.matches ? static_cast<double>(stats.totalCaves) / (stats.matches * 2.0) : 0.0;
     const double avgArrows = stats.matches ? static_cast<double>(stats.totalFinalArrows) / (stats.matches * 2.0) : 0.0;
 
-    std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT (BOT V3.7.1 DEATH ATTRIBUTION)\n";
+    std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT (BOT V3.8 JACKAL DAMAGE)\n";
     std::cout << "Matches: " << stats.matches << " | max rounds/match: " << maxRounds
               << " | loose-arrow cap: " << rules.maxLooseArrows
               << " | spawn cadence: every " << rules.looseArrowSpawnIntervalRounds << " rounds"
               << " | PvP arrow damage: " << rules.arrowDamage
-              << " | heal: " << rules.healingAmount << "\n\n";
+              << " | heal: " << rules.healingAmount
+              << " | Jackal knockout damage: " << rules.jackalDamageMin << " HP\n\n";
 
     std::cout << "OUTCOMES\n";
     printPercent("Completed", stats.completed, stats.matches);
@@ -1154,6 +1168,7 @@ void printReport(const Stats& stats, std::uint64_t maxRounds) {
     std::cout << "\nPLAYER DEATH ATTRIBUTION\n";
     std::cout << "Pit deaths: " << stats.pitDeaths << '\n';
     std::cout << "Enraged Basilisk contact kills: " << stats.basiliskContactKills << '\n';
+    std::cout << "Jackal knockout deaths: " << stats.jackalKnockoutDeaths << '\n';
     std::cout << "PvP deaths: " << stats.pvpDeaths << '\n';
     std::cout << "Other/unattributed player deaths: " << stats.unattributedPlayerDeaths << '\n';
 
@@ -1173,6 +1188,14 @@ void printReport(const Stats& stats, std::uint64_t maxRounds) {
               << stats.jackalKnockouts << '/' << stats.jackalStuns << '\n';
     std::cout << "Repelled attacks: " << stats.jackalRepelled << '\n';
     std::cout << "Jackal arrow hits: " << stats.jackalHits << '\n';
+
+    std::cout << "\nJACKAL DAMAGE TELEMETRY\n";
+    std::cout << "Knockout damage events: " << stats.jackalDamageEvents << '\n';
+    std::cout << "Total knockout damage: " << stats.jackalDamageTotal << '\n';
+    std::cout << "Average knockout damage: "
+              << (stats.jackalDamageEvents ? static_cast<double>(stats.jackalDamageTotal) / stats.jackalDamageEvents : 0.0)
+              << '\n';
+    std::cout << "Jackal knockout deaths: " << stats.jackalKnockoutDeaths << '\n';
 
     std::cout << "\nSEARCH LOOT / ITEM TELEMETRY\n";
     for (std::size_t i = 0; i < kItemCount; ++i) {
