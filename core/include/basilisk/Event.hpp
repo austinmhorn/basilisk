@@ -37,6 +37,7 @@ enum class GameEventType {
     PitInvestigationInconclusive,
     JackalMoved,
     JackalStunned,
+    JackalRepelled,
     JackalRobbedArrow,
     JackalScaredPlayer,
     JackalKnockedOutPlayer,
