@@ -75,8 +75,6 @@ std::optional<PlayerAction> chooseActionV210(
         ++v210.rememberedArrowLocationsInvalidated;
     }
 
-    // Only prioritize remembered ammo when empty. The hunter still has no
-    // knowledge of loose arrows in caves they have never personally seen.
     if (s.arrows == 0 && !s.hasHunterSigil) {
         if (const auto step = safeNextStepToRememberedArrow(s, ammo);
             step.has_value() && *step != s.currentCave) {
@@ -183,6 +181,7 @@ void runOneV210(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
 
 } // namespace
 
+#ifndef BASILISK_SIM_V210_NO_MAIN
 int main(int argc, char** argv) {
     std::uint64_t matches = 1000, maxRounds = 250;
     MapSeed firstMapSeed = 100000;
@@ -239,3 +238,4 @@ int main(int argc, char** argv) {
               << stats.basiliskEvades << '\n';
     return 0;
 }
+#endif
