@@ -173,6 +173,40 @@ JackalAttack chooseAttack(const MatchState& state, const PlayerState& player,
     return valid[index];
 }
 
+void applyJackalKnockoutDamage(
+    MatchState& state,
+    PlayerState& player,
+    RandomGenerator& rng,
+    std::vector<GameEvent>& events) {
+
+    if (!state.rules.jackalDamageEnabled || !player.alive) return;
+
+    const int minimum = std::min(state.rules.jackalDamageMin, state.rules.jackalDamageMax);
+    const int maximum = std::max(state.rules.jackalDamageMin, state.rules.jackalDamageMax);
+    const int damage = rng.range(minimum, maximum);
+    if (damage <= 0) return;
+
+    player.health = std::max(0, player.health - damage);
+    events.push_back(GameEvent{
+        GameEventType::PlayerDamaged,
+        std::nullopt,
+        player.id,
+        player.cave,
+        damage
+    });
+
+    if (player.health > 0) return;
+
+    player.alive = false;
+    events.push_back(GameEvent{
+        GameEventType::PlayerKilled,
+        std::nullopt,
+        player.id,
+        player.cave
+    });
+    createBodyIfMissing(state, player, std::nullopt, events);
+}
+
 void attackPlayer(MatchState& state, JackalState& jackal, PlayerState& player,
                   RandomGenerator& rng, std::vector<GameEvent>& events) {
     if (player.jackalRepellentRounds > 0) {
@@ -229,8 +263,11 @@ void attackPlayer(MatchState& state, JackalState& jackal, PlayerState& player,
                 GameEventType::JackalKnockedOutPlayer,
                 std::nullopt,
                 player.id,
-                player.cave
+                player.cave,
+                state.rules.jackalDamageEnabled ? state.rules.jackalDamageMin : 0
             });
+
+            applyJackalKnockoutDamage(state, player, rng, events);
             break;
         }
     }
