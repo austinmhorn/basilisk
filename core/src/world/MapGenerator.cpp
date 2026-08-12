@@ -95,6 +95,37 @@ bool farEnoughFromAll(
     });
 }
 
+bool nonBlockedCavesRemainConnected(
+    const WorldGraph& world,
+    const std::unordered_set<CaveId>& blocked) {
+
+    const auto ids = world.caveIds();
+    auto start = std::find_if(ids.begin(), ids.end(), [&](CaveId cave) {
+        return !blocked.contains(cave);
+    });
+    if (start == ids.end()) return true;
+
+    std::queue<CaveId> frontier;
+    std::unordered_set<CaveId> visited;
+    frontier.push(*start);
+    visited.insert(*start);
+
+    while (!frontier.empty()) {
+        const CaveId current = frontier.front();
+        frontier.pop();
+
+        for (const CaveId next : world.cave(current).connections) {
+            if (blocked.contains(next) || visited.contains(next)) continue;
+            visited.insert(next);
+            frontier.push(next);
+        }
+    }
+
+    const auto remaining = static_cast<std::size_t>(std::count_if(
+        ids.begin(), ids.end(), [&](CaveId cave) { return !blocked.contains(cave); }));
+    return visited.size() == remaining;
+}
+
 WorldGraph generateTopology(
     const ProceduralMapConfig& config,
     RandomGenerator& rng) {
@@ -266,6 +297,12 @@ void placePits(
                 cave,
                 placedPits,
                 config.minPitSeparation)) continue;
+
+        if (config.preventPitsBlockingRegions) {
+            std::unordered_set<CaveId> blocked(placedPits.begin(), placedPits.end());
+            blocked.insert(cave);
+            if (!nonBlockedCavesRemainConnected(state.world, blocked)) continue;
+        }
 
         state.pits.push_back(PitState{cave, true});
         placedPits.push_back(cave);
@@ -514,6 +551,11 @@ bool MapGenerator::validateFairness(
             return false;
         }
         pitCaves.push_back(pit.cave);
+    }
+
+    if (config.preventPitsBlockingRegions) {
+        const std::unordered_set<CaveId> blocked(pitCaves.begin(), pitCaves.end());
+        if (!nonBlockedCavesRemainConnected(state.world, blocked)) return false;
     }
 
     std::vector<CaveId> jackalCaves;
