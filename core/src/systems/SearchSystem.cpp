@@ -1,6 +1,7 @@
 #include "basilisk/systems/SearchSystem.hpp"
 
-#include <algorithm>
+#include <array>
+#include <cstdint>
 
 namespace basilisk {
 namespace {
@@ -32,6 +33,41 @@ void tryAddItem(PlayerState& player,
     }
 }
 
+void resolveWeightedOrdinaryLoot(PlayerState& player,
+                                 const Rules& rules,
+                                 RandomGenerator& rng,
+                                 std::vector<GameEvent>& events) {
+    struct WeightedReward {
+        std::uint32_t weight;
+        std::optional<ItemType> item;
+    };
+
+    const std::array<WeightedReward, 6> rewards{{
+        {rules.searchNothingWeight, std::nullopt},
+        {rules.searchHealingWeight, ItemType::HealingDraught},
+        {rules.searchJackalRepellentWeight, ItemType::JackalRepellent},
+        {rules.searchOldMinersMapWeight, ItemType::OldMinersMap},
+        {rules.searchSurveyFragmentWeight, ItemType::SurveyFragment},
+        {rules.searchBloodBaitWeight, ItemType::BloodBait}
+    }};
+
+    std::uint64_t total = 0;
+    for (const auto& reward : rewards) total += reward.weight;
+    if (total == 0) return;
+
+    const auto roll = static_cast<std::uint64_t>(
+        rng.range(1, static_cast<int>(total)));
+    std::uint64_t cumulative = 0;
+    for (const auto& reward : rewards) {
+        cumulative += reward.weight;
+        if (roll > cumulative) continue;
+        if (reward.item.has_value()) {
+            tryAddItem(player, *reward.item, rules, events);
+        }
+        return;
+    }
+}
+
 } // namespace
 
 std::vector<GameEvent> SearchSystem::search(
@@ -59,35 +95,13 @@ std::vector<GameEvent> SearchSystem::search(
         player.cave
     });
 
-    if (player.arrows < rules.maxArrows &&
-        rng.chance(rules.searchArrowNumerator, rules.searchArrowDenominator)) {
-        ++player.arrows;
-        events.push_back(GameEvent{
-            GameEventType::ArrowFound,
-            player.id,
-            std::nullopt,
-            player.cave,
-            1
-        });
-    }
-
-    if (rng.chance(rules.searchHealingNumerator, rules.searchHealingDenominator)) {
-        tryAddItem(player, ItemType::HealingDraught, rules, events);
-    }
-
-    if (rng.chance(rules.searchOldMinersMapNumerator,
-                   rules.searchOldMinersMapDenominator)) {
-        tryAddItem(player, ItemType::OldMinersMap, rules, events);
-    }
-
-    if (rng.chance(rules.searchJackalRepellentNumerator,
-                   rules.searchJackalRepellentDenominator)) {
-        tryAddItem(player, ItemType::JackalRepellent, rules, events);
-    }
+    // Exactly one ordinary weighted reward outcome (including Nothing).
+    resolveWeightedOrdinaryLoot(player, rules, rng, events);
 
     if (rng.chance(rules.searchExoticNumerator, rules.searchExoticDenominator)) {
-        // BasiliskCore only records the discovery. In online play the backend
-        // owns the permanent Calling Card award and account mutation.
+        // Prototype probability/event hook only. In online play the backend
+        // owns the permanent Calling Card RNG, weighted rarity pool, duplicate
+        // policy, ownership validation, and account mutation.
         events.push_back(GameEvent{
             GameEventType::ExoticCallingCardFound,
             player.id,
