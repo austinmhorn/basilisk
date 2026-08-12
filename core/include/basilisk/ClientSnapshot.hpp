@@ -39,6 +39,10 @@ struct PlayerRoundSnapshot {
     CaveId currentCave{};
     PlayerMapView map;
 
+    // A loose arrow is visible only when it is physically present in the
+    // hunter's current cave. No remote loose-arrow locations are exposed.
+    bool looseArrowPresent{false};
+
     // Temporary exact Pit markers supplied by utility items such as the Old
     // Miner's Map. These do not mutate permanent fog-of-war discovery.
     std::vector<CaveId> temporarilyRevealedPitCaves;
