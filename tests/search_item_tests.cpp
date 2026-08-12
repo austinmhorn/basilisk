@@ -81,12 +81,12 @@ void fullInventoryRejectsWeightedItem() {
     assert(!hasEvent(events, GameEventType::ItemFound));
 }
 
-void healingDraughtRestoresFortyAndIsConsumed() {
+void healingDraughtRestoresFiftyAndIsConsumed() {
     PlayerState player{1, 1, 20, 3, true};
     assert(player.inventory.add(ItemInstance{ItemType::HealingDraught}, 3));
     Rules rules;
     const auto events = ItemSystem::use(player, ItemType::HealingDraught, rules);
-    assert(player.health == 60);
+    assert(player.health == 70);
     assert(!player.inventory.contains(ItemType::HealingDraught));
     assert(hasEvent(events, GameEventType::PlayerHealed));
 }
@@ -187,7 +187,7 @@ int main() {
     weightedSearchAwardsAtMostOneOrdinaryItem();
     staticSearchCannotBeFarmed();
     fullInventoryRejectsWeightedItem();
-    healingDraughtRestoresFortyAndIsConsumed();
+    healingDraughtRestoresFiftyAndIsConsumed();
     oldMinersMapTemporarilyRevealsActivePit();
     surveyFragmentRevealsChosenUnknownTunnel();
     bloodBaitCanPullBasiliskOneStepCloser();
