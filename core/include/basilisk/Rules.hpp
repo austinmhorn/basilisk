@@ -41,10 +41,12 @@ struct Rules {
     std::uint32_t pitInvestigationNumerator{3};
     std::uint32_t pitInvestigationDenominator{4};
 
-    // Temporary utility-item durations. Effects begin immediately during the
-    // item-use phase and then tick down once at the end of each resolved round.
+    // Temporary utility-item durations/effects.
     int oldMinersMapRevealRounds{3};
     int jackalRepellentRounds{3};
+    int bloodBaitRounds{5};
+    std::uint32_t bloodBaitAttractionNumerator{1};
+    std::uint32_t bloodBaitAttractionDenominator{2};
 
     // Reserved Jackal damage capability. Disabled by default so current
     // gameplay remains faithful to the classic ROB / SCARE / KNOCKOUT model.
@@ -52,17 +54,19 @@ struct Rules {
     int jackalDamageMin{5};
     int jackalDamageMax{10};
 
-    // Search loot. Loose world arrows remain the primary ammunition source, so
-    // direct Search arrows stay disabled for this balance pass. Item rolls are
-    // independent and inventory capacity still applies.
-    std::uint32_t searchArrowNumerator{0};
-    std::uint32_t searchArrowDenominator{1};
-    std::uint32_t searchHealingNumerator{1};
-    std::uint32_t searchHealingDenominator{12};
-    std::uint32_t searchOldMinersMapNumerator{1};
-    std::uint32_t searchOldMinersMapDenominator{20};
-    std::uint32_t searchJackalRepellentNumerator{1};
-    std::uint32_t searchJackalRepellentDenominator{16};
+    // Search loot uses ONE weighted ordinary reward roll. Weights sum to 100
+    // by default but are treated as relative weights, so tuning does not depend
+    // on that exact total. Loose world arrows remain the ammo economy.
+    std::uint32_t searchNothingWeight{65};
+    std::uint32_t searchHealingWeight{12};
+    std::uint32_t searchJackalRepellentWeight{9};
+    std::uint32_t searchOldMinersMapWeight{7};
+    std::uint32_t searchSurveyFragmentWeight{5};
+    std::uint32_t searchBloodBaitWeight{2};
+
+    // Cosmetic progression is server-authoritative in production. Core keeps
+    // this ultra-rare prototype trigger only for probability/event-pipeline
+    // testing; it never grants permanent account ownership itself.
     std::uint32_t searchExoticNumerator{1};
     std::uint32_t searchExoticDenominator{1000};
 };
