@@ -1,6 +1,7 @@
 add_library(BasiliskCore STATIC
     src/Random.cpp
     src/world/WorldGraph.cpp
+    src/systems/ItemSystem.cpp
     src/systems/SearchSystem.cpp
     src/systems/TurnResolver.cpp
 )
