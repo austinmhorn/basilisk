@@ -3,6 +3,23 @@
 #include <algorithm>
 
 namespace basilisk {
+namespace {
+
+void emitItemUsed(PlayerState& player,
+                  ItemType item,
+                  std::vector<GameEvent>& events) {
+    events.push_back(GameEvent{
+        GameEventType::ItemUsed,
+        player.id,
+        std::nullopt,
+        player.cave,
+        1,
+        std::nullopt,
+        item
+    });
+}
+
+} // namespace
 
 std::vector<GameEvent> ItemSystem::use(
     PlayerState& player,
@@ -29,16 +46,7 @@ std::vector<GameEvent> ItemSystem::use(
                 return events;
             }
 
-            events.push_back(GameEvent{
-                GameEventType::ItemUsed,
-                player.id,
-                std::nullopt,
-                player.cave,
-                1,
-                std::nullopt,
-                item
-            });
-
+            emitItemUsed(player, item, events);
             events.push_back(GameEvent{
                 GameEventType::PlayerHealed,
                 player.id,
@@ -52,12 +60,24 @@ std::vector<GameEvent> ItemSystem::use(
         }
 
         case ItemType::OldMinersMap:
-        case ItemType::SurveyFragment:
+            if (!player.inventory.removeOne(item)) return events;
+            player.pitMapRevealRounds = std::max(
+                player.pitMapRevealRounds,
+                rules.oldMinersMapRevealRounds);
+            emitItemUsed(player, item, events);
+            break;
+
         case ItemType::JackalRepellent:
+            if (!player.inventory.removeOne(item)) return events;
+            player.jackalRepellentRounds = std::max(
+                player.jackalRepellentRounds,
+                rules.jackalRepellentRounds);
+            emitItemUsed(player, item, events);
+            break;
+
+        case ItemType::SurveyFragment:
         case ItemType::BloodBait:
-            // These items are modeled now so inventory/search content can be
-            // data-driven, but their gameplay effects are intentionally
-            // deferred until the associated map/AI systems are implemented.
+            // Reserved for later content passes.
             break;
     }
 
