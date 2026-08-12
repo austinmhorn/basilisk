@@ -1,5 +1,7 @@
 #include <cassert>
 #include <iostream>
+#include <queue>
+#include <unordered_map>
 #include <vector>
 
 #include "basilisk/Action.hpp"
@@ -18,43 +20,50 @@ bool hasEvent(const std::vector<GameEvent>& events, GameEventType type) {
     return false;
 }
 
-MatchState makeForcedRelocationMatch(MatchSeed seed) {
+int distanceBetween(const MatchState& state, CaveId start, CaveId target) {
+    std::queue<CaveId> frontier;
+    std::unordered_map<CaveId, int> distance;
+    frontier.push(start);
+    distance[start] = 0;
+
+    while (!frontier.empty()) {
+        const CaveId current = frontier.front();
+        frontier.pop();
+        if (current == target) return distance.at(current);
+        for (const CaveId next : state.world.cave(current).connections) {
+            if (distance.contains(next)) continue;
+            distance[next] = distance.at(current) + 1;
+            frontier.push(next);
+        }
+    }
+    return -1;
+}
+
+MatchState makeRelocationMatch(MatchSeed seed) {
     MatchState state;
     state.matchSeed = seed;
     state.mapSeed = 9001;
 
-    for (CaveId cave = 1; cave <= 6; ++cave) {
-        state.world.addCave(cave);
-    }
+    for (CaveId cave = 1; cave <= 7; ++cave) state.world.addCave(cave);
+    for (CaveId cave = 1; cave < 7; ++cave) state.world.connect(cave, cave + 1);
 
-    // The hunter can shoot the Basilisk from Cave 1 into Cave 2.
-    // Cave 6 is intentionally not adjacent to Cave 2, proving evade relocation
-    // is map-wide rather than limited by tunnel distance.
-    state.world.connect(1, 2);
-
-    state.players = {
-        PlayerState{1, 1, 100, 3, true}
-    };
+    state.players = {PlayerState{1, 1, 100, 3, true}};
     state.basilisk.cave = 2;
 
-    // Current cave 2 is illegal by definition, Cave 1 is occupied by the
-    // living hunter, and Caves 3/4/5 are active Pits. Cave 6 is therefore the
-    // only legal evade destination anywhere on the map.
-    state.pits = {
-        PitState{3, true},
-        PitState{4, true},
-        PitState{5, true}
-    };
-
+    // Cave 3 is adjacent but forbidden by a Pit. Cave 1 is occupied. This
+    // forces evade relocation to respect both safety exclusions and graph
+    // distance rather than simply picking the nearest cave.
+    state.pits = {PitState{3, true}};
     return state;
 }
 
-void firstEvadeRelocatesAnywhereButPitOccupiedOrCurrentCave() {
+void firstEvadeRelocatesTwoToThreeCavesAway() {
     TurnResolver resolver;
     bool foundEvade = false;
 
     for (MatchSeed seed = 1; seed <= 10000 && !foundEvade; ++seed) {
-        auto state = makeForcedRelocationMatch(seed);
+        auto state = makeRelocationMatch(seed);
+        const CaveId origin = state.basilisk.cave;
         const auto events = resolver.resolve(state, {
             PlayerAction{1, ActionType::Shoot, CaveId{2}}
         });
@@ -62,25 +71,28 @@ void firstEvadeRelocatesAnywhereButPitOccupiedOrCurrentCave() {
         if (!hasEvent(events, GameEventType::BasiliskEvaded)) continue;
         foundEvade = true;
 
+        const int distance = distanceBetween(state, origin, state.basilisk.cave);
         assert(state.basilisk.alive);
         assert(state.basilisk.trueEncounters == 1);
         assert(hasEvent(events, GameEventType::BasiliskMoved));
-        assert(state.basilisk.cave == CaveId{6});
-        assert(state.basilisk.lastCave.has_value());
-        assert(*state.basilisk.lastCave == CaveId{2});
+        assert(distance >= 2 && distance <= 3);
+        assert(state.basilisk.cave != CaveId{1});
+        assert(state.basilisk.cave != CaveId{3});
+        assert(state.basilisk.lastCave == CaveId{2});
     }
 
     assert(foundEvade);
 }
 
-void secondEvadeRelocatesBeforeBecomingEnraged() {
+void secondEvadeRelocatesOneToTwoCavesAwayBeforeEnraging() {
     TurnResolver resolver;
     bool foundEvade = false;
 
     for (MatchSeed seed = 1; seed <= 10000 && !foundEvade; ++seed) {
-        auto state = makeForcedRelocationMatch(seed);
+        auto state = makeRelocationMatch(seed);
         state.basilisk.trueEncounters = 1;
         state.basilisk.behavior = BasiliskBehavior::Restless;
+        const CaveId origin = state.basilisk.cave;
 
         const auto events = resolver.resolve(state, {
             PlayerAction{1, ActionType::Shoot, CaveId{2}}
@@ -89,12 +101,14 @@ void secondEvadeRelocatesBeforeBecomingEnraged() {
         if (!hasEvent(events, GameEventType::BasiliskEvaded)) continue;
         foundEvade = true;
 
+        const int distance = distanceBetween(state, origin, state.basilisk.cave);
         assert(state.basilisk.alive);
         assert(state.basilisk.trueEncounters == 2);
         assert(hasEvent(events, GameEventType::BasiliskMoved));
-        assert(state.basilisk.cave == CaveId{6});
-        assert(state.basilisk.lastCave.has_value());
-        assert(*state.basilisk.lastCave == CaveId{2});
+        assert(distance >= 1 && distance <= 2);
+        assert(state.basilisk.cave != CaveId{1});
+        assert(state.basilisk.cave != CaveId{3});
+        assert(state.basilisk.lastCave == CaveId{2});
         assert(state.basilisk.behavior == BasiliskBehavior::Enraged);
         assert(hasEvent(events, GameEventType::BasiliskBehaviorChanged));
     }
@@ -105,9 +119,8 @@ void secondEvadeRelocatesBeforeBecomingEnraged() {
 } // namespace
 
 int main() {
-    firstEvadeRelocatesAnywhereButPitOccupiedOrCurrentCave();
-    secondEvadeRelocatesBeforeBecomingEnraged();
-
+    firstEvadeRelocatesTwoToThreeCavesAway();
+    secondEvadeRelocatesOneToTwoCavesAwayBeforeEnraging();
     std::cout << "Basilisk evade relocation tests passed.\n";
     return 0;
 }
