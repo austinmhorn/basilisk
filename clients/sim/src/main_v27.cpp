@@ -30,24 +30,17 @@ std::optional<PlayerAction> chooseActionV27(const PlayerRoundSnapshot& s,
                                              V25Stats& legacy,
                                              V26Stats& v26) {
     if (s.health <= 60) {
-        if (const auto* heal = useItemAction(s, ItemType::HealingDraught)) {
+        if (const auto* heal = useItemAction(s, ItemType::HealingDraught))
             return materialize(s.player, *heal);
-        }
     }
-
     if (hasObs(s, ObservationType::JackalNearby)) {
-        if (const auto* repel = useItemAction(s, ItemType::JackalRepellent)) {
+        if (const auto* repel = useItemAction(s, ItemType::JackalRepellent))
             return materialize(s.player, *repel);
-        }
     }
-
-    if (hasObs(s, ObservationType::PitNearby) &&
-        s.temporarilyRevealedPitCaves.empty()) {
-        if (const auto* map = useItemAction(s, ItemType::OldMinersMap)) {
+    if (hasObs(s, ObservationType::PitNearby) && s.temporarilyRevealedPitCaves.empty()) {
+        if (const auto* map = useItemAction(s, ItemType::OldMinersMap))
             return materialize(s.player, *map);
-        }
     }
-
     return chooseActionV26(s, memory, sweep, matchSeed, stats, legacy, v26);
 }
 
@@ -67,7 +60,6 @@ void collectV27Events(const std::vector<GameEvent>& events, V27Stats& v27) {
         if (event.type == GameEventType::JackalRepelled) ++v27.jackalAttacksRepelled;
         if (event.type == GameEventType::PlayerHealed)
             v27.healedHp += static_cast<std::uint64_t>(std::max(0, event.amount));
-
         if (event.type == GameEventType::ItemUsed && event.itemType.has_value()) {
             switch (*event.itemType) {
                 case ItemType::HealingDraught: ++v27.healingUsed; break;
@@ -93,18 +85,15 @@ void runOneV27(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
     while (state.result.status == MatchStatus::Active && state.round <= maxRounds) {
         std::vector<PlayerAction> selected;
         std::unordered_set<PlayerId> zeroBefore;
-
         for (const auto& p : state.players) {
             if (!p.alive) continue;
             const auto snapshot = SnapshotSystem::buildForPlayer(state, p.id, previousEvents);
             if (snapshot.arrows == 0) zeroBefore.insert(p.id);
             if (hasObs(snapshot, ObservationType::PitNearby)) ++stats.pitWarnings;
             if (const auto action = chooseActionV27(snapshot, memories[p.id], sweeps[p.id],
-                                                     matchSeed, stats, legacy, v26)) {
+                                                     matchSeed, stats, legacy, v26))
                 selected.push_back(*action);
-            }
         }
-
         if (selected.empty()) break;
         bool submitOk = true;
         for (const auto& a : selected) submitOk &= coordinator.submitAction(a);
@@ -116,7 +105,6 @@ void runOneV27(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
         previousEvents = coordinator.lastEvents();
         collectEventStats(previousEvents, stats, state, pitDeadPlayers);
         collectV27Events(previousEvents, v27);
-
         for (const auto& event : previousEvents) {
             if (event.type == GameEventType::ArrowFound && event.actor.has_value() &&
                 zeroBefore.contains(*event.actor)) {
@@ -125,14 +113,11 @@ void runOneV27(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
                 sweeps[*event.actor].pendingTargets.clear();
             }
         }
-
         if (!countedSecond && state.basilisk.trueEncounters >= 2) {
-            ++stats.secondEncounterMatches;
-            countedSecond = true;
+            ++stats.secondEncounterMatches; countedSecond = true;
         }
         if (!countedThird && state.basilisk.trueEncounters >= 3) {
-            ++stats.thirdEncounterMatches;
-            countedThird = true;
+            ++stats.thirdEncounterMatches; countedThird = true;
         }
     }
 
@@ -145,13 +130,11 @@ void runOneV27(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
         stats.totalCaves += snapshot.map.caves.size();
         stats.totalFinalArrows += std::max(0, p.arrows);
     }
-
     if (state.result.status != MatchStatus::Completed) {
         ++stats.stalled;
         diagnoseV26Stall(state, previousEvents, v26);
         return;
     }
-
     ++stats.completed;
     switch (state.result.outcome) {
         case MatchOutcome::BasiliskKilled: ++stats.basiliskWins; break;
@@ -171,13 +154,14 @@ void printV27(const V27Stats& v27) {
     std::cout << "Old Miner's Maps found/used: " << v27.mapsFound << '/' << v27.mapsUsed << '\n';
     std::cout << "Jackal Repellents found/used: " << v27.repellentsFound << '/' << v27.repellentsUsed << '\n';
     std::cout << "Inventory-full rejected drops: " << v27.inventoryFullDrops << '\n';
-    std::cout << "Exotic Calling Cards discovered: " << v27.exoticCallingCards << '\n';
+    std::cout << "Exotic Calling Card prototype triggers: " << v27.exoticCallingCards << '\n';
     std::cout << "Total HP restored: " << v27.healedHp << '\n';
     std::cout << "Jackal attacks repelled: " << v27.jackalAttacksRepelled << '\n';
 }
 
 } // namespace
 
+#ifndef BASILISK_SIM_V27_NO_MAIN
 int main(int argc, char** argv) {
     std::uint64_t matches = 1000, maxRounds = 250;
     MapSeed firstMapSeed = 100000;
@@ -187,20 +171,14 @@ int main(int argc, char** argv) {
     if (argc > 3) firstMapSeed = static_cast<MapSeed>(std::stoull(argv[3]));
     if (argc > 4) firstMatchSeed = static_cast<MatchSeed>(std::stoull(argv[4]));
 
-    Stats stats;
-    V25Stats legacy;
-    V26Stats v26;
-    V27Stats v27;
-    for (std::uint64_t i = 0; i < matches; ++i) {
-        runOneV27(firstMapSeed + static_cast<MapSeed>(i),
-                  firstMatchSeed + static_cast<MatchSeed>(i),
+    Stats stats; V25Stats legacy; V26Stats v26; V27Stats v27;
+    for (std::uint64_t i = 0; i < matches; ++i)
+        runOneV27(firstMapSeed + static_cast<MapSeed>(i), firstMatchSeed + static_cast<MatchSeed>(i),
                   maxRounds, stats, legacy, v26, v27);
-    }
 
     std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT (BOT V2.7 LOOT)\n";
     std::cout << "Matches: " << stats.matches << " | max rounds/match: " << maxRounds
               << " | loose-arrow cap: 8\n\n";
-
     std::cout << "OUTCOMES\n";
     printPercent("Completed", stats.completed, stats.matches);
     printPercent("Stalled at round cap", stats.stalled, stats.matches);
@@ -208,10 +186,8 @@ int main(int argc, char** argv) {
     printPercent("Simultaneous Basilisk draws", stats.simultaneousBasiliskDraws, stats.matches);
     printPercent("Extraction wins", stats.extractionWins, stats.matches);
     printPercent("Other draws", stats.draws, stats.matches);
-
     printV26(v26);
     printV27(v27);
-
     std::cout << "\nCORE TELEMETRY\n";
     std::cout << "Pit deaths / mutual-Pit draws: " << stats.pitDeaths << '/' << stats.mutualPitDraws << '\n';
     std::cout << "Bodies created/found: " << stats.bodiesCreated << '/' << stats.bodiesFound << '\n';
@@ -222,3 +198,4 @@ int main(int argc, char** argv) {
               << stats.basiliskEvades << '\n';
     return 0;
 }
+#endif
