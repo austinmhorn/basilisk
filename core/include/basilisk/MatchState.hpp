@@ -26,12 +26,10 @@ struct MatchState {
     std::vector<JackalState> jackals;
     std::vector<PitState> pits;
     std::vector<BodyState> bodies;
+    std::vector<CaveId> looseArrows;
     ExtractionState extraction;
     MatchResult result;
-
-    // Persistent environmental activity used by behaviors such as Territorial.
     std::optional<CaveId> mostRecentSearchCave;
-
     RoundNumber round{1};
 };
 
