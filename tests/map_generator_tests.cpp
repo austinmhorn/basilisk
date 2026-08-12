@@ -4,6 +4,7 @@
 #include <queue>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "basilisk/world/MapGenerator.hpp"
@@ -38,6 +39,40 @@ int distanceBetween(const WorldGraph& world, CaveId start, CaveId target) {
     return -1;
 }
 
+bool nonPitCavesRemainConnected(const MatchState& state) {
+    std::unordered_set<CaveId> blocked;
+    for (const auto& pit : state.pits) {
+        if (pit.active) blocked.insert(pit.cave);
+    }
+
+    const auto ids = state.world.caveIds();
+    const auto start = std::find_if(ids.begin(), ids.end(), [&](CaveId cave) {
+        return !blocked.contains(cave);
+    });
+    if (start == ids.end()) return true;
+
+    std::queue<CaveId> frontier;
+    std::unordered_set<CaveId> visited;
+    frontier.push(*start);
+    visited.insert(*start);
+
+    while (!frontier.empty()) {
+        const CaveId current = frontier.front();
+        frontier.pop();
+        for (const CaveId next : state.world.cave(current).connections) {
+            if (blocked.contains(next) || visited.contains(next)) continue;
+            visited.insert(next);
+            frontier.push(next);
+        }
+    }
+
+    std::size_t remaining = 0;
+    for (const CaveId cave : ids) {
+        if (!blocked.contains(cave)) ++remaining;
+    }
+    return visited.size() == remaining;
+}
+
 void assertPlacementQuality(const MatchState& state, const ProceduralMapConfig& config) {
     assert(state.players.size() == 2);
 
@@ -70,6 +105,10 @@ void assertPlacementQuality(const MatchState& state, const ProceduralMapConfig& 
             assert(distanceBetween(state.world, state.pits[i].cave, state.pits[j].cave) >=
                    config.minPitSeparation);
         }
+    }
+
+    if (config.preventPitsBlockingRegions) {
+        assert(nonPitCavesRemainConnected(state));
     }
 
     for (std::size_t i = 0; i < state.jackals.size(); ++i) {
@@ -216,6 +255,18 @@ void pitCountRemainsConfigurableAndSeparated() {
     const auto state = MapGenerator::generate(13579, 24680, {}, config);
     assert(state.pits.size() == 3);
     assertPlacementQuality(state, config);
+    assert(nonPitCavesRemainConnected(state));
+}
+
+void pitsNeverSealOffRegionsAcrossManySeeds() {
+    ProceduralMapConfig config;
+    config.pitCount = 3;
+
+    for (std::uint64_t seed = 100; seed < 150; ++seed) {
+        const auto state = MapGenerator::generate(seed, seed * 313U, {}, config);
+        assert(nonPitCavesRemainConnected(state));
+        assert(MapGenerator::validateFairness(state, config));
+    }
 }
 
 void deadEndSpawnPoliciesAreConfigurable() {
@@ -237,6 +288,7 @@ int main() {
     deadEndTargetIsConfigurable();
     jackalScalingUsesCaveCountAndSeparation();
     pitCountRemainsConfigurableAndSeparated();
+    pitsNeverSealOffRegionsAcrossManySeeds();
     deadEndSpawnPoliciesAreConfigurable();
 
     std::cout << "Basilisk procedural map generator tests passed.\n";
