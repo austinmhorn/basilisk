@@ -40,11 +40,11 @@ MatchState makeWorld() {
     return state;
 }
 
-void jackalDamageCapabilityDefaultsOff() {
+void jackalDamageCapabilityDefaultsToFiveHp() {
     Rules rules;
-    assert(!rules.jackalDamageEnabled);
+    assert(rules.jackalDamageEnabled);
     assert(rules.jackalDamageMin == 5);
-    assert(rules.jackalDamageMax == 10);
+    assert(rules.jackalDamageMax == 5);
 }
 
 void movingIntoPitKillsHunterAndEjectsSigil() {
@@ -94,8 +94,6 @@ void ejectedPitSigilCanBeRecoveredBySearch() {
     assert(state.bodies[0].sigilCave.has_value());
     const CaveId sigilCave = *state.bodies[0].sigilCave;
 
-    // Put the survivor in the ejected Sigil cave to isolate the dynamic-search
-    // behavior from pathfinding for this unit test.
     state.players[1].cave = sigilCave;
     const auto searchEvents = resolver.resolve(state, {
         PlayerAction{2, ActionType::Search}
@@ -156,8 +154,6 @@ void jackalAvoidsPitAndBasiliskWhenRoaming() {
     jackal.cave = 1;
     state.jackals = {jackal};
 
-    // From cave 1 the connected caves are 2, 3, and 4. With 2 occupied by
-    // the Basilisk and 3 containing the Pit, cave 4 is the only legal move.
     RandomGenerator rng{99};
     std::vector<GameEvent> events;
     WorldDangerSystem::resolveJackals(state, rng, events);
@@ -217,10 +213,44 @@ void jackalRobberyRemovesExactlyOneArrow() {
     assert(verified);
 }
 
+void jackalKnockoutDealsExactlyFiveHp() {
+    bool verified = false;
+
+    for (std::uint64_t seed = 1; seed <= 10000 && !verified; ++seed) {
+        auto state = makeWorld();
+        state.players = {PlayerState{1, 1, 100, 3, true}};
+        JackalState jackal;
+        jackal.cave = 1;
+        state.jackals = {jackal};
+
+        RandomGenerator rng{seed};
+        std::vector<GameEvent> events;
+        WorldDangerSystem::resolveJackals(state, rng, events);
+
+        if (hasEvent(events, GameEventType::JackalKnockedOutPlayer)) {
+            assert(state.players[0].health == 95);
+            assert(state.players[0].alive);
+
+            bool sawDamage = false;
+            for (const auto& event : events) {
+                if (event.type == GameEventType::PlayerDamaged &&
+                    event.targetPlayer == PlayerId{1} && event.amount == 5) {
+                    sawDamage = true;
+                    break;
+                }
+            }
+            assert(sawDamage);
+            verified = true;
+        }
+    }
+
+    assert(verified);
+}
+
 } // namespace
 
 int main() {
-    jackalDamageCapabilityDefaultsOff();
+    jackalDamageCapabilityDefaultsToFiveHp();
     movingIntoPitKillsHunterAndEjectsSigil();
     ejectedPitSigilCanBeRecoveredBySearch();
     twoHuntersFallingIntoPitsDraws();
@@ -228,6 +258,7 @@ int main() {
     jackalAvoidsPitAndBasiliskWhenRoaming();
     allThreeClassicJackalAttacksAreReachable();
     jackalRobberyRemovesExactlyOneArrow();
+    jackalKnockoutDealsExactlyFiveHp();
 
     std::cout << "Basilisk world danger tests passed.\n";
     return 0;
