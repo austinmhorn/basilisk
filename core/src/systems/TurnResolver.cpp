@@ -19,6 +19,37 @@ PlayerState& playerById(MatchState& state, PlayerId id) {
     return *it;
 }
 
+void applyOrRefreshStun(JackalState& jackal, int applications) {
+    const auto it = std::find_if(
+        jackal.statuses.begin(),
+        jackal.statuses.end(),
+        [](const StatusEffect& status) {
+            return status.type == StatusEffectType::Stunned;
+        });
+
+    if (it == jackal.statuses.end()) {
+        jackal.statuses.push_back(StatusEffect{
+            StatusEffectType::Stunned,
+            applications
+        });
+        return;
+    }
+
+    it->remainingApplications = applications;
+}
+
+void advanceJackalStatuses(JackalState& jackal) {
+    for (auto& status : jackal.statuses) {
+        if (status.type == StatusEffectType::Stunned && status.remainingApplications > 0) {
+            --status.remainingApplications;
+        }
+    }
+
+    std::erase_if(jackal.statuses, [](const StatusEffect& status) {
+        return status.remainingApplications <= 0;
+    });
+}
+
 } // namespace
 
 std::vector<GameEvent> TurnResolver::resolve(
@@ -86,7 +117,7 @@ std::vector<GameEvent> TurnResolver::resolve(
             0
         });
 
-        const auto target = std::find_if(
+        const auto targetPlayer = std::find_if(
             state.players.begin(),
             state.players.end(),
             [&](const PlayerState& player) {
@@ -95,30 +126,72 @@ std::vector<GameEvent> TurnResolver::resolve(
                        player.cave == *action.targetCave;
             });
 
-        if (target == state.players.end()) {
+        if (targetPlayer != state.players.end()) {
+            pendingDamage.push_back(PendingDamage{
+                targetPlayer->id,
+                shooter.id,
+                targetPlayer->cave,
+                state.rules.arrowDamage
+            });
+
             events.push_back(GameEvent{
-                GameEventType::ArrowMissed,
+                GameEventType::ArrowHitPlayer,
+                shooter.id,
+                targetPlayer->id,
+                targetPlayer->cave,
+                state.rules.arrowDamage
+            });
+            continue;
+        }
+
+        if (state.basilisk.alive && state.basilisk.cave == *action.targetCave) {
+            // The exact Basilisk hit/evasion rule is intentionally deferred.
+            // We record that the arrow reached the Basilisk's cave without
+            // inventing an outcome that has not been designed yet.
+            events.push_back(GameEvent{
+                GameEventType::ArrowReachedBasilisk,
                 shooter.id,
                 std::nullopt,
-                *action.targetCave,
+                state.basilisk.cave,
                 0
             });
             continue;
         }
 
-        pendingDamage.push_back(PendingDamage{
-            target->id,
-            shooter.id,
-            target->cave,
-            state.rules.arrowDamage
-        });
+        const auto targetJackal = std::find_if(
+            state.jackals.begin(),
+            state.jackals.end(),
+            [&](const JackalState& jackal) {
+                return jackal.cave == *action.targetCave;
+            });
+
+        if (targetJackal != state.jackals.end()) {
+            applyOrRefreshStun(*targetJackal, state.rules.jackalStunPhases);
+
+            events.push_back(GameEvent{
+                GameEventType::ArrowHitJackal,
+                shooter.id,
+                std::nullopt,
+                targetJackal->cave,
+                0
+            });
+
+            events.push_back(GameEvent{
+                GameEventType::JackalStunned,
+                shooter.id,
+                std::nullopt,
+                targetJackal->cave,
+                state.rules.jackalStunPhases
+            });
+            continue;
+        }
 
         events.push_back(GameEvent{
-            GameEventType::ArrowHitPlayer,
+            GameEventType::ArrowMissed,
             shooter.id,
-            target->id,
-            target->cave,
-            state.rules.arrowDamage
+            std::nullopt,
+            *action.targetCave,
+            0
         });
     }
 
@@ -166,6 +239,14 @@ std::vector<GameEvent> TurnResolver::resolve(
             player.cave,
             0
         });
+    }
+
+    // Phase 4 placeholder: Jackal/NPC phase. Movement and attacks are not yet
+    // implemented, but stun durations already advance according to the agreed
+    // NPC-phase semantics. A Jackal shot this round therefore consumes the
+    // first of its three suppressed NPC phases here.
+    for (auto& jackal : state.jackals) {
+        advanceJackalStatuses(jackal);
     }
 
     ++state.round;
