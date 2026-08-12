@@ -50,6 +50,8 @@ enum class GameEventType {
     ExoticCallingCardFound,
     ItemUsed,
     PlayerHealed,
+    BasiliskBaitPlaced,
+    BasiliskBaitInfluencedMove,
     BasiliskEvaded,
     BasiliskBehaviorChanged,
     BasiliskMoved,
