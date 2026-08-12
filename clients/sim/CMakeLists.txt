@@ -1,5 +1,5 @@
 add_executable(BasiliskSim
-    src/main_v23.cpp
+    src/main_v24.cpp
 )
 
 target_link_libraries(BasiliskSim PRIVATE Basilisk::Core)
