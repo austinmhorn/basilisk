@@ -1,6 +1,4 @@
-#define main basilisk_v26_main
-#include "main_v26.cpp"
-#undef main
+#include "main_v26_support.hpp"
 
 namespace {
 
@@ -31,23 +29,18 @@ std::optional<PlayerAction> chooseActionV27(const PlayerRoundSnapshot& s,
                                              Stats& stats,
                                              V25Stats& legacy,
                                              V26Stats& v26) {
-    // Healing already has priority inside V2.6/V2.5, so preserve that behavior.
     if (s.health <= 60) {
         if (const auto* heal = useItemAction(s, ItemType::HealingDraught)) {
             return materialize(s.player, *heal);
         }
     }
 
-    // Repellent is reactive: spend it when a Jackal is genuinely nearby rather
-    // than burning inventory protection in an empty part of the cave system.
     if (hasObs(s, ObservationType::JackalNearby)) {
         if (const auto* repel = useItemAction(s, ItemType::JackalRepellent)) {
             return materialize(s.player, *repel);
         }
     }
 
-    // The Old Miner's Map is a temporary exact Pit reveal. Use it when Pit
-    // pressure is present and no map reveal is currently active.
     if (hasObs(s, ObservationType::PitNearby) &&
         s.temporarilyRevealedPitCaves.empty()) {
         if (const auto* map = useItemAction(s, ItemType::OldMinersMap)) {
