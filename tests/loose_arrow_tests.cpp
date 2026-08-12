@@ -35,6 +35,7 @@ void arrowsSpawnEverySevenCompletedRounds() {
 void enteringLooseArrowCaveAutomaticallyCollectsIt() {
     auto state = MapGenerator::generate(7101, 7102);
     state.rules.looseArrowSpawnIntervalRounds = 0;
+    state.rules.mapDiscoveryMode = MapDiscoveryMode::FullMap;
     RoundController controller;
 
     auto& player = state.players[0];
