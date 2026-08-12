@@ -10,7 +10,7 @@ enum class GameEventType {
     PlayerMoved,
     ArrowFired,
     ArrowHitPlayer,
-    ArrowHitBasilisk,
+    ArrowReachedBasilisk,
     ArrowHitJackal,
     ArrowMissed,
     PlayerDamaged,
