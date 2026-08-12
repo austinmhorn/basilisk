@@ -161,6 +161,25 @@ void moveBasiliskToward(MatchState& state, CaveId target, RandomGenerator& rng,
     emitBasiliskMove(state, best[index], events);
 }
 
+std::optional<CaveId> nearestLivingHunterCave(const MatchState& state) {
+    std::optional<CaveId> bestCave;
+    std::optional<PlayerId> bestPlayer;
+    int bestDistance = std::numeric_limits<int>::max();
+
+    for (const auto& player : state.players) {
+        if (!player.alive) continue;
+        const auto distance = distanceTo(state.world, state.basilisk.cave, player.cave);
+        if (!distance.has_value()) continue;
+        if (*distance < bestDistance ||
+            (*distance == bestDistance && (!bestPlayer.has_value() || player.id < *bestPlayer))) {
+            bestDistance = *distance;
+            bestPlayer = player.id;
+            bestCave = player.cave;
+        }
+    }
+    return bestCave;
+}
+
 BasiliskBehavior randomFirstEvadeBehavior(RandomGenerator& rng) {
     switch (rng.range(0, 3)) {
         case 0: return BasiliskBehavior::Restless;
@@ -480,7 +499,11 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
         if (interval > 0 && state.basilisk.roundsSinceMove >= interval) {
             const auto target = mostRecentSearchCave.has_value()
                 ? mostRecentSearchCave : state.mostRecentSearchCave;
-            if (state.basilisk.behavior == BasiliskBehavior::Territorial && target.has_value()) {
+            if (state.basilisk.behavior == BasiliskBehavior::Enraged) {
+                if (const auto hunter = nearestLivingHunterCave(state); hunter.has_value()) {
+                    moveBasiliskToward(state, *hunter, rng, events);
+                }
+            } else if (state.basilisk.behavior == BasiliskBehavior::Territorial && target.has_value()) {
                 moveBasiliskToward(state, *target, rng, events);
             } else {
                 moveBasiliskRandomly(state, rng, events);
