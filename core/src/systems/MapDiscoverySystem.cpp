@@ -13,19 +13,6 @@ std::uint64_t connectionKey(CaveId a, CaveId b) {
            static_cast<std::uint64_t>(high);
 }
 
-std::optional<TunnelId> tunnelIdForDestination(
-    const MatchState& state,
-    CaveId from,
-    CaveId to) {
-
-    if (!state.world.contains(from)) return std::nullopt;
-    const auto& connections = state.world.cave(from).connections;
-    const auto it = std::find(connections.begin(), connections.end(), to);
-    if (it == connections.end()) return std::nullopt;
-
-    return static_cast<TunnelId>(std::distance(connections.begin(), it) + 1);
-}
-
 } // namespace
 
 void MapDiscoverySystem::initializePlayer(MatchState& state, PlayerState& player) {
@@ -38,10 +25,6 @@ void MapDiscoverySystem::initializePlayer(MatchState& state, PlayerState& player
         }
         return;
     }
-
-    // In fog-of-war mode, a hunter initially knows only the cave they occupy.
-    // The number of exits from that cave is visible, but the destination CaveId
-    // of each exit stays hidden until that connection is traversed/revealed.
     player.discovery.knownCaves.insert(player.cave);
 }
 
@@ -66,8 +49,6 @@ std::optional<CaveId> MapDiscoverySystem::resolveMoveDestination(
 
     if (state.rules.mapDiscoveryMode == MapDiscoveryMode::FogOfWar &&
         !knowsConnection(player, player.cave, *action.targetCave)) {
-        // A client cannot bypass fog of war by submitting a hidden CaveId.
-        // Unknown exits must be selected through their opaque local TunnelId.
         return std::nullopt;
     }
 
@@ -85,12 +66,7 @@ void MapDiscoverySystem::discoverTraversal(
         player.discovery.knownConnections.insert(connectionKey(from, to)).second;
 
     if (caveWasNew) {
-        events.push_back(GameEvent{
-            GameEventType::CaveDiscovered,
-            player.id,
-            std::nullopt,
-            to
-        });
+        events.push_back(GameEvent{GameEventType::CaveDiscovered, player.id, std::nullopt, to});
     }
 
     if (connectionWasNew) {
@@ -99,10 +75,7 @@ void MapDiscoverySystem::discoverTraversal(
             player.id,
             std::nullopt,
             to,
-            static_cast<int>(from),
-            std::nullopt,
-            std::nullopt,
-            std::nullopt
+            static_cast<int>(from)
         });
     }
 }
@@ -113,13 +86,35 @@ void MapDiscoverySystem::discoverCave(
     std::vector<GameEvent>& events) {
 
     if (!player.discovery.knownCaves.insert(cave).second) return;
+    events.push_back(GameEvent{GameEventType::CaveDiscovered, player.id, std::nullopt, cave});
+}
 
-    events.push_back(GameEvent{
-        GameEventType::CaveDiscovered,
-        player.id,
-        std::nullopt,
-        cave
-    });
+bool MapDiscoverySystem::revealTunnelDestination(
+    const MatchState& state,
+    PlayerState& player,
+    CaveId from,
+    TunnelId tunnel,
+    std::vector<GameEvent>& events) {
+
+    if (!state.world.contains(from) || tunnel == 0) return false;
+    const auto& connections = state.world.cave(from).connections;
+    if (tunnel > connections.size()) return false;
+
+    const CaveId destination = connections[static_cast<std::size_t>(tunnel - 1)];
+    const auto key = connectionKey(from, destination);
+    if (player.discovery.knownConnections.contains(key)) return false;
+
+    player.discovery.knownConnections.insert(key);
+    const bool caveWasNew = player.discovery.knownCaves.insert(destination).second;
+    if (caveWasNew) {
+        events.push_back(GameEvent{GameEventType::CaveDiscovered, player.id, std::nullopt, destination});
+    }
+
+    GameEvent reveal{GameEventType::TunnelDestinationRevealed, player.id, std::nullopt, destination};
+    reveal.amount = static_cast<int>(from);
+    reveal.tunnel = tunnel;
+    events.push_back(reveal);
+    return true;
 }
 
 PlayerMapView MapDiscoverySystem::buildView(
@@ -166,7 +161,6 @@ bool MapDiscoverySystem::knowsConnection(
     const PlayerState& player,
     CaveId a,
     CaveId b) {
-
     return player.discovery.knownConnections.contains(connectionKey(a, b));
 }
 
