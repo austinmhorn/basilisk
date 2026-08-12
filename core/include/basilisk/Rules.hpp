@@ -48,11 +48,11 @@ struct Rules {
     std::uint32_t bloodBaitAttractionNumerator{1};
     std::uint32_t bloodBaitAttractionDenominator{2};
 
-    // Reserved Jackal damage capability. Disabled by default so current
-    // gameplay remains faithful to the classic ROB / SCARE / KNOCKOUT model.
-    bool jackalDamageEnabled{false};
+    // V3.8 Jackal attrition experiment: a successful Knockout deals a fixed
+    // 5 HP after the hunter is thrown to the safe knockout destination.
+    bool jackalDamageEnabled{true};
     int jackalDamageMin{5};
-    int jackalDamageMax{10};
+    int jackalDamageMax{5};
 
     // Search loot uses ONE weighted ordinary reward roll. Weights sum to 100
     // by default but are treated as relative weights, so tuning does not depend
