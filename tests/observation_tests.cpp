@@ -141,7 +141,6 @@ void exactRivalMovementEventIsNotForwarded() {
 
     const auto observations = ObservationSystem::buildForPlayer(state, 1, events);
 
-    // The rival is adjacent, so the viewer gets only the generic proximity clue.
     const auto* rival = findType(observations, ObservationType::RivalNearby);
     assert(rival != nullptr);
     assert(!rival->cave.has_value());
@@ -168,6 +167,28 @@ void ownBasiliskShotGetsOutcomeFeedback() {
     assert(!hasType(playerB, ObservationType::BasiliskEvaded));
 }
 
+void pitDeathExplainsCauseAndHidesRivalLocation() {
+    auto state = makeObservationWorld();
+    state.players[1].alive = false;
+    state.players[1].health = 0;
+
+    const std::vector<GameEvent> events{
+        GameEvent{GameEventType::PitTriggered, PlayerId{2}, PlayerId{2}, CaveId{2}},
+        GameEvent{GameEventType::PlayerKilled, std::nullopt, PlayerId{2}, CaveId{2}}
+    };
+
+    const auto deadHunter = ObservationSystem::buildForPlayer(state, 2, events);
+    const auto survivor = ObservationSystem::buildForPlayer(state, 1, events);
+
+    assert(hasType(deadHunter, ObservationType::FellIntoPit));
+    assert(!hasType(deadHunter, ObservationType::YouDied));
+
+    const auto* rivalDied = findType(survivor, ObservationType::RivalDied);
+    assert(rivalDied != nullptr);
+    assert(!rivalDied->cave.has_value());
+    assert(!rivalDied->otherPlayer.has_value());
+}
+
 } // namespace
 
 int main() {
@@ -178,6 +199,7 @@ int main() {
     privateLootDoesNotLeakToOtherHunter();
     exactRivalMovementEventIsNotForwarded();
     ownBasiliskShotGetsOutcomeFeedback();
+    pitDeathExplainsCauseAndHidesRivalLocation();
 
     std::cout << "Basilisk observation tests passed.\n";
     return 0;
