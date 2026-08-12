@@ -5,11 +5,14 @@
 #include "basilisk/Types.hpp"
 #include "basilisk/actors/Basilisk.hpp"
 #include "basilisk/items/Item.hpp"
+#include "basilisk/world/DiscoveryState.hpp"
 
 namespace basilisk {
 
 enum class GameEventType {
     PlayerMoved,
+    CaveDiscovered,
+    TunnelDestinationRevealed,
     ArrowFired,
     ArrowHitPlayer,
     ArrowReachedBasilisk,
@@ -53,6 +56,7 @@ struct GameEvent {
     int amount{0};
     std::optional<BasiliskBehavior> basiliskBehavior;
     std::optional<ItemType> itemType;
+    std::optional<TunnelId> tunnel;
 };
 
 } // namespace basilisk
