@@ -3,6 +3,7 @@
 #include <optional>
 
 #include "basilisk/Types.hpp"
+#include "basilisk/items/Item.hpp"
 
 namespace basilisk {
 
@@ -18,6 +19,7 @@ struct PlayerAction {
     PlayerId player{};
     ActionType type{ActionType::Search};
     std::optional<CaveId> targetCave;
+    std::optional<ItemType> targetItem;
 };
 
 } // namespace basilisk
