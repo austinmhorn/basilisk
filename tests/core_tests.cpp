@@ -1,5 +1,6 @@
 #include <cassert>
 #include <iostream>
+#include <optional>
 #include <vector>
 
 #include "basilisk/Action.hpp"
@@ -63,7 +64,8 @@ void movementResolvesBeforeShooting() {
     };
 
     TurnResolver resolver;
-    resolver.resolve(state, actions);
+    const auto events = resolver.resolve(state, actions);
+    (void)events;
 
     assert(state.players[1].cave == 2);
     assert(state.players[1].health == 60);
@@ -83,7 +85,8 @@ void lethalShotsResolveSimultaneously() {
     };
 
     TurnResolver resolver;
-    resolver.resolve(state, actions);
+    const auto events = resolver.resolve(state, actions);
+    (void)events;
 
     assert(!state.players[0].alive);
     assert(!state.players[1].alive);
@@ -126,32 +129,194 @@ void shootingJackalStunsForThreeNpcPhases() {
     // The shot round itself suppresses NPC phase #1, leaving two more.
     assert(stunRemaining(state.jackals[0]) == 2);
 
-    resolver.resolve(state, {
+    const auto roundTwoEvents = resolver.resolve(state, {
         PlayerAction{1, ActionType::Search, std::nullopt}
     });
+    (void)roundTwoEvents;
     assert(stunRemaining(state.jackals[0]) == 1);
 
-    resolver.resolve(state, {
+    const auto roundThreeEvents = resolver.resolve(state, {
         PlayerAction{1, ActionType::Search, std::nullopt}
     });
+    (void)roundThreeEvents;
     assert(stunRemaining(state.jackals[0]) == 0);
 }
 
-void shootingBasiliskRecordsOutcomeNeutralEvent() {
+void wrongCaveDoesNotCountAsTrueBasiliskEncounter() {
     auto state = makeTestMatch();
     state.players = {
         PlayerState{1, 1, 100, 3, true}
     };
-    state.basilisk = BasiliskState{2, true};
+    state.basilisk.cave = 2;
+
+    TurnResolver resolver;
+    const auto events = resolver.resolve(state, {
+        PlayerAction{1, ActionType::Shoot, CaveId{4}}
+    });
+
+    assert(hasEvent(events, GameEventType::ArrowMissed));
+    assert(state.basilisk.trueEncounters == 0);
+    assert(state.basilisk.alive);
+}
+
+void firstTrueEncounterCanEvadeAndMutate() {
+    TurnResolver resolver;
+    bool foundEvade = false;
+
+    // Search deterministic seeds until we exercise the 25% evade path.
+    for (MatchSeed seed = 1; seed <= 10000 && !foundEvade; ++seed) {
+        auto state = makeTestMatch();
+        state.matchSeed = seed;
+        state.players = {
+            PlayerState{1, 1, 100, 3, true}
+        };
+        state.basilisk.cave = 2;
+
+        const auto events = resolver.resolve(state, {
+            PlayerAction{1, ActionType::Shoot, CaveId{2}}
+        });
+
+        if (!hasEvent(events, GameEventType::BasiliskEvaded)) {
+            continue;
+        }
+
+        foundEvade = true;
+        assert(state.basilisk.alive);
+        assert(state.basilisk.trueEncounters == 1);
+
+        if (hasEvent(events, GameEventType::BasiliskBehaviorChanged)) {
+            assert(state.basilisk.behavior == BasiliskBehavior::Restless ||
+                   state.basilisk.behavior == BasiliskBehavior::Lurker ||
+                   state.basilisk.behavior == BasiliskBehavior::Skittish ||
+                   state.basilisk.behavior == BasiliskBehavior::Territorial);
+        } else {
+            assert(state.basilisk.behavior == BasiliskBehavior::Normal);
+        }
+    }
+
+    assert(foundEvade);
+}
+
+void secondEvadeAlwaysBecomesEnraged() {
+    TurnResolver resolver;
+    bool foundSecondEvade = false;
+
+    for (MatchSeed seed = 1; seed <= 10000 && !foundSecondEvade; ++seed) {
+        auto state = makeTestMatch();
+        state.matchSeed = seed;
+        state.players = {
+            PlayerState{1, 1, 100, 3, true}
+        };
+        state.basilisk.cave = 2;
+        state.basilisk.trueEncounters = 1;
+        state.basilisk.behavior = BasiliskBehavior::Restless;
+
+        const auto events = resolver.resolve(state, {
+            PlayerAction{1, ActionType::Shoot, CaveId{2}}
+        });
+
+        if (!hasEvent(events, GameEventType::BasiliskEvaded)) {
+            continue;
+        }
+
+        foundSecondEvade = true;
+        assert(state.basilisk.alive);
+        assert(state.basilisk.trueEncounters == 2);
+        assert(state.basilisk.behavior == BasiliskBehavior::Enraged);
+        assert(hasEvent(events, GameEventType::BasiliskBehaviorChanged));
+    }
+
+    assert(foundSecondEvade);
+}
+
+void thirdTrueEncounterIsGuaranteedKill() {
+    auto state = makeTestMatch();
+    state.players = {
+        PlayerState{1, 1, 100, 3, true}
+    };
+    state.basilisk.cave = 2;
+    state.basilisk.trueEncounters = 2;
+    state.basilisk.behavior = BasiliskBehavior::Enraged;
 
     TurnResolver resolver;
     const auto events = resolver.resolve(state, {
         PlayerAction{1, ActionType::Shoot, CaveId{2}}
     });
 
-    assert(hasEvent(events, GameEventType::ArrowReachedBasilisk));
-    assert(state.basilisk.alive);
-    assert(state.players[0].arrows == 2);
+    assert(state.basilisk.trueEncounters == 3);
+    assert(!state.basilisk.alive);
+    assert(hasEvent(events, GameEventType::BasiliskKilled));
+}
+
+void skittishBasiliskMovesWhenAdjacentCaveIsSearched() {
+    auto state = makeTestMatch();
+    state.players = {
+        PlayerState{1, 1, 100, 3, true}
+    };
+    state.basilisk.cave = 2;
+    state.basilisk.behavior = BasiliskBehavior::Skittish;
+
+    TurnResolver resolver;
+    const auto events = resolver.resolve(state, {
+        PlayerAction{1, ActionType::Search, std::nullopt}
+    });
+
+    assert(hasEvent(events, GameEventType::BasiliskMoved));
+    assert(state.basilisk.cave != 2);
+    assert(state.basilisk.lastCave.has_value());
+    assert(*state.basilisk.lastCave == 2);
+}
+
+void enragedBasiliskMovesEveryTwoRounds() {
+    auto state = makeTestMatch();
+    state.players = {
+        PlayerState{1, 4, 100, 3, true}
+    };
+    state.basilisk.cave = 2;
+    state.basilisk.behavior = BasiliskBehavior::Enraged;
+
+    TurnResolver resolver;
+
+    const auto firstRound = resolver.resolve(state, {
+        PlayerAction{1, ActionType::Search, std::nullopt}
+    });
+    assert(!hasEvent(firstRound, GameEventType::BasiliskMoved));
+    assert(state.basilisk.cave == 2);
+
+    const auto secondRound = resolver.resolve(state, {
+        PlayerAction{1, ActionType::Search, std::nullopt}
+    });
+    assert(hasEvent(secondRound, GameEventType::BasiliskMoved));
+    assert(state.basilisk.cave != 2);
+    assert(state.basilisk.lastCave.has_value());
+    assert(*state.basilisk.lastCave == 2);
+}
+
+void identicalSeedAndActionsProduceIdenticalBasiliskOutcome() {
+    auto first = makeTestMatch();
+    auto second = makeTestMatch();
+
+    first.matchSeed = 456789;
+    second.matchSeed = 456789;
+
+    first.players = {PlayerState{1, 1, 100, 3, true}};
+    second.players = {PlayerState{1, 1, 100, 3, true}};
+
+    first.basilisk.cave = 2;
+    second.basilisk.cave = 2;
+
+    TurnResolver resolver;
+    const std::vector<PlayerAction> actions{
+        PlayerAction{1, ActionType::Shoot, CaveId{2}}
+    };
+
+    const auto firstEvents = resolver.resolve(first, actions);
+    const auto secondEvents = resolver.resolve(second, actions);
+
+    assert(first.basilisk.alive == second.basilisk.alive);
+    assert(first.basilisk.trueEncounters == second.basilisk.trueEncounters);
+    assert(first.basilisk.behavior == second.basilisk.behavior);
+    assert(firstEvents.size() == secondEvents.size());
 }
 
 } // namespace
@@ -161,7 +326,13 @@ int main() {
     lethalShotsResolveSimultaneously();
     randomGeneratorIsDeterministic();
     shootingJackalStunsForThreeNpcPhases();
-    shootingBasiliskRecordsOutcomeNeutralEvent();
+    wrongCaveDoesNotCountAsTrueBasiliskEncounter();
+    firstTrueEncounterCanEvadeAndMutate();
+    secondEvadeAlwaysBecomesEnraged();
+    thirdTrueEncounterIsGuaranteedKill();
+    skittishBasiliskMovesWhenAdjacentCaveIsSearched();
+    enragedBasiliskMovesEveryTwoRounds();
+    identicalSeedAndActionsProduceIdenticalBasiliskOutcome();
 
     std::cout << "BasiliskCore tests passed.\n";
     return 0;
