@@ -7,6 +7,7 @@
 #include "basilisk/Random.hpp"
 #include "basilisk/systems/LooseArrowSystem.hpp"
 #include "basilisk/systems/MapDiscoverySystem.hpp"
+#include "basilisk/systems/PitInvestigationSystem.hpp"
 #include "basilisk/systems/TurnResolver.hpp"
 
 namespace basilisk {
@@ -49,11 +50,17 @@ std::vector<GameEvent> RoundController::resolve(
         action.targetTunnel.reset();
     }
 
+    // Pit investigation is deliberately separate from ordinary cave loot.
+    // A hunter may retry an inconclusive investigation on a previously searched
+    // cave, and this system uses its own deterministic RNG stream.
+    auto investigationEvents = PitInvestigationSystem::resolve(state, prepared);
+
     TurnResolver resolver;
     const auto resolvedEvents = resolver.resolve(state, prepared);
 
     std::vector<GameEvent> events;
-    events.reserve(resolvedEvents.size() * 2 + 4);
+    events.reserve(investigationEvents.size() + resolvedEvents.size() * 2 + 4);
+    events.insert(events.end(), investigationEvents.begin(), investigationEvents.end());
 
     for (const auto& event : resolvedEvents) {
         events.push_back(event);
