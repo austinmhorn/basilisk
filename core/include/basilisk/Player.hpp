@@ -5,6 +5,7 @@
 
 #include "basilisk/Types.hpp"
 #include "basilisk/items/Inventory.hpp"
+#include "basilisk/world/DiscoveryState.hpp"
 
 namespace basilisk {
 
@@ -17,6 +18,7 @@ struct PlayerState {
     Inventory inventory;
     std::unordered_set<CaveId> searchedCaves;
     std::optional<PlayerId> heldSigilFrom;
+    DiscoveryState discovery;
 };
 
 } // namespace basilisk
