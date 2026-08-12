@@ -21,6 +21,8 @@ enum class ObservationType {
     YouWereDamaged,
     YouKilledRival,
     YouDied,
+    FellIntoPit,
+    RivalDied,
     ItemFound,
     ArrowFound,
     ExoticCallingCardFound,
