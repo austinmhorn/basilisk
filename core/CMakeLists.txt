@@ -3,6 +3,7 @@ add_library(BasiliskCore STATIC
     src/world/WorldGraph.cpp
     src/systems/ItemSystem.cpp
     src/systems/MapDiscoverySystem.cpp
+    src/systems/RoundController.cpp
     src/systems/SearchSystem.cpp
     src/systems/TurnResolver.cpp
     src/systems/WorldDangerSystem.cpp
