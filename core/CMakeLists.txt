@@ -1,5 +1,6 @@
 add_library(BasiliskCore STATIC
     src/Random.cpp
+    src/world/MapGenerator.cpp
     src/world/WorldGraph.cpp
     src/systems/ItemSystem.cpp
     src/systems/MapDiscoverySystem.cpp
