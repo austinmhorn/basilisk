@@ -137,7 +137,8 @@ BasiliskBehavior randomFirstEvadeBehavior(RandomGenerator& rng) {
     }
 }
 
-void changeBasiliskBehavior(MatchState& state, BasiliskBehavior behavior, PlayerId actor,
+void changeBasiliskBehavior(MatchState& state, BasiliskBehavior behavior,
+                            std::optional<PlayerId> actor,
                             std::vector<GameEvent>& events) {
     state.basilisk.behavior = behavior;
     state.basilisk.roundsSinceMove = 0;
@@ -145,7 +146,8 @@ void changeBasiliskBehavior(MatchState& state, BasiliskBehavior behavior, Player
         state.basilisk.cave, 0, behavior});
 }
 
-void killBasilisk(MatchState& state, PlayerId shooter, std::vector<GameEvent>& events) {
+void recordSingleBasiliskKill(MatchState& state, PlayerId shooter,
+                              std::vector<GameEvent>& events) {
     state.basilisk.alive = false;
     state.result.status = MatchStatus::Completed;
     state.result.outcome = MatchOutcome::BasiliskKilled;
@@ -154,32 +156,64 @@ void killBasilisk(MatchState& state, PlayerId shooter, std::vector<GameEvent>& e
         state.basilisk.cave, 0, state.basilisk.behavior});
 }
 
-void resolveTrueBasiliskEncounter(MatchState& state, PlayerId shooter, RandomGenerator& rng,
-                                  std::vector<GameEvent>& events) {
-    if (!state.basilisk.alive) return;
-    ++state.basilisk.trueEncounters;
-    events.push_back(GameEvent{GameEventType::ArrowReachedBasilisk, shooter, std::nullopt,
-        state.basilisk.cave, state.basilisk.trueEncounters, state.basilisk.behavior});
+bool basiliskKillRoll(int encounter, RandomGenerator& rng) {
+    if (encounter == 1) return rng.chance(3, 4);
+    if (encounter == 2) return rng.chance(1, 2);
+    return true;
+}
 
-    if (state.basilisk.trueEncounters == 1) {
-        if (rng.chance(3, 4)) { killBasilisk(state, shooter, events); return; }
-        events.push_back(GameEvent{GameEventType::BasiliskEvaded, shooter, std::nullopt,
-            state.basilisk.cave, 1, state.basilisk.behavior});
+void resolveBasiliskShotBatch(MatchState& state, const std::vector<PlayerId>& shooters,
+                              RandomGenerator& rng, std::vector<GameEvent>& events) {
+    if (!state.basilisk.alive || shooters.empty()) return;
+
+    // One or more correct Basilisk shots during the same round constitute one
+    // true encounter. Every shooter uses the same encounter-stage odds.
+    ++state.basilisk.trueEncounters;
+    const int encounter = state.basilisk.trueEncounters;
+
+    std::vector<PlayerId> successfulShooters;
+    for (const PlayerId shooter : shooters) {
+        events.push_back(GameEvent{GameEventType::ArrowReachedBasilisk, shooter, std::nullopt,
+            state.basilisk.cave, encounter, state.basilisk.behavior});
+        if (basiliskKillRoll(encounter, rng)) {
+            successfulShooters.push_back(shooter);
+        }
+    }
+
+    if (successfulShooters.size() == 1) {
+        recordSingleBasiliskKill(state, successfulShooters.front(), events);
+        return;
+    }
+
+    if (successfulShooters.size() > 1) {
+        state.basilisk.alive = false;
+        state.result.status = MatchStatus::Completed;
+        state.result.outcome = MatchOutcome::SimultaneousBasiliskKill;
+        state.result.winner.reset();
+
+        for (const PlayerId shooter : successfulShooters) {
+            events.push_back(GameEvent{GameEventType::BasiliskKilled, shooter, std::nullopt,
+                state.basilisk.cave, 0, state.basilisk.behavior});
+        }
+        events.push_back(GameEvent{GameEventType::MatchDrawn});
+        return;
+    }
+
+    // All correct shots failed. The encounter advances only once, and any
+    // resulting behavior transition is rolled/applied once for the round.
+    events.push_back(GameEvent{GameEventType::BasiliskEvaded, std::nullopt, std::nullopt,
+        state.basilisk.cave, encounter, state.basilisk.behavior});
+
+    if (encounter == 1) {
         if (rng.chance(1, 2)) {
-            changeBasiliskBehavior(state, randomFirstEvadeBehavior(rng), shooter, events);
+            changeBasiliskBehavior(state, randomFirstEvadeBehavior(rng), std::nullopt, events);
         }
         return;
     }
 
-    if (state.basilisk.trueEncounters == 2) {
-        if (rng.chance(1, 2)) { killBasilisk(state, shooter, events); return; }
-        events.push_back(GameEvent{GameEventType::BasiliskEvaded, shooter, std::nullopt,
-            state.basilisk.cave, 2, state.basilisk.behavior});
-        changeBasiliskBehavior(state, BasiliskBehavior::Enraged, shooter, events);
-        return;
+    if (encounter == 2) {
+        changeBasiliskBehavior(state, BasiliskBehavior::Enraged, std::nullopt, events);
     }
-
-    killBasilisk(state, shooter, events);
 }
 
 int movementInterval(BasiliskBehavior behavior) {
@@ -289,9 +323,11 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
         }
     }
 
-    // 2. Ranged attacks resolve simultaneously for PvP damage.
+    // 2. Ranged attacks. PvP damage and Basilisk shots are accumulated before
+    // outcomes are applied so packet/order priority cannot decide a winner.
     struct PendingDamage { PlayerId target; PlayerId attacker; CaveId cave; int amount; };
     std::vector<PendingDamage> pendingDamage;
+    std::vector<PlayerId> basiliskShooters;
 
     for (const auto& action : orderedActions) {
         if (action.type != ActionType::Shoot) continue;
@@ -314,7 +350,7 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
         }
 
         if (state.basilisk.alive && state.basilisk.cave == *action.targetCave) {
-            resolveTrueBasiliskEncounter(state, shooter.id, rng, events);
+            basiliskShooters.push_back(shooter.id);
             continue;
         }
 
@@ -331,6 +367,8 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
         events.push_back(GameEvent{GameEventType::ArrowMissed, shooter.id, std::nullopt, *action.targetCave});
     }
 
+    resolveBasiliskShotBatch(state, basiliskShooters, rng, events);
+
     for (const auto& damage : pendingDamage) {
         auto& target = playerById(state, damage.target);
         target.health = std::max(0, target.health - damage.amount);
@@ -346,7 +384,8 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
         }
     }
 
-    // Basilisk victory was recorded during the shot phase and has precedence.
+    // Basilisk victory (including simultaneous Basilisk kill) was recorded
+    // during the shot phase and has precedence over PvP terminal outcomes.
     if (state.result.status != MatchStatus::Completed) {
         resolveMutualDeathDraw(state, events);
     }
