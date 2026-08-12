@@ -25,6 +25,11 @@ struct DiscoveryState {
 struct TunnelView {
     TunnelId id{};
     std::optional<CaveId> destination;
+
+    // True only when this player has successfully investigated a nearby Pit
+    // from this cave. It marks the local tunnel without revealing a hidden
+    // destination cave.
+    bool strongColdDraft{false};
 };
 
 struct DiscoveredCaveView {
