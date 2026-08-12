@@ -72,6 +72,17 @@ void appendTravelActions(
     }
 }
 
+void appendUseItemAction(
+    const PlayerState& player,
+    ItemType item,
+    std::vector<AvailableAction>& actions) {
+    if (!player.inventory.contains(item)) return;
+    AvailableAction action;
+    action.type = ActionType::UseItem;
+    action.targetItem = item;
+    actions.push_back(action);
+}
+
 std::vector<AvailableAction> buildAvailableActions(
     const MatchState& state,
     const PlayerState& player,
@@ -92,14 +103,11 @@ std::vector<AvailableAction> buildAvailableActions(
         appendTravelActions(map, ActionType::Shoot, actions);
     }
 
-    // HealingDraught is currently the only implemented usable inventory item.
-    if (player.health < state.rules.maxHealth &&
-        player.inventory.contains(ItemType::HealingDraught)) {
-        AvailableAction heal;
-        heal.type = ActionType::UseItem;
-        heal.targetItem = ItemType::HealingDraught;
-        actions.push_back(heal);
+    if (player.health < state.rules.maxHealth) {
+        appendUseItemAction(player, ItemType::HealingDraught, actions);
     }
+    appendUseItemAction(player, ItemType::OldMinersMap, actions);
+    appendUseItemAction(player, ItemType::JackalRepellent, actions);
 
     if (player.heldSigilFrom.has_value() &&
         state.extraction.active &&
@@ -138,6 +146,14 @@ PlayerRoundSnapshot SnapshotSystem::buildForPlayer(
     snapshot.alive = player.alive;
     snapshot.currentCave = player.cave;
     snapshot.map = MapDiscoverySystem::buildView(visibleState, player);
+
+    if (player.pitMapRevealRounds > 0) {
+        for (const auto& pit : visibleState.pits) {
+            if (pit.active) snapshot.temporarilyRevealedPitCaves.push_back(pit.cave);
+        }
+        std::sort(snapshot.temporarilyRevealedPitCaves.begin(),
+                  snapshot.temporarilyRevealedPitCaves.end());
+    }
 
     snapshot.inventory.capacity = visibleState.rules.maxInventoryItems;
     snapshot.inventory.items.reserve(player.inventory.items.size());
