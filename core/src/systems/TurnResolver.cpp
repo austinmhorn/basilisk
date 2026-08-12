@@ -128,9 +128,6 @@ void relocateBasiliskAfterEvade(MatchState& state, int encounter,
     const int maxDistance = encounter == 1 ? 3 : 2;
     auto destinations = safeBasiliskEvadeDestinations(state, minDistance, maxDistance);
 
-    // Extremely constrained maps can occasionally have no legal cave in the
-    // preferred band. Fall back to any safe non-current cave rather than leave
-    // an evading Basilisk in place.
     if (destinations.empty()) {
         destinations = safeBasiliskEvadeDestinations(
             state, 1, std::numeric_limits<int>::max());
@@ -364,7 +361,6 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
     std::stable_sort(orderedActions.begin(), orderedActions.end(),
         [](const PlayerAction& a, const PlayerAction& b) { return a.player < b.player; });
 
-    // 1. Movement resolves before shooting.
     for (const auto& action : orderedActions) {
         if (action.type != ActionType::Move) continue;
         auto& player = playerById(state, action.player);
@@ -378,8 +374,6 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
         }
     }
 
-    // 2. Ranged attacks. PvP damage and Basilisk shots are accumulated before
-    // outcomes are applied so packet/order priority cannot decide a winner.
     struct PendingDamage { PlayerId target; PlayerId attacker; CaveId cave; int amount; };
     std::vector<PendingDamage> pendingDamage;
     std::vector<PlayerId> basiliskShooters;
@@ -444,14 +438,10 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
         }
     }
 
-    // Basilisk victory (including simultaneous Basilisk kill) was recorded
-    // during the shot phase and has precedence over PvP terminal outcomes.
     if (state.result.status != MatchStatus::Completed) {
         resolveMutualDeathDraw(state, events);
     }
 
-    // 3. Search resolves only for survivors. Dynamic bodies and detached
-    // Sigils remain searchable even when static cave loot has been consumed.
     std::optional<CaveId> mostRecentSearchCave;
     for (const auto& action : orderedActions) {
         if (action.type != ActionType::Search) continue;
@@ -469,7 +459,6 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
         }
     }
 
-    // 4. Item use.
     for (const auto& action : orderedActions) {
         if (action.type != ActionType::UseItem || !action.targetItem.has_value()) continue;
         auto& player = playerById(state, action.player);
@@ -478,21 +467,16 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
         events.insert(events.end(), itemEvents.begin(), itemEvents.end());
     }
 
-    // 5. Environmental hazards. A hunter can still complete already-committed
-    // earlier phases before the Pit resolves, matching the simultaneous model.
     WorldDangerSystem::resolvePits(state, rng, events);
     if (state.result.status == MatchStatus::Active) {
         resolveMutualDeathDraw(state, events);
     }
 
-    // 6. Jackal/NPC phase. Stunned Jackals consume one suppressed NPC phase;
-    // active Jackals move and can rob, scare, or knock out a hunter.
     WorldDangerSystem::resolveJackals(state, rng, events);
     if (state.result.status == MatchStatus::Active) {
         resolveMutualDeathDraw(state, events);
     }
 
-    // 7. Basilisk behavior phase.
     if (state.basilisk.alive && state.result.status == MatchStatus::Active) {
         ++state.basilisk.roundsSinceMove;
         const int interval = movementInterval(state.basilisk.behavior);
@@ -500,8 +484,31 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
             const auto target = mostRecentSearchCave.has_value()
                 ? mostRecentSearchCave : state.mostRecentSearchCave;
             if (state.basilisk.behavior == BasiliskBehavior::Enraged) {
-                if (const auto hunter = nearestLivingHunterCave(state); hunter.has_value()) {
-                    moveBasiliskToward(state, *hunter, rng, events);
+                if (const auto hunterCave = nearestLivingHunterCave(state); hunterCave.has_value()) {
+                    const auto distance = distanceTo(state.world, state.basilisk.cave, *hunterCave);
+                    if (distance.has_value() && *distance == 1) {
+                        auto hunterIt = std::find_if(state.players.begin(), state.players.end(),
+                            [&](const PlayerState& player) {
+                                return player.alive && player.cave == *hunterCave;
+                            });
+                        if (hunterIt != state.players.end()) {
+                            emitBasiliskMove(state, hunterIt->cave, events);
+                            hunterIt->health = 0;
+                            hunterIt->alive = false;
+                            events.push_back(GameEvent{
+                                GameEventType::PlayerKilled,
+                                std::nullopt,
+                                hunterIt->id,
+                                hunterIt->cave,
+                                0,
+                                BasiliskBehavior::Enraged
+                            });
+                            createBodyIfMissing(state, *hunterIt, events);
+                            resolveMutualDeathDraw(state, events);
+                        }
+                    } else {
+                        moveBasiliskToward(state, *hunterCave, rng, events);
+                    }
                 }
             } else if (state.basilisk.behavior == BasiliskBehavior::Territorial && target.has_value()) {
                 moveBasiliskToward(state, *target, rng, events);
@@ -511,8 +518,6 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
         }
     }
 
-    // 8. Contextual escape resolves only after hazards/NPCs. Reaching the exit
-    // is not enough: the Sigil holder must survive the round and still be there.
     if (state.result.status == MatchStatus::Active) {
         for (const auto& action : orderedActions) {
             if (action.type != ActionType::Contextual ||
