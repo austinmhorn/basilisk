@@ -157,6 +157,10 @@ struct Stats {
     std::uint64_t restlessShotsSuppressed{0}, lastArrowPvpShotsSuppressed{0};
     std::uint64_t adjacentBasiliskShots{0}, exactEnragedShots{0}, pvpShots{0};
 
+    std::uint64_t scavengerStockedRounds{0};
+    std::uint64_t scavengerResourceSearches{0};
+    std::uint64_t scavengerPeriodicSearches{0};
+
     std::uint64_t stalledAllZeroArrows{0}, stalledLooseArrowsAvailable{0};
     std::uint64_t stalledPitOnlyFrontier{0};
     std::uint64_t stalledZeroArrowHuntersWithReachableArrow{0};
@@ -471,7 +475,7 @@ std::optional<PlayerAction> chooseAction(
         if (action.type == ActionType::Contextual && action.contextualAction == ContextualActionType::Escape)
             return materialize(s.player, action);
 
-    if (s.health <= 60)
+    if (s.health <= 50)
         if (const auto* heal = useItem(s, ItemType::HealingDraught)) return materialize(s.player, *heal);
 
     if (s.hasHunterSigil && s.extractionCave.has_value()) {
@@ -554,12 +558,19 @@ std::optional<PlayerAction> chooseAction(
         }
     }
 
+    const bool scavengerStocked = style == Playstyle::Scavenger &&
+        s.arrows >= 3 && s.health >= 75 && !s.inventory.items.empty();
+    if (scavengerStocked) ++stats.scavengerStockedRounds;
+
     if (style == Playstyle::Scavenger && !s.hasHunterSigil && !pitWarning && caveMemory.ordinarySearches == 0) {
-        const bool resourceNeed = s.arrows <= 2 || s.health < s.maxHealth || s.inventory.items.empty();
-        const bool periodicFirstVisit = caveMemory.visits == 1 && ((s.currentCave + s.player + s.round) % 3U == 0U);
+        const bool resourceNeed = s.arrows <= 1 || s.health <= 50 || s.inventory.items.empty();
+        const bool periodicFirstVisit = !scavengerStocked && caveMemory.visits == 1 &&
+            ((s.currentCave + s.player + s.round) % 4U == 0U);
         if (resourceNeed || periodicFirstVisit) {
             if (const auto* search = actionOfType(s, ActionType::Search)) {
                 ++caveMemory.ordinarySearches;
+                if (resourceNeed) ++stats.scavengerResourceSearches;
+                else ++stats.scavengerPeriodicSearches;
                 return materialize(s.player, *search);
             }
         }
@@ -647,6 +658,8 @@ void collectEvents(
     const std::unordered_set<PlayerId>& stalenessMovers,
     std::unordered_map<PlayerId, BotMemory>& memories) {
 
+    std::unordered_map<PlayerId, PlayerId> pvpAttackerByTarget;
+
     for (const auto& event : events) {
         auto styleStats = [&](PlayerId id) -> StyleStats* {
             const auto it = styles.find(id);
@@ -657,6 +670,10 @@ void collectEvents(
             case GameEventType::ArrowFired: ++stats.arrowsFired; break;
             case GameEventType::ArrowMissed: ++stats.arrowMisses; break;
             case GameEventType::ArrowHitPlayer: ++stats.pvpHits; break;
+            case GameEventType::PlayerDamaged:
+                if (event.actor.has_value() && event.targetPlayer.has_value())
+                    pvpAttackerByTarget[*event.targetPlayer] = *event.actor;
+                break;
             case GameEventType::ArrowHitJackal: ++stats.jackalHits; break;
             case GameEventType::ArrowReachedBasilisk:
                 ++stats.basiliskEncounters;
@@ -728,8 +745,14 @@ void collectEvents(
                     const PlayerId dead = *event.targetPlayer;
                     if (auto* ss = styleStats(dead)) ++ss->deaths;
                     if (!pitDeadPlayers.contains(dead)) ++stats.pvpDeaths;
+
+                    std::optional<PlayerId> killer = event.actor;
+                    if (!killer.has_value()) {
+                        const auto it = pvpAttackerByTarget.find(dead);
+                        if (it != pvpAttackerByTarget.end()) killer = it->second;
+                    }
+                    if (killer.has_value()) if (auto* ss = styleStats(*killer)) ++ss->pvpKills;
                 }
-                if (event.actor.has_value()) if (auto* ss = styleStats(*event.actor)) ++ss->pvpKills;
                 break;
             case GameEventType::BasiliskKilled:
                 if (state.basilisk.trueEncounters <= 1) ++stats.firstKills;
@@ -903,10 +926,12 @@ void printReport(const Stats& stats, std::uint64_t maxRounds) {
     const double avgCaves = stats.matches ? static_cast<double>(stats.totalCaves) / (stats.matches * 2.0) : 0.0;
     const double avgArrows = stats.matches ? static_cast<double>(stats.totalFinalArrows) / (stats.matches * 2.0) : 0.0;
 
-    std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT (BOT V3.1 CUMULATIVE TELEMETRY)\n";
+    std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT (BOT V3.2 PVP + SCAVENGER CONVERSION)\n";
     std::cout << "Matches: " << stats.matches << " | max rounds/match: " << maxRounds
               << " | loose-arrow cap: " << rules.maxLooseArrows
-              << " | spawn cadence: every " << rules.looseArrowSpawnIntervalRounds << " rounds\n\n";
+              << " | spawn cadence: every " << rules.looseArrowSpawnIntervalRounds << " rounds"
+              << " | PvP arrow damage: " << rules.arrowDamage
+              << " | heal: " << rules.healingAmount << "\n\n";
 
     std::cout << "OUTCOMES\n";
     printPercent("Completed", stats.completed, stats.matches);
@@ -958,6 +983,11 @@ void printReport(const Stats& stats, std::uint64_t maxRounds) {
         for (std::size_t col = 0; col < kStyleCount; ++col) std::cout << std::setw(10) << stats.matchups[row][col];
         std::cout << '\n';
     }
+
+    std::cout << "\nSCAVENGER CONVERSION TELEMETRY\n";
+    std::cout << "Stocked conversion player-rounds: " << stats.scavengerStockedRounds << '\n';
+    std::cout << "Resource-need searches: " << stats.scavengerResourceSearches << '\n';
+    std::cout << "Periodic first-visit searches: " << stats.scavengerPeriodicSearches << '\n';
 
     std::cout << "\nPIT / HAZARD TELEMETRY\n";
     std::cout << "Pit warning player-rounds: " << stats.pitWarnings << '\n';
@@ -1027,6 +1057,7 @@ void printReport(const Stats& stats, std::uint64_t maxRounds) {
     std::cout << "Exact Enraged shots: " << stats.exactEnragedShots << '\n';
     std::cout << "PvP shots taken: " << stats.pvpShots << '\n';
     std::cout << "PvP hits/deaths: " << stats.pvpHits << '/' << stats.pvpDeaths << '\n';
+    std::cout << "PvP hit -> death conversion: " << rate(stats.pvpDeaths, stats.pvpHits) << "%\n";
     std::cout << "Arrow misses: " << stats.arrowMisses << '\n';
 
     std::cout << "\nSTALL / CONVERGENCE TELEMETRY\n";
