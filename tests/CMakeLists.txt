@@ -45,3 +45,11 @@ add_executable(BasiliskMapDiscoveryTests
 target_link_libraries(BasiliskMapDiscoveryTests PRIVATE Basilisk::Core)
 
 add_test(NAME BasiliskMapDiscoveryTests COMMAND BasiliskMapDiscoveryTests)
+
+add_executable(BasiliskMapGeneratorTests
+    map_generator_tests.cpp
+)
+
+target_link_libraries(BasiliskMapGeneratorTests PRIVATE Basilisk::Core)
+
+add_test(NAME BasiliskMapGeneratorTests COMMAND BasiliskMapGeneratorTests)
