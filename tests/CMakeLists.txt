@@ -81,3 +81,9 @@ add_executable(BasiliskLooseArrowVisibilityTests
 )
 target_link_libraries(BasiliskLooseArrowVisibilityTests PRIVATE Basilisk::Core)
 add_test(NAME BasiliskLooseArrowVisibilityTests COMMAND BasiliskLooseArrowVisibilityTests)
+
+add_executable(BasiliskEvadeRelocationTests
+    basilisk_evade_relocation_tests.cpp
+)
+target_link_libraries(BasiliskEvadeRelocationTests PRIVATE Basilisk::Core)
+add_test(NAME BasiliskEvadeRelocationTests COMMAND BasiliskEvadeRelocationTests)
