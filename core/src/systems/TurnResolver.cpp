@@ -1,10 +1,19 @@
 #include "basilisk/systems/TurnResolver.hpp"
 
 #include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <optional>
+#include <queue>
 #include <stdexcept>
+#include <unordered_map>
+
+#include "basilisk/Random.hpp"
 
 namespace basilisk {
 namespace {
+
+constexpr std::uint64_t kRoundSeedSalt = 0x9E3779B97F4A7C15ULL;
 
 PlayerState& playerById(MatchState& state, PlayerId id) {
     const auto it = std::find_if(
@@ -17,6 +26,12 @@ PlayerState& playerById(MatchState& state, PlayerId id) {
     }
 
     return *it;
+}
+
+std::uint64_t roundSeed(const MatchState& state) {
+    return state.matchSeed ^
+           (kRoundSeedSalt + static_cast<std::uint64_t>(state.round) +
+            (state.matchSeed << 6U) + (state.matchSeed >> 2U));
 }
 
 void applyOrRefreshStun(JackalState& jackal, int applications) {
@@ -50,6 +65,292 @@ void advanceJackalStatuses(JackalState& jackal) {
     });
 }
 
+bool caveOccupiedByLivingPlayer(const MatchState& state, CaveId cave) {
+    return std::any_of(
+        state.players.begin(),
+        state.players.end(),
+        [cave](const PlayerState& player) {
+            return player.alive && player.cave == cave;
+        });
+}
+
+std::vector<CaveId> safeBasiliskDestinations(const MatchState& state) {
+    std::vector<CaveId> destinations;
+
+    if (!state.world.contains(state.basilisk.cave)) {
+        return destinations;
+    }
+
+    for (const CaveId cave : state.world.cave(state.basilisk.cave).connections) {
+        if (!caveOccupiedByLivingPlayer(state, cave)) {
+            destinations.push_back(cave);
+        }
+    }
+
+    return destinations;
+}
+
+void moveBasiliskRandomly(
+    MatchState& state,
+    RandomGenerator& rng,
+    std::vector<GameEvent>& events) {
+
+    auto destinations = safeBasiliskDestinations(state);
+    if (destinations.empty()) {
+        return;
+    }
+
+    const CaveId oldCave = state.basilisk.cave;
+    const auto index = static_cast<std::size_t>(
+        rng.range(0, static_cast<int>(destinations.size()) - 1));
+
+    state.basilisk.lastCave = oldCave;
+    state.basilisk.cave = destinations[index];
+    state.basilisk.roundsSinceMove = 0;
+
+    events.push_back(GameEvent{
+        GameEventType::BasiliskMoved,
+        std::nullopt,
+        std::nullopt,
+        state.basilisk.cave,
+        static_cast<int>(oldCave),
+        state.basilisk.behavior
+    });
+}
+
+std::optional<int> distanceTo(
+    const WorldGraph& world,
+    CaveId start,
+    CaveId target) {
+
+    if (!world.contains(start) || !world.contains(target)) {
+        return std::nullopt;
+    }
+
+    if (start == target) {
+        return 0;
+    }
+
+    std::queue<CaveId> frontier;
+    std::unordered_map<CaveId, int> distances;
+    frontier.push(start);
+    distances.emplace(start, 0);
+
+    while (!frontier.empty()) {
+        const CaveId current = frontier.front();
+        frontier.pop();
+
+        const int currentDistance = distances.at(current);
+        for (const CaveId next : world.cave(current).connections) {
+            if (distances.contains(next)) {
+                continue;
+            }
+
+            const int nextDistance = currentDistance + 1;
+            if (next == target) {
+                return nextDistance;
+            }
+
+            distances.emplace(next, nextDistance);
+            frontier.push(next);
+        }
+    }
+
+    return std::nullopt;
+}
+
+void moveBasiliskToward(
+    MatchState& state,
+    CaveId target,
+    RandomGenerator& rng,
+    std::vector<GameEvent>& events) {
+
+    auto destinations = safeBasiliskDestinations(state);
+    if (destinations.empty()) {
+        return;
+    }
+
+    int bestDistance = std::numeric_limits<int>::max();
+    std::vector<CaveId> best;
+
+    for (const CaveId destination : destinations) {
+        const auto distance = distanceTo(state.world, destination, target);
+        if (!distance.has_value()) {
+            continue;
+        }
+
+        if (*distance < bestDistance) {
+            bestDistance = *distance;
+            best.clear();
+            best.push_back(destination);
+        } else if (*distance == bestDistance) {
+            best.push_back(destination);
+        }
+    }
+
+    if (best.empty()) {
+        return;
+    }
+
+    const CaveId oldCave = state.basilisk.cave;
+    const auto index = static_cast<std::size_t>(
+        rng.range(0, static_cast<int>(best.size()) - 1));
+
+    state.basilisk.lastCave = oldCave;
+    state.basilisk.cave = best[index];
+    state.basilisk.roundsSinceMove = 0;
+
+    events.push_back(GameEvent{
+        GameEventType::BasiliskMoved,
+        std::nullopt,
+        std::nullopt,
+        state.basilisk.cave,
+        static_cast<int>(oldCave),
+        state.basilisk.behavior
+    });
+}
+
+BasiliskBehavior randomFirstEvadeBehavior(RandomGenerator& rng) {
+    switch (rng.range(0, 3)) {
+        case 0: return BasiliskBehavior::Restless;
+        case 1: return BasiliskBehavior::Lurker;
+        case 2: return BasiliskBehavior::Skittish;
+        default: return BasiliskBehavior::Territorial;
+    }
+}
+
+void changeBasiliskBehavior(
+    MatchState& state,
+    BasiliskBehavior behavior,
+    PlayerId actor,
+    std::vector<GameEvent>& events) {
+
+    state.basilisk.behavior = behavior;
+    state.basilisk.roundsSinceMove = 0;
+
+    events.push_back(GameEvent{
+        GameEventType::BasiliskBehaviorChanged,
+        actor,
+        std::nullopt,
+        state.basilisk.cave,
+        0,
+        behavior
+    });
+}
+
+void killBasilisk(
+    MatchState& state,
+    PlayerId shooter,
+    std::vector<GameEvent>& events) {
+
+    state.basilisk.alive = false;
+    events.push_back(GameEvent{
+        GameEventType::BasiliskKilled,
+        shooter,
+        std::nullopt,
+        state.basilisk.cave,
+        0,
+        state.basilisk.behavior
+    });
+}
+
+void resolveTrueBasiliskEncounter(
+    MatchState& state,
+    PlayerId shooter,
+    RandomGenerator& rng,
+    std::vector<GameEvent>& events) {
+
+    if (!state.basilisk.alive) {
+        return;
+    }
+
+    ++state.basilisk.trueEncounters;
+
+    events.push_back(GameEvent{
+        GameEventType::ArrowReachedBasilisk,
+        shooter,
+        std::nullopt,
+        state.basilisk.cave,
+        state.basilisk.trueEncounters,
+        state.basilisk.behavior
+    });
+
+    // First true encounter: 75% kill, 25% evade.
+    if (state.basilisk.trueEncounters == 1) {
+        if (rng.chance(3, 4)) {
+            killBasilisk(state, shooter, events);
+            return;
+        }
+
+        events.push_back(GameEvent{
+            GameEventType::BasiliskEvaded,
+            shooter,
+            std::nullopt,
+            state.basilisk.cave,
+            1,
+            state.basilisk.behavior
+        });
+
+        // After the first evade, there is a separate 50% chance that the
+        // Basilisk adopts one of four subtle behavior modifiers.
+        if (rng.chance(1, 2)) {
+            changeBasiliskBehavior(
+                state,
+                randomFirstEvadeBehavior(rng),
+                shooter,
+                events);
+        }
+        return;
+    }
+
+    // Second true encounter: 50% kill, 50% evade. A second evade always
+    // replaces any prior behavior with Enraged.
+    if (state.basilisk.trueEncounters == 2) {
+        if (rng.chance(1, 2)) {
+            killBasilisk(state, shooter, events);
+            return;
+        }
+
+        events.push_back(GameEvent{
+            GameEventType::BasiliskEvaded,
+            shooter,
+            std::nullopt,
+            state.basilisk.cave,
+            2,
+            state.basilisk.behavior
+        });
+
+        changeBasiliskBehavior(
+            state,
+            BasiliskBehavior::Enraged,
+            shooter,
+            events);
+        return;
+    }
+
+    // Third and later true encounters are guaranteed kills. In normal play,
+    // the match ends here and a fourth encounter should never occur.
+    killBasilisk(state, shooter, events);
+}
+
+int movementInterval(BasiliskBehavior behavior) {
+    switch (behavior) {
+        case BasiliskBehavior::Restless:
+            return 5;
+        case BasiliskBehavior::Lurker:
+            return 8;
+        case BasiliskBehavior::Territorial:
+            return 5;
+        case BasiliskBehavior::Enraged:
+            return 2;
+        case BasiliskBehavior::Normal:
+        case BasiliskBehavior::Skittish:
+            return 0;
+    }
+
+    return 0;
+}
+
 } // namespace
 
 std::vector<GameEvent> TurnResolver::resolve(
@@ -57,9 +358,20 @@ std::vector<GameEvent> TurnResolver::resolve(
     const std::vector<PlayerAction>& actions) const {
 
     std::vector<GameEvent> events;
+    RandomGenerator rng(roundSeed(state));
+
+    // Resolve same-phase actions in PlayerId order so outcomes never depend on
+    // client packet/order arrival.
+    std::vector<PlayerAction> orderedActions = actions;
+    std::stable_sort(
+        orderedActions.begin(),
+        orderedActions.end(),
+        [](const PlayerAction& left, const PlayerAction& right) {
+            return left.player < right.player;
+        });
 
     // Phase 1: movement. All legal moves are applied before any shooting.
-    for (const auto& action : actions) {
+    for (const auto& action : orderedActions) {
         if (action.type != ActionType::Move) {
             continue;
         }
@@ -79,12 +391,13 @@ std::vector<GameEvent> TurnResolver::resolve(
             player.id,
             std::nullopt,
             player.cave,
-            0
+            0,
+            std::nullopt
         });
     }
 
     // Phase 2: ranged attacks. Damage is accumulated first so lethal
-    // simultaneous shots cannot cancel another already-locked shot.
+    // simultaneous PvP shots cannot cancel another already-locked shot.
     struct PendingDamage {
         PlayerId target{};
         PlayerId attacker{};
@@ -94,7 +407,7 @@ std::vector<GameEvent> TurnResolver::resolve(
 
     std::vector<PendingDamage> pendingDamage;
 
-    for (const auto& action : actions) {
+    for (const auto& action : orderedActions) {
         if (action.type != ActionType::Shoot) {
             continue;
         }
@@ -114,7 +427,8 @@ std::vector<GameEvent> TurnResolver::resolve(
             shooter.id,
             std::nullopt,
             *action.targetCave,
-            0
+            0,
+            std::nullopt
         });
 
         const auto targetPlayer = std::find_if(
@@ -139,22 +453,14 @@ std::vector<GameEvent> TurnResolver::resolve(
                 shooter.id,
                 targetPlayer->id,
                 targetPlayer->cave,
-                state.rules.arrowDamage
+                state.rules.arrowDamage,
+                std::nullopt
             });
             continue;
         }
 
         if (state.basilisk.alive && state.basilisk.cave == *action.targetCave) {
-            // The exact Basilisk hit/evasion rule is intentionally deferred.
-            // We record that the arrow reached the Basilisk's cave without
-            // inventing an outcome that has not been designed yet.
-            events.push_back(GameEvent{
-                GameEventType::ArrowReachedBasilisk,
-                shooter.id,
-                std::nullopt,
-                state.basilisk.cave,
-                0
-            });
+            resolveTrueBasiliskEncounter(state, shooter.id, rng, events);
             continue;
         }
 
@@ -173,7 +479,8 @@ std::vector<GameEvent> TurnResolver::resolve(
                 shooter.id,
                 std::nullopt,
                 targetJackal->cave,
-                0
+                0,
+                std::nullopt
             });
 
             events.push_back(GameEvent{
@@ -181,7 +488,8 @@ std::vector<GameEvent> TurnResolver::resolve(
                 shooter.id,
                 std::nullopt,
                 targetJackal->cave,
-                state.rules.jackalStunPhases
+                state.rules.jackalStunPhases,
+                std::nullopt
             });
             continue;
         }
@@ -191,7 +499,8 @@ std::vector<GameEvent> TurnResolver::resolve(
             shooter.id,
             std::nullopt,
             *action.targetCave,
-            0
+            0,
+            std::nullopt
         });
     }
 
@@ -204,7 +513,8 @@ std::vector<GameEvent> TurnResolver::resolve(
             damage.attacker,
             target.id,
             damage.cave,
-            damage.amount
+            damage.amount,
+            std::nullopt
         });
     }
 
@@ -216,13 +526,16 @@ std::vector<GameEvent> TurnResolver::resolve(
                 std::nullopt,
                 player.id,
                 player.cave,
-                0
+                0,
+                std::nullopt
             });
         }
     }
 
     // Phase 3: search. A hunter killed during the attack phase cannot search.
-    for (const auto& action : actions) {
+    std::optional<CaveId> mostRecentSearchCave;
+
+    for (const auto& action : orderedActions) {
         if (action.type != ActionType::Search) {
             continue;
         }
@@ -232,21 +545,46 @@ std::vector<GameEvent> TurnResolver::resolve(
             continue;
         }
 
+        mostRecentSearchCave = player.cave;
         events.push_back(GameEvent{
             GameEventType::SearchCompleted,
             player.id,
             std::nullopt,
             player.cave,
-            0
+            0,
+            std::nullopt
         });
+
+        // Skittish does not move on a cadence. Searching an adjacent cave
+        // startles it into an immediate relocation.
+        if (state.basilisk.alive &&
+            state.basilisk.behavior == BasiliskBehavior::Skittish &&
+            state.world.areConnected(player.cave, state.basilisk.cave)) {
+            moveBasiliskRandomly(state, rng, events);
+        }
     }
 
-    // Phase 4 placeholder: Jackal/NPC phase. Movement and attacks are not yet
-    // implemented, but stun durations already advance according to the agreed
-    // NPC-phase semantics. A Jackal shot this round therefore consumes the
-    // first of its three suppressed NPC phases here.
+    // Phase 4: Jackal/NPC statuses. Full Jackal movement/attacks remain a
+    // later system, but stun durations already use NPC-phase semantics.
     for (auto& jackal : state.jackals) {
         advanceJackalStatuses(jackal);
+    }
+
+    // Basilisk behavior phase. Normal and Skittish have no periodic movement.
+    // Restless moves every 5 rounds, Lurker every 8, Territorial every 5
+    // toward the most recently searched cave, and Enraged every 2.
+    if (state.basilisk.alive) {
+        ++state.basilisk.roundsSinceMove;
+
+        const int interval = movementInterval(state.basilisk.behavior);
+        if (interval > 0 && state.basilisk.roundsSinceMove >= interval) {
+            if (state.basilisk.behavior == BasiliskBehavior::Territorial &&
+                mostRecentSearchCave.has_value()) {
+                moveBasiliskToward(state, *mostRecentSearchCave, rng, events);
+            } else {
+                moveBasiliskRandomly(state, rng, events);
+            }
+        }
     }
 
     ++state.round;
