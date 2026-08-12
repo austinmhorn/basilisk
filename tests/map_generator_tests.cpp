@@ -1,7 +1,9 @@
 #include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <queue>
 #include <set>
+#include <unordered_map>
 #include <vector>
 
 #include "basilisk/world/MapGenerator.hpp"
@@ -13,6 +15,69 @@ namespace {
 std::set<CaveId> connectionsOf(const MatchState& state, CaveId cave) {
     const auto& connections = state.world.cave(cave).connections;
     return std::set<CaveId>(connections.begin(), connections.end());
+}
+
+int distanceBetween(const WorldGraph& world, CaveId start, CaveId target) {
+    std::queue<CaveId> frontier;
+    std::unordered_map<CaveId, int> distance;
+    frontier.push(start);
+    distance.emplace(start, 0);
+
+    while (!frontier.empty()) {
+        const CaveId current = frontier.front();
+        frontier.pop();
+        if (current == target) return distance.at(current);
+
+        for (const CaveId next : world.cave(current).connections) {
+            if (distance.contains(next)) continue;
+            distance.emplace(next, distance.at(current) + 1);
+            frontier.push(next);
+        }
+    }
+
+    return -1;
+}
+
+void assertPlacementQuality(const MatchState& state, const ProceduralMapConfig& config) {
+    assert(state.players.size() == 2);
+
+    for (const auto& player : state.players) {
+        if (!config.allowHunterSpawnInDeadEnd) {
+            assert(state.world.cave(player.cave).connections.size() > 1);
+        }
+
+        for (const auto& pit : state.pits) {
+            assert(distanceBetween(state.world, player.cave, pit.cave) >=
+                   config.minHunterPitDistance);
+        }
+        for (const auto& jackal : state.jackals) {
+            assert(distanceBetween(state.world, player.cave, jackal.cave) >=
+                   config.minHunterJackalDistance);
+        }
+    }
+
+    if (!config.allowBasiliskInDeadEnd) {
+        assert(state.world.cave(state.basilisk.cave).connections.size() > 1);
+    }
+
+    for (const auto& pit : state.pits) {
+        assert(distanceBetween(state.world, state.basilisk.cave, pit.cave) >=
+               config.minBasiliskPitDistance);
+    }
+
+    for (std::size_t i = 0; i < state.pits.size(); ++i) {
+        for (std::size_t j = i + 1; j < state.pits.size(); ++j) {
+            assert(distanceBetween(state.world, state.pits[i].cave, state.pits[j].cave) >=
+                   config.minPitSeparation);
+        }
+    }
+
+    for (std::size_t i = 0; i < state.jackals.size(); ++i) {
+        for (std::size_t j = i + 1; j < state.jackals.size(); ++j) {
+            assert(distanceBetween(state.world, state.jackals[i].cave, state.jackals[j].cave) >=
+                   config.minJackalSeparation);
+        }
+    }
 }
 
 void assertSameGeneratedWorld(const MatchState& a, const MatchState& b) {
@@ -50,9 +115,8 @@ void defaultThirtyCaveMapHasExpectedShapeAndActors() {
     assert(MapGenerator::validateTopology(state.world, config));
     assert(MapGenerator::validateFairness(state, config));
     assert(state.rules.mapDiscoveryMode == MapDiscoveryMode::FogOfWar);
+    assertPlacementQuality(state, config);
 
-    // Organic default profile intentionally contains a handful of dead ends
-    // while retaining enough independent loops for alternate routes.
     assert(metrics.deadEndCount >= config.minDeadEnds);
     assert(metrics.deadEndCount <= config.maxDeadEnds);
     assert(metrics.loopCount >= config.minLoopCount);
@@ -60,7 +124,6 @@ void defaultThirtyCaveMapHasExpectedShapeAndActors() {
     assert(metrics.diameter <= config.maxDiameter);
     assert(metrics.averageDegree > 2.0);
 
-    // Locked gameplay rule: one Jackal per 15 caves.
     assert(state.jackals.size() == 2);
     assert(state.pits.size() == 1);
     assert(state.players.size() == 2);
@@ -98,7 +161,7 @@ void identicalSeedsReproduceEntireGeneratedWorld() {
     assert(firstMetrics.diameter == secondMetrics.diameter);
 }
 
-void manySeedsRemainValidAndOrganic() {
+void manySeedsRemainValidOrganicAndWellPlaced() {
     ProceduralMapConfig config;
 
     for (std::uint64_t seed = 1; seed <= 50; ++seed) {
@@ -107,6 +170,7 @@ void manySeedsRemainValidAndOrganic() {
 
         assert(MapGenerator::validateTopology(state.world, config));
         assert(MapGenerator::validateFairness(state, config));
+        assertPlacementQuality(state, config);
         assert(state.world.size() == config.caveCount);
         assert(metrics.deadEndCount >= config.minDeadEnds);
         assert(metrics.deadEndCount <= config.maxDeadEnds);
@@ -131,9 +195,10 @@ void deadEndTargetIsConfigurable() {
     const auto state = MapGenerator::generate(61616, 71717, {}, config);
     const auto metrics = MapGenerator::analyzeTopology(state.world);
     assert(metrics.deadEndCount == 6);
+    assertPlacementQuality(state, config);
 }
 
-void jackalScalingUsesCaveCount() {
+void jackalScalingUsesCaveCountAndSeparation() {
     ProceduralMapConfig config;
     config.caveCount = 45;
     config.extraConnections = 12;
@@ -141,14 +206,25 @@ void jackalScalingUsesCaveCount() {
 
     const auto state = MapGenerator::generate(77777, 88888, {}, config);
     assert(state.jackals.size() == 3);
+    assertPlacementQuality(state, config);
 }
 
-void pitCountRemainsConfigurable() {
+void pitCountRemainsConfigurableAndSeparated() {
     ProceduralMapConfig config;
     config.pitCount = 3;
 
     const auto state = MapGenerator::generate(13579, 24680, {}, config);
     assert(state.pits.size() == 3);
+    assertPlacementQuality(state, config);
+}
+
+void deadEndSpawnPoliciesAreConfigurable() {
+    ProceduralMapConfig config;
+    config.allowHunterSpawnInDeadEnd = true;
+    config.allowBasiliskInDeadEnd = true;
+
+    const auto state = MapGenerator::generate(91919, 82828, {}, config);
+    assert(MapGenerator::validateFairness(state, config));
 }
 
 } // namespace
@@ -157,10 +233,11 @@ int main() {
     defaultThirtyCaveMapHasExpectedShapeAndActors();
     initialPlacementsDoNotOverlap();
     identicalSeedsReproduceEntireGeneratedWorld();
-    manySeedsRemainValidAndOrganic();
+    manySeedsRemainValidOrganicAndWellPlaced();
     deadEndTargetIsConfigurable();
-    jackalScalingUsesCaveCount();
-    pitCountRemainsConfigurable();
+    jackalScalingUsesCaveCountAndSeparation();
+    pitCountRemainsConfigurableAndSeparated();
+    deadEndSpawnPoliciesAreConfigurable();
 
     std::cout << "Basilisk procedural map generator tests passed.\n";
     return 0;
