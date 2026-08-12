@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <vector>
 
 #include "basilisk/StatusEffect.hpp"
@@ -9,6 +10,7 @@ namespace basilisk {
 
 struct JackalState {
     CaveId cave{};
+    std::optional<CaveId> lastCave;
     std::vector<StatusEffect> statuses;
 };
 
