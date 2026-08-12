@@ -68,17 +68,6 @@ bool MatchCoordinator::lockAction(PlayerId player) {
     return true;
 }
 
-bool MatchCoordinator::unlockAction(PlayerId player) {
-    lastEvents_.clear();
-    const auto it = sessions_.find(player);
-    if (it == sessions_.end() || !it->second.connected || !it->second.actionLocked) return false;
-
-    // Once every required hunter has locked, lockAction resolves immediately,
-    // so there is no post-ready window in which an action can be retracted.
-    it->second.actionLocked = false;
-    return true;
-}
-
 void MatchCoordinator::disconnect(PlayerId player) {
     lastEvents_.clear();
     if (!isLivingPlayer(player)) return;
@@ -170,8 +159,12 @@ void MatchCoordinator::advanceTime(std::uint64_t elapsedMs) {
     std::vector<PlayerId> disconnectExpired;
     std::vector<PlayerId> reserveExpired;
 
-    for (auto& [playerId, sessionState] : sessions_) {
-        if (!isLivingPlayer(playerId)) continue;
+    // Iterate authoritative player order instead of unordered_map order so
+    // simultaneous timeout event ordering is reproducible across platforms.
+    for (const auto& player : state_.players) {
+        const PlayerId playerId = player.id;
+        if (!player.alive) continue;
+        auto& sessionState = sessions_.at(playerId);
 
         if (!sessionState.connected) {
             if (elapsedMs >= sessionState.disconnectGraceRemainingMs) {
