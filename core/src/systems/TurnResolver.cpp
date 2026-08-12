@@ -9,6 +9,7 @@
 #include <unordered_map>
 
 #include "basilisk/Random.hpp"
+#include "basilisk/systems/ItemSystem.hpp"
 #include "basilisk/systems/SearchSystem.hpp"
 
 namespace basilisk {
@@ -529,13 +530,27 @@ std::vector<GameEvent> TurnResolver::resolve(
         auto searchEvents = SearchSystem::search(player, state.rules, rng);
         events.insert(events.end(), searchEvents.begin(), searchEvents.end());
 
-        // Skittish reacts to nearby Search activity even when the hunter has
-        // already exhausted that cave's static loot roll.
         if (state.basilisk.alive &&
             state.basilisk.behavior == BasiliskBehavior::Skittish &&
             state.world.areConnected(player.cave, state.basilisk.cave)) {
             moveBasiliskRandomly(state, rng, events);
         }
+    }
+
+    // Phase 3b: item use. A hunter killed during ranged resolution cannot use
+    // a healing item after death; surviving hunters may resolve their item.
+    for (const auto& action : orderedActions) {
+        if (action.type != ActionType::UseItem || !action.targetItem.has_value()) {
+            continue;
+        }
+
+        auto& player = playerById(state, action.player);
+        if (!player.alive) {
+            continue;
+        }
+
+        auto itemEvents = ItemSystem::use(player, *action.targetItem, state.rules);
+        events.insert(events.end(), itemEvents.begin(), itemEvents.end());
     }
 
     // Phase 4: Jackal/NPC status advancement.
