@@ -49,10 +49,6 @@ MatchState makeRelocationMatch(MatchSeed seed) {
 
     state.players = {PlayerState{1, 1, 100, 3, true}};
     state.basilisk.cave = 2;
-
-    // Cave 3 is adjacent but forbidden by a Pit. Cave 1 is occupied. This
-    // forces evade relocation to respect both safety exclusions and graph
-    // distance rather than simply picking the nearest cave.
     state.pits = {PitState{3, true}};
     return state;
 }
@@ -123,8 +119,6 @@ void enragedBasiliskPursuesNearestLivingHunter() {
     for (CaveId cave = 1; cave <= 5; ++cave) state.world.addCave(cave);
     for (CaveId cave = 1; cave < 5; ++cave) state.world.connect(cave, cave + 1);
 
-    // Hunter 2 at Cave 3 is nearer than Hunter 1 at Cave 1. From Cave 5 the
-    // only safe pursuit step is Cave 4, which reduces distance to Hunter 2.
     state.players = {
         PlayerState{1, 1, 100, 3, true},
         PlayerState{2, 3, 100, 3, true}
@@ -141,7 +135,45 @@ void enragedBasiliskPursuesNearestLivingHunter() {
     assert(hasEvent(events, GameEventType::BasiliskMoved));
     assert(state.basilisk.cave == CaveId{4});
     assert(after < before);
-    assert(state.basilisk.cave != CaveId{3});
+    assert(state.players[1].alive);
+}
+
+void enragedBasiliskKillsAdjacentHunterOnContact() {
+    MatchState state;
+    state.matchSeed = 424243;
+    state.mapSeed = 9003;
+    for (CaveId cave = 1; cave <= 4; ++cave) state.world.addCave(cave);
+    for (CaveId cave = 1; cave < 4; ++cave) state.world.connect(cave, cave + 1);
+
+    state.players = {
+        PlayerState{1, 1, 100, 3, true},
+        PlayerState{2, 3, 100, 3, true}
+    };
+    state.basilisk.cave = 4;
+    state.basilisk.behavior = BasiliskBehavior::Enraged;
+    state.basilisk.roundsSinceMove = 1;
+
+    TurnResolver resolver;
+    const auto events = resolver.resolve(state, {});
+
+    assert(hasEvent(events, GameEventType::BasiliskMoved));
+    assert(hasEvent(events, GameEventType::PlayerKilled));
+    assert(state.basilisk.cave == CaveId{3});
+    assert(!state.players[1].alive);
+    assert(state.players[1].health == 0);
+    assert(state.players[0].alive);
+    assert(state.bodies.size() == 1);
+    assert(state.bodies.front().owner == PlayerId{2});
+
+    bool markedEnragedKill = false;
+    for (const auto& event : events) {
+        if (event.type == GameEventType::PlayerKilled &&
+            event.targetPlayer == PlayerId{2} &&
+            event.basiliskBehavior == BasiliskBehavior::Enraged) {
+            markedEnragedKill = true;
+        }
+    }
+    assert(markedEnragedKill);
 }
 
 } // namespace
@@ -150,6 +182,7 @@ int main() {
     firstEvadeRelocatesTwoToThreeCavesAway();
     secondEvadeRelocatesOneToTwoCavesAwayBeforeEnraging();
     enragedBasiliskPursuesNearestLivingHunter();
+    enragedBasiliskKillsAdjacentHunterOnContact();
     std::cout << "Basilisk evade relocation tests passed.\n";
     return 0;
 }
