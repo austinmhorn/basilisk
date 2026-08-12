@@ -41,8 +41,6 @@ std::optional<CaveId> choosePitSigilCave(
         if (!isPitCave(state, cave)) safeNeighbors.push_back(cave);
     }
 
-    // A well-formed map should never surround a Pit entirely with Pits, but
-    // falling back to any neighbor keeps the Sigil from being permanently lost.
     const auto& allNeighbors = state.world.cave(pitCave).connections;
     const auto& candidates = safeNeighbors.empty() ? allNeighbors : safeNeighbors;
     if (candidates.empty()) return std::nullopt;
@@ -177,6 +175,19 @@ JackalAttack chooseAttack(const MatchState& state, const PlayerState& player,
 
 void attackPlayer(MatchState& state, JackalState& jackal, PlayerState& player,
                   RandomGenerator& rng, std::vector<GameEvent>& events) {
+    if (player.jackalRepellentRounds > 0) {
+        events.push_back(GameEvent{
+            GameEventType::JackalRepelled,
+            player.id,
+            player.id,
+            player.cave,
+            player.jackalRepellentRounds,
+            std::nullopt,
+            ItemType::JackalRepellent
+        });
+        return;
+    }
+
     const JackalAttack attack = chooseAttack(state, player, rng);
 
     switch (attack) {
@@ -224,9 +235,6 @@ void attackPlayer(MatchState& state, JackalState& jackal, PlayerState& player,
         }
     }
 
-    // Jackal HP damage is deliberately not active yet. Rules already expose
-    // jackalDamageEnabled/min/max so a future damaging attack can be added here
-    // without reshaping match state or configuration.
     (void)jackal;
 }
 
