@@ -4,6 +4,7 @@ add_library(BasiliskCore STATIC
     src/world/WorldGraph.cpp
     src/systems/ItemSystem.cpp
     src/systems/MapDiscoverySystem.cpp
+    src/systems/MatchCoordinator.cpp
     src/systems/ObservationSystem.cpp
     src/systems/RoundController.cpp
     src/systems/SearchSystem.cpp
