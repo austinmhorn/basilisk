@@ -19,6 +19,7 @@ enum class GameEventType {
     PlayerKilled,
     BodyCreated,
     BodyFound,
+    SigilEjected,
     SigilAcquired,
     ExtractionActivated,
     EscapeAvailable,
