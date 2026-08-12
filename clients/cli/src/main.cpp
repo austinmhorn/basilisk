@@ -49,6 +49,14 @@ std::string observationText(const PlayerObservation& observation) {
         case ObservationType::FellIntoPit: return "You stepped into a hidden Pit and fell to your death.";
         case ObservationType::RivalDied:
             return "The rival hunter has died somewhere in the caverns. The hunt continues; their Sigil can still be recovered.";
+        case ObservationType::RivalDisconnected:
+            return "The rival hunter disconnected. Their place in the hunt is being held briefly.";
+        case ObservationType::RivalReconnected:
+            return "The rival hunter reconnected and has returned to the hunt.";
+        case ObservationType::RivalReserveExpired:
+            return "The rival hunter exhausted their decision reserve and is out of the hunt.";
+        case ObservationType::RivalDisconnectTimedOut:
+            return "The rival hunter did not return before the reconnect grace expired and is out of the hunt.";
         case ObservationType::ItemFound:
             return observation.itemType.has_value()
                 ? "You found: " + itemName(*observation.itemType) + "."
