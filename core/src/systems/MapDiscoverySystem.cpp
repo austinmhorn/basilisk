@@ -140,11 +140,13 @@ PlayerMapView MapDiscoverySystem::buildView(
         DiscoveredCaveView caveView;
         caveView.cave = caveId;
         const auto& connections = state.world.cave(caveId).connections;
+        const auto pitClue = player.knownPitTunnels.find(caveId);
 
         for (std::size_t index = 0; index < connections.size(); ++index) {
             const CaveId destination = connections[index];
             TunnelView tunnel;
             tunnel.id = static_cast<TunnelId>(index + 1);
+            tunnel.strongColdDraft = pitClue != player.knownPitTunnels.end() && pitClue->second == tunnel.id;
 
             if (state.rules.mapDiscoveryMode == MapDiscoveryMode::FullMap ||
                 knowsConnection(player, caveId, destination)) {
