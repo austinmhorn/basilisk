@@ -4,6 +4,7 @@
 
 #include "basilisk/Types.hpp"
 #include "basilisk/actors/Basilisk.hpp"
+#include "basilisk/items/Item.hpp"
 
 namespace basilisk {
 
@@ -18,6 +19,13 @@ enum class GameEventType {
     PlayerKilled,
     JackalStunned,
     SearchCompleted,
+    CaveAlreadySearched,
+    ArrowFound,
+    ItemFound,
+    InventoryFull,
+    ExoticCallingCardFound,
+    ItemUsed,
+    PlayerHealed,
     BasiliskEvaded,
     BasiliskBehaviorChanged,
     BasiliskMoved,
@@ -31,6 +39,7 @@ struct GameEvent {
     std::optional<CaveId> cave;
     int amount{0};
     std::optional<BasiliskBehavior> basiliskBehavior;
+    std::optional<ItemType> itemType;
 };
 
 } // namespace basilisk
