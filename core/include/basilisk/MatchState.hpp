@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <vector>
 
 #include "basilisk/Player.hpp"
@@ -19,6 +20,10 @@ struct MatchState {
     std::vector<PlayerState> players;
     BasiliskState basilisk;
     std::vector<JackalState> jackals;
+
+    // Persistent environmental activity used by behaviors such as Territorial.
+    std::optional<CaveId> mostRecentSearchCave;
+
     RoundNumber round{1};
 };
 
