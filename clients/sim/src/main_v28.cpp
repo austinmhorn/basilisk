@@ -103,9 +103,10 @@ void runOneV28(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
         for (const auto& event : previousEvents) {
             if (event.type == GameEventType::ArrowFound && event.actor.has_value() &&
                 zeroBefore.contains(*event.actor)) {
+                // V2.9 convergence fix: count the recovery, but deliberately
+                // preserve the unfinished exhaustive sweep. If the recovered
+                // arrow is fired, the hunter resumes the same patrol cycle.
                 ++v26.zeroArrowRecoveries;
-                sweeps[*event.actor].initialized = false;
-                sweeps[*event.actor].pendingTargets.clear();
             }
         }
         if (!countedSecond && state.basilisk.trueEncounters >= 2) {
@@ -146,6 +147,7 @@ void runOneV28(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
 
 } // namespace
 
+#ifndef BASILISK_SIM_V28_NO_MAIN
 int main(int argc, char** argv) {
     std::uint64_t matches = 1000, maxRounds = 250;
     MapSeed firstMapSeed = 100000;
@@ -188,3 +190,4 @@ int main(int argc, char** argv) {
               << stats.basiliskEvades << '\n';
     return 0;
 }
+#endif
