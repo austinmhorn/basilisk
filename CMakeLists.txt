@@ -7,10 +7,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(BASILISK_BUILD_TESTS "Build BasiliskCore tests" ON)
+option(BASILISK_BUILD_CLI "Build the headless playable CLI" ON)
 
 add_subdirectory(core)
+
+if(BASILISK_BUILD_CLI)
+    add_subdirectory(clients/cli)
+endif()
 
 if(BASILISK_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+
+    if(BASILISK_BUILD_CLI)
+        add_test(NAME BasiliskCliSmoke COMMAND BasiliskCli --smoke)
+    endif()
 endif()
