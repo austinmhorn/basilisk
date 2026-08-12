@@ -37,3 +37,11 @@ add_executable(BasiliskWorldDangerTests
 target_link_libraries(BasiliskWorldDangerTests PRIVATE Basilisk::Core)
 
 add_test(NAME BasiliskWorldDangerTests COMMAND BasiliskWorldDangerTests)
+
+add_executable(BasiliskMapDiscoveryTests
+    map_discovery_tests.cpp
+)
+
+target_link_libraries(BasiliskMapDiscoveryTests PRIVATE Basilisk::Core)
+
+add_test(NAME BasiliskMapDiscoveryTests COMMAND BasiliskMapDiscoveryTests)
