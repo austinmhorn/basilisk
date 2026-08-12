@@ -68,7 +68,7 @@ void movementResolvesBeforeShooting() {
     (void)events;
 
     assert(state.players[1].cave == 2);
-    assert(state.players[1].health == 60);
+    assert(state.players[1].health == 50);
     assert(state.players[0].arrows == 2);
 }
 
