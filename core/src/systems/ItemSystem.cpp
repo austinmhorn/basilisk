@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "basilisk/systems/MapDiscoverySystem.hpp"
+
 namespace basilisk {
 namespace {
 
@@ -27,25 +29,15 @@ std::vector<GameEvent> ItemSystem::use(
     const Rules& rules) {
 
     std::vector<GameEvent> events;
-
-    if (!player.inventory.contains(item)) {
-        return events;
-    }
+    if (!player.inventory.contains(item)) return events;
 
     switch (item) {
         case ItemType::HealingDraught: {
-            if (player.health >= rules.maxHealth) {
-                return events;
-            }
-
+            if (player.health >= rules.maxHealth) return events;
             const int before = player.health;
             player.health = std::min(rules.maxHealth, player.health + rules.healingAmount);
             const int restored = player.health - before;
-
-            if (!player.inventory.removeOne(item)) {
-                return events;
-            }
-
+            if (!player.inventory.removeOne(item)) return events;
             emitItemUsed(player, item, events);
             events.push_back(GameEvent{
                 GameEventType::PlayerHealed,
@@ -77,10 +69,53 @@ std::vector<GameEvent> ItemSystem::use(
 
         case ItemType::SurveyFragment:
         case ItemType::BloodBait:
-            // Reserved for later content passes.
+            // World-aware overload handles these.
             break;
     }
 
+    return events;
+}
+
+std::vector<GameEvent> ItemSystem::use(
+    MatchState& state,
+    PlayerState& player,
+    const PlayerAction& action) {
+
+    std::vector<GameEvent> events;
+    if (!action.targetItem.has_value() ||
+        !player.inventory.contains(*action.targetItem)) {
+        return events;
+    }
+
+    const ItemType item = *action.targetItem;
+    if (item != ItemType::SurveyFragment && item != ItemType::BloodBait) {
+        return use(player, item, state.rules);
+    }
+
+    if (item == ItemType::SurveyFragment) {
+        if (!action.targetTunnel.has_value()) return events;
+        if (!MapDiscoverySystem::revealTunnelDestination(
+                state, player, player.cave, *action.targetTunnel, events)) {
+            return events;
+        }
+        if (!player.inventory.removeOne(item)) return {};
+        emitItemUsed(player, item, events);
+        return events;
+    }
+
+    if (!player.inventory.removeOne(item)) return events;
+    state.basiliskBaitCave = player.cave;
+    state.basiliskBaitRounds = state.rules.bloodBaitRounds;
+    emitItemUsed(player, item, events);
+    events.push_back(GameEvent{
+        GameEventType::BasiliskBaitPlaced,
+        player.id,
+        std::nullopt,
+        player.cave,
+        state.rules.bloodBaitRounds,
+        std::nullopt,
+        item
+    });
     return events;
 }
 
