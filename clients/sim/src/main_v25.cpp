@@ -215,8 +215,6 @@ std::optional<PlayerAction> chooseActionV25(const PlayerRoundSnapshot& s,
         else unknown.push_back(move);
     }
 
-    // V2.5: only unknown exits that are not positively identified Pit routes
-    // count as meaningful exploration.
     if (!unknown.empty()) {
         if (const auto* move = pick(unknown, salt >> 5U)) {
             ++stats.unexploredMoves;
@@ -232,9 +230,6 @@ std::optional<PlayerAction> chooseActionV25(const PlayerRoundSnapshot& s,
         }
     }
 
-    // V2.5: with no arrows, patrol the safe discovered graph toward the
-    // least-visited cave. The bot still has no knowledge of loose-arrow caves;
-    // this merely produces a systematic sweep instead of random looping.
     if (s.arrows == 0) {
         ++v25.zeroArrowPlayerRounds;
         if (!hasAnyMeaningfulFrontier(s)) {
@@ -351,6 +346,7 @@ void runOneV25(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
 
 } // namespace
 
+#ifndef BASILISK_SIM_V25_NO_MAIN
 int main(int argc, char** argv) {
     std::uint64_t matches = 1000, maxRounds = 250;
     MapSeed firstMapSeed = 100000;
@@ -391,7 +387,10 @@ int main(int argc, char** argv) {
     std::cout << "Pit deaths / mutual-Pit draws: " << stats.pitDeaths << '/' << stats.mutualPitDraws << '\n';
     std::cout << "Bodies created/found: " << stats.bodiesCreated << '/' << stats.bodiesFound << '\n';
     std::cout << "Sigils acquired / escapes: " << stats.sigilsAcquired << '/' << stats.escaped << '\n';
-    std::cout << "Loose arrows spawned/found/fired: " << stats.looseArrowSpawns << '/' << stats.arrowsFound << '/' << stats.arrowsFired << '\n';
-    std::cout << "Basilisk true encounters/evades: " << stats.basiliskEncounters << '/' << stats.basiliskEvades << '\n';
+    std::cout << "Loose arrows spawned/found/fired: " << stats.looseArrowSpawns << '/'
+              << stats.arrowsFound << '/' << stats.arrowsFired << '\n';
+    std::cout << "Basilisk true encounters/evades: " << stats.basiliskEncounters << '/'
+              << stats.basiliskEvades << '\n';
     return 0;
 }
+#endif
