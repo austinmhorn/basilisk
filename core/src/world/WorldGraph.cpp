@@ -45,6 +45,17 @@ const Cave& WorldGraph::cave(CaveId id) const {
     return caves_.at(id);
 }
 
+std::vector<CaveId> WorldGraph::caveIds() const {
+    std::vector<CaveId> ids;
+    ids.reserve(caves_.size());
+    for (const auto& [id, cave] : caves_) {
+        static_cast<void>(cave);
+        ids.push_back(id);
+    }
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
 std::size_t WorldGraph::size() const noexcept {
     return caves_.size();
 }
