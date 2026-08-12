@@ -14,6 +14,7 @@ enum class MatchStatus {
 enum class MatchOutcome {
     None,
     BasiliskKilled,
+    SimultaneousBasiliskKill,
     EscapedWithSigil,
     Draw
 };
