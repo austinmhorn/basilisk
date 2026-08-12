@@ -44,11 +44,21 @@ void assertSameGeneratedWorld(const MatchState& a, const MatchState& b) {
 void defaultThirtyCaveMapHasExpectedShapeAndActors() {
     const auto state = MapGenerator::generate(12345, 67890);
     const ProceduralMapConfig config;
+    const auto metrics = MapGenerator::analyzeTopology(state.world);
 
     assert(state.world.size() == 30);
     assert(MapGenerator::validateTopology(state.world, config));
     assert(MapGenerator::validateFairness(state, config));
     assert(state.rules.mapDiscoveryMode == MapDiscoveryMode::FogOfWar);
+
+    // Organic default profile intentionally contains a handful of dead ends
+    // while retaining enough independent loops for alternate routes.
+    assert(metrics.deadEndCount >= config.minDeadEnds);
+    assert(metrics.deadEndCount <= config.maxDeadEnds);
+    assert(metrics.loopCount >= config.minLoopCount);
+    assert(metrics.diameter >= config.minDiameter);
+    assert(metrics.diameter <= config.maxDiameter);
+    assert(metrics.averageDegree > 2.0);
 
     // Locked gameplay rule: one Jackal per 15 caves.
     assert(state.jackals.size() == 2);
@@ -79,16 +89,30 @@ void identicalSeedsReproduceEntireGeneratedWorld() {
     const auto first = MapGenerator::generate(44444, 55555);
     const auto second = MapGenerator::generate(44444, 55555);
     assertSameGeneratedWorld(first, second);
+
+    const auto firstMetrics = MapGenerator::analyzeTopology(first.world);
+    const auto secondMetrics = MapGenerator::analyzeTopology(second.world);
+    assert(firstMetrics.edgeCount == secondMetrics.edgeCount);
+    assert(firstMetrics.deadEndCount == secondMetrics.deadEndCount);
+    assert(firstMetrics.loopCount == secondMetrics.loopCount);
+    assert(firstMetrics.diameter == secondMetrics.diameter);
 }
 
-void manySeedsRemainValid() {
+void manySeedsRemainValidAndOrganic() {
     ProceduralMapConfig config;
 
     for (std::uint64_t seed = 1; seed <= 50; ++seed) {
         const auto state = MapGenerator::generate(seed, seed * 991U, {}, config);
+        const auto metrics = MapGenerator::analyzeTopology(state.world);
+
         assert(MapGenerator::validateTopology(state.world, config));
         assert(MapGenerator::validateFairness(state, config));
         assert(state.world.size() == config.caveCount);
+        assert(metrics.deadEndCount >= config.minDeadEnds);
+        assert(metrics.deadEndCount <= config.maxDeadEnds);
+        assert(metrics.loopCount >= config.minLoopCount);
+        assert(metrics.diameter >= config.minDiameter);
+        assert(metrics.diameter <= config.maxDiameter);
 
         for (const CaveId cave : state.world.caveIds()) {
             const auto degree = state.world.cave(cave).connections.size();
@@ -96,6 +120,17 @@ void manySeedsRemainValid() {
             assert(degree <= config.maxDegree);
         }
     }
+}
+
+void deadEndTargetIsConfigurable() {
+    ProceduralMapConfig config;
+    config.targetDeadEnds = 6;
+    config.minDeadEnds = 6;
+    config.maxDeadEnds = 6;
+
+    const auto state = MapGenerator::generate(61616, 71717, {}, config);
+    const auto metrics = MapGenerator::analyzeTopology(state.world);
+    assert(metrics.deadEndCount == 6);
 }
 
 void jackalScalingUsesCaveCount() {
@@ -122,7 +157,8 @@ int main() {
     defaultThirtyCaveMapHasExpectedShapeAndActors();
     initialPlacementsDoNotOverlap();
     identicalSeedsReproduceEntireGeneratedWorld();
-    manySeedsRemainValid();
+    manySeedsRemainValidAndOrganic();
+    deadEndTargetIsConfigurable();
     jackalScalingUsesCaveCount();
     pitCountRemainsConfigurable();
 
