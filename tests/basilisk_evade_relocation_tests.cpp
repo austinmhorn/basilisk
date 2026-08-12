@@ -116,11 +116,40 @@ void secondEvadeRelocatesOneToTwoCavesAwayBeforeEnraging() {
     assert(foundEvade);
 }
 
+void enragedBasiliskPursuesNearestLivingHunter() {
+    MatchState state;
+    state.matchSeed = 424242;
+    state.mapSeed = 9002;
+    for (CaveId cave = 1; cave <= 5; ++cave) state.world.addCave(cave);
+    for (CaveId cave = 1; cave < 5; ++cave) state.world.connect(cave, cave + 1);
+
+    // Hunter 2 at Cave 3 is nearer than Hunter 1 at Cave 1. From Cave 5 the
+    // only safe pursuit step is Cave 4, which reduces distance to Hunter 2.
+    state.players = {
+        PlayerState{1, 1, 100, 3, true},
+        PlayerState{2, 3, 100, 3, true}
+    };
+    state.basilisk.cave = 5;
+    state.basilisk.behavior = BasiliskBehavior::Enraged;
+    state.basilisk.roundsSinceMove = 1;
+
+    const int before = distanceBetween(state, state.basilisk.cave, CaveId{3});
+    TurnResolver resolver;
+    const auto events = resolver.resolve(state, {});
+    const int after = distanceBetween(state, state.basilisk.cave, CaveId{3});
+
+    assert(hasEvent(events, GameEventType::BasiliskMoved));
+    assert(state.basilisk.cave == CaveId{4});
+    assert(after < before);
+    assert(state.basilisk.cave != CaveId{3});
+}
+
 } // namespace
 
 int main() {
     firstEvadeRelocatesTwoToThreeCavesAway();
     secondEvadeRelocatesOneToTwoCavesAwayBeforeEnraging();
+    enragedBasiliskPursuesNearestLivingHunter();
     std::cout << "Basilisk evade relocation tests passed.\n";
     return 0;
 }
