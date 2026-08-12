@@ -4,6 +4,7 @@ add_library(BasiliskCore STATIC
     src/systems/ItemSystem.cpp
     src/systems/SearchSystem.cpp
     src/systems/TurnResolver.cpp
+    src/systems/WorldDangerSystem.cpp
 )
 
 add_library(Basilisk::Core ALIAS BasiliskCore)
