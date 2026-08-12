@@ -30,6 +30,13 @@ struct MatchState {
     ExtractionState extraction;
     MatchResult result;
     std::optional<CaveId> mostRecentSearchCave;
+
+    // Blood Bait is a temporary server-authoritative world lure. It identifies
+    // only the bait cave and remaining active rounds; it does not reveal the
+    // Basilisk to either player.
+    std::optional<CaveId> basiliskBaitCave;
+    int basiliskBaitRounds{0};
+
     RoundNumber round{1};
 };
 
