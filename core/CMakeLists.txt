@@ -9,6 +9,7 @@ add_library(BasiliskCore STATIC
     src/systems/RoundController.cpp
     src/systems/SearchSystem.cpp
     src/systems/SnapshotSystem.cpp
+    src/systems/SoloCoordinator.cpp
     src/systems/TurnResolver.cpp
     src/systems/WorldDangerSystem.cpp
 )
