@@ -132,7 +132,8 @@ struct Stats {
     std::uint64_t pitClueSuccesses{0}, pitClueInconclusive{0};
     std::uint64_t knownPitTunnelAvoidances{0}, pitDeaths{0}, mutualPitDraws{0};
 
-    std::uint64_t arrowsFired{0}, arrowMisses{0}, pvpHits{0}, pvpDeaths{0}, jackalHits{0};
+    std::uint64_t arrowsFired{0}, arrowMisses{0}, pvpHits{0}, pvpDeaths{0};
+    std::uint64_t basiliskContactKills{0}, unattributedPlayerDeaths{0}, jackalHits{0};
     std::uint64_t basiliskEncounters{0}, basiliskEvades{0};
     std::uint64_t firstKills{0}, secondKills{0}, thirdKills{0};
     std::uint64_t secondEncounterMatches{0}, thirdEncounterMatches{0};
@@ -827,14 +828,26 @@ void collectEvents(
                 if (event.targetPlayer.has_value()) {
                     const PlayerId dead = *event.targetPlayer;
                     if (auto* ss = styleStats(dead)) ++ss->deaths;
-                    if (!pitDeadPlayers.contains(dead)) ++stats.pvpDeaths;
+
+                    const bool pitDeath = pitDeadPlayers.contains(dead);
+                    const bool basiliskContact = event.basiliskBehavior == BasiliskBehavior::Enraged;
 
                     std::optional<PlayerId> killer = event.actor;
-                    if (!killer.has_value()) {
+                    if (!killer.has_value() && !basiliskContact) {
                         const auto it = pvpAttackerByTarget.find(dead);
                         if (it != pvpAttackerByTarget.end()) killer = it->second;
                     }
-                    if (killer.has_value()) if (auto* ss = styleStats(*killer)) ++ss->pvpKills;
+
+                    if (pitDeath) {
+                        // Counted by PitTriggered; do not double-attribute it.
+                    } else if (basiliskContact) {
+                        ++stats.basiliskContactKills;
+                    } else if (killer.has_value()) {
+                        ++stats.pvpDeaths;
+                        if (auto* ss = styleStats(*killer)) ++ss->pvpKills;
+                    } else {
+                        ++stats.unattributedPlayerDeaths;
+                    }
                 }
                 break;
             case GameEventType::BasiliskKilled:
@@ -1017,7 +1030,7 @@ void printReport(const Stats& stats, std::uint64_t maxRounds) {
     const double avgCaves = stats.matches ? static_cast<double>(stats.totalCaves) / (stats.matches * 2.0) : 0.0;
     const double avgArrows = stats.matches ? static_cast<double>(stats.totalFinalArrows) / (stats.matches * 2.0) : 0.0;
 
-    std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT (BOT V3.4 HUNT-LENGTH TELEMETRY)\n";
+    std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT (BOT V3.7.1 DEATH ATTRIBUTION)\n";
     std::cout << "Matches: " << stats.matches << " | max rounds/match: " << maxRounds
               << " | loose-arrow cap: " << rules.maxLooseArrows
               << " | spawn cadence: every " << rules.looseArrowSpawnIntervalRounds << " rounds"
@@ -1027,8 +1040,8 @@ void printReport(const Stats& stats, std::uint64_t maxRounds) {
     std::cout << "OUTCOMES\n";
     printPercent("Completed", stats.completed, stats.matches);
     printPercent("Stalled at round cap", stats.stalled, stats.matches);
-    printPercent("Basilisk kills", stats.basiliskWins, stats.matches);
-    printPercent("Simultaneous Basilisk draws", stats.simultaneousBasiliskDraws, stats.matches);
+    printPercent("Basilisk-defeat wins", stats.basiliskWins, stats.matches);
+    printPercent("Simultaneous Basilisk-defeat draws", stats.simultaneousBasiliskDraws, stats.matches);
     printPercent("Extraction wins", stats.extractionWins, stats.matches);
     printPercent("Other draws", stats.draws, stats.matches);
 
@@ -1092,11 +1105,12 @@ void printReport(const Stats& stats, std::uint64_t maxRounds) {
     std::cout << "\nBASILISK TELEMETRY\n";
     std::cout << "True-encounter arrows: " << stats.basiliskEncounters << '\n';
     std::cout << "Evades: " << stats.basiliskEvades << '\n';
-    std::cout << "First/second/third encounter kills: " << stats.firstKills << '/' << stats.secondKills << '/' << stats.thirdKills << '\n';
+    std::cout << "First/second/third encounter Basilisk defeats: " << stats.firstKills << '/' << stats.secondKills << '/' << stats.thirdKills << '\n';
     std::cout << "Matches reaching second/third encounter: " << stats.secondEncounterMatches << '/' << stats.thirdEncounterMatches << '\n';
     std::cout << "Restless/Lurker/Skittish/Territorial/Enraged assignments: "
               << stats.restlessAssignments << '/' << stats.lurkerAssignments << '/' << stats.skittishAssignments << '/'
               << stats.territorialAssignments << '/' << stats.enragedAssignments << '\n';
+    std::cout << "Enraged Basilisk contact kills: " << stats.basiliskContactKills << '\n';
 
     const double avgRelocation = stats.evadeRelocations
         ? static_cast<double>(stats.relocationDistanceTotal) / stats.evadeRelocations : 0.0;
@@ -1136,6 +1150,12 @@ void printReport(const Stats& stats, std::uint64_t maxRounds) {
         std::cout << average;
     }
     std::cout << '\n';
+
+    std::cout << "\nPLAYER DEATH ATTRIBUTION\n";
+    std::cout << "Pit deaths: " << stats.pitDeaths << '\n';
+    std::cout << "Enraged Basilisk contact kills: " << stats.basiliskContactKills << '\n';
+    std::cout << "PvP deaths: " << stats.pvpDeaths << '\n';
+    std::cout << "Other/unattributed player deaths: " << stats.unattributedPlayerDeaths << '\n';
 
     std::cout << "\nOBJECTIVE TELEMETRY\n";
     std::cout << "Bodies created/found: " << stats.bodiesCreated << '/' << stats.bodiesFound << '\n';
