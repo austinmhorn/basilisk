@@ -12,6 +12,7 @@ class WorldDangerSystem {
 public:
     static void resolvePits(
         MatchState& state,
+        RandomGenerator& rng,
         std::vector<GameEvent>& events);
 
     static void resolveJackals(
