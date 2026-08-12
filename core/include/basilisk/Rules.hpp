@@ -12,11 +12,11 @@ enum class MapDiscoveryMode {
 
 struct Rules {
     int maxHealth{100};
-    int arrowDamage{40};
+    int arrowDamage{50};
     int maxArrows{5};
     int startingArrows{3};
     std::size_t maxInventoryItems{3};
-    int healingAmount{40};
+    int healingAmount{50};
     int jackalStunPhases{3};
     int cavesPerJackal{15};
 
@@ -26,8 +26,8 @@ struct Rules {
     std::uint64_t multiplayerReserveMs{300000};
     std::uint64_t disconnectGraceMs{30000};
 
-    // Loose-arrow economy: one world arrow every five rounds for the V2.14
-    // cadence experiment, with up to eight arrows waiting on the map at once.
+    // Loose-arrow economy: one world arrow every five rounds, with up to eight
+    // arrows waiting on the map at once.
     std::uint32_t looseArrowSpawnIntervalRounds{5};
     std::size_t maxLooseArrows{8};
 
