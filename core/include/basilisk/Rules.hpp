@@ -35,6 +35,12 @@ struct Rules {
     // maps use player-specific discovery and opaque unknown tunnel choices.
     MapDiscoveryMode mapDiscoveryMode{MapDiscoveryMode::FullMap};
 
+    // Searching while a Pit is adjacent can identify the dangerous local
+    // tunnel. Initial balance: 75% correct directional clue, 25% inconclusive,
+    // and never a deliberately false clue.
+    std::uint32_t pitInvestigationNumerator{3};
+    std::uint32_t pitInvestigationDenominator{4};
+
     // Reserved Jackal damage capability. Disabled by default so current
     // gameplay remains faithful to the classic ROB / SCARE / KNOCKOUT model.
     // These values let us introduce a damaging Jackal attack later without
