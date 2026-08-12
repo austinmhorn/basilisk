@@ -149,6 +149,23 @@ void addEventFeedback(
                 }
                 break;
 
+            case GameEventType::PitInvestigationSucceeded:
+                if (event.actor == viewer.id) {
+                    PlayerObservation observation{ObservationType::PitInvestigationSucceeded, viewer.id};
+                    observation.cave = event.cave;
+                    observation.tunnel = event.tunnel;
+                    observations.push_back(observation);
+                }
+                break;
+
+            case GameEventType::PitInvestigationInconclusive:
+                if (event.actor == viewer.id) {
+                    PlayerObservation observation{ObservationType::PitInvestigationInconclusive, viewer.id};
+                    observation.cave = event.cave;
+                    observations.push_back(observation);
+                }
+                break;
+
             case GameEventType::PlayerDisconnected:
                 if (event.actor.has_value() && event.actor != viewer.id) {
                     observations.push_back(PlayerObservation{ObservationType::RivalDisconnected, viewer.id});
