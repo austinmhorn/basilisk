@@ -1,6 +1,6 @@
-#define main basilisk_v214_main
+#define BASILISK_SIM_V213_NO_MAIN
 #include "main_v213.cpp"
-#undef main
+#undef BASILISK_SIM_V213_NO_MAIN
 
 #include <array>
 #include <iomanip>
@@ -107,7 +107,6 @@ std::optional<PlayerAction> chooseActionV3(
         (static_cast<std::uint64_t>(original.round) << 17U) ^
         static_cast<std::uint64_t>(original.player));
 
-    // Everybody keeps emergency/objective actions above personality flavor.
     for (const auto& action : original.availableActions) {
         if (action.type == ActionType::Contextual &&
             action.contextualAction == ContextualActionType::Escape)
@@ -119,8 +118,6 @@ std::optional<PlayerAction> chooseActionV3(
             return materialize(original.player, *heal);
     }
 
-    // SCAVENGER: spend more tempo searching untouched caves for the weighted
-    // loot table, but do not override immediate Pit investigation or extraction.
     if (style == Playstyle::Scavenger &&
         !original.hasHunterSigil &&
         !hasObs(original, ObservationType::PitNearby)) {
@@ -133,8 +130,6 @@ std::optional<PlayerAction> chooseActionV3(
         }
     }
 
-    // OPPORTUNIST: rival noise is enough to justify a speculative shot. Unlike
-    // V2.11, this personality is willing to spend its final arrow on PvP.
     if (style == Playstyle::Opportunist &&
         original.arrows > 0 &&
         hasObs(original, ObservationType::RivalNearby) &&
@@ -146,9 +141,6 @@ std::optional<PlayerAction> chooseActionV3(
 
     PlayerRoundSnapshot filtered = original;
 
-    // EXTRACTOR: after rival death the alternate objective is the mission.
-    // Suppress combat distractions but retain hazards, utility information,
-    // body searches, Sigil routing, and extraction from the shared brain.
     if (style == Playstyle::Extractor && extractorObjectiveMode(original, memory)) {
         memory.rivalDead = true;
         stripObservation(filtered, ObservationType::BasiliskNearby);
@@ -364,8 +356,7 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "BEWARE THE BASILISK V2 - SIMULATION REPORT (BOT V3 PLAYSTYLES)\n";
-    std::cout << "Matches: " << stats.matches
-              << " | max rounds/match: " << maxRounds
+    std::cout << "Matches: " << stats.matches << " | max rounds/match: " << maxRounds
               << " | loose-arrow cap: 8 | spawn cadence: every 5 rounds\n\n";
 
     std::cout << "OUTCOMES\n";
@@ -378,7 +369,7 @@ int main(int argc, char** argv) {
 
     printStyleStats(v3);
 
-    std::cout << "\nRESOURCE / OBJECTIVE SNAPSHOT\n";
+    std::cout << "\nCORE TELEMETRY\n";
     std::cout << "Pit deaths / mutual-Pit draws: " << stats.pitDeaths << '/' << stats.mutualPitDraws << '\n';
     std::cout << "Bodies created/found: " << stats.bodiesCreated << '/' << stats.bodiesFound << '\n';
     std::cout << "Sigils acquired / escapes: " << stats.sigilsAcquired << '/' << stats.escaped << '\n';
@@ -386,9 +377,5 @@ int main(int argc, char** argv) {
               << stats.arrowsFound << '/' << stats.arrowsFired << '\n';
     std::cout << "Basilisk true encounters/evades: " << stats.basiliskEncounters << '/'
               << stats.basiliskEvades << '\n';
-    std::cout << "Zero-arrow player-rounds: " << v26.zeroArrowPlayerRounds << '\n';
-    std::cout << "Stalled zero-arrow hunters with safely reachable arrows: "
-              << v213.stalledZeroArrowHuntersWithReachableArrow << '\n';
-
     return 0;
 }
