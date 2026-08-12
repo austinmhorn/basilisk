@@ -225,7 +225,7 @@ void createBodyIfMissing(MatchState& state, const PlayerState& player,
     const bool exists = std::any_of(state.bodies.begin(), state.bodies.end(),
         [&](const BodyState& body) { return body.owner == player.id; });
     if (exists) return;
-    state.bodies.push_back(BodyState{player.id, player.cave, true});
+    state.bodies.push_back(BodyState{player.id, player.cave, true, player.cave});
     events.push_back(GameEvent{GameEventType::BodyCreated, std::nullopt, player.id, player.cave});
 }
 
@@ -247,12 +247,18 @@ CaveId chooseExtractionCave(const MatchState& state, CaveId from) {
 void discoverDynamicBodyContents(MatchState& state, PlayerState& player,
                                  std::vector<GameEvent>& events) {
     for (auto& body : state.bodies) {
-        if (body.cave != player.cave || !body.sigilAvailable || body.owner == player.id) continue;
+        if (!body.sigilAvailable || body.owner == player.id) continue;
 
-        events.push_back(GameEvent{GameEventType::BodyFound, player.id, body.owner, body.cave});
+        const CaveId sigilCave = body.sigilCave.value_or(body.cave);
+        if (sigilCave != player.cave) continue;
+
+        if (body.cave == player.cave) {
+            events.push_back(GameEvent{GameEventType::BodyFound, player.id, body.owner, body.cave});
+        }
+
         body.sigilAvailable = false;
         player.heldSigilFrom = body.owner;
-        events.push_back(GameEvent{GameEventType::SigilAcquired, player.id, body.owner, body.cave});
+        events.push_back(GameEvent{GameEventType::SigilAcquired, player.id, body.owner, sigilCave});
 
         state.extraction.active = true;
         state.extraction.sigilHolder = player.id;
@@ -382,8 +388,8 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
         resolveMutualDeathDraw(state, events);
     }
 
-    // 3. Search resolves only for survivors. Dynamic bodies remain searchable
-    // even if the cave's static loot roll has already been consumed.
+    // 3. Search resolves only for survivors. Dynamic bodies and detached
+    // Sigils remain searchable even when static cave loot has been consumed.
     std::optional<CaveId> mostRecentSearchCave;
     for (const auto& action : orderedActions) {
         if (action.type != ActionType::Search) continue;
@@ -412,7 +418,7 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
 
     // 5. Environmental hazards. A hunter can still complete already-committed
     // earlier phases before the Pit resolves, matching the simultaneous model.
-    WorldDangerSystem::resolvePits(state, events);
+    WorldDangerSystem::resolvePits(state, rng, events);
     if (state.result.status == MatchStatus::Active) {
         resolveMutualDeathDraw(state, events);
     }
