@@ -29,3 +29,11 @@ add_executable(BasiliskSimultaneousTests
 target_link_libraries(BasiliskSimultaneousTests PRIVATE Basilisk::Core)
 
 add_test(NAME BasiliskSimultaneousTests COMMAND BasiliskSimultaneousTests)
+
+add_executable(BasiliskWorldDangerTests
+    world_danger_tests.cpp
+)
+
+target_link_libraries(BasiliskWorldDangerTests PRIVATE Basilisk::Core)
+
+add_test(NAME BasiliskWorldDangerTests COMMAND BasiliskWorldDangerTests)
