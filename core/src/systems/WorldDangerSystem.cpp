@@ -29,23 +29,69 @@ void consumeOneStunPhase(JackalState& jackal) {
         [](const StatusEffect& status) { return status.remainingApplications <= 0; });
 }
 
-void createBodyIfMissing(MatchState& state, const PlayerState& player,
-                         std::vector<GameEvent>& events) {
+std::optional<CaveId> choosePitSigilCave(
+    const MatchState& state,
+    CaveId pitCave,
+    RandomGenerator& rng) {
+
+    if (!state.world.contains(pitCave)) return std::nullopt;
+
+    std::vector<CaveId> safeNeighbors;
+    for (const CaveId cave : state.world.cave(pitCave).connections) {
+        if (!isPitCave(state, cave)) safeNeighbors.push_back(cave);
+    }
+
+    // A well-formed map should never surround a Pit entirely with Pits, but
+    // falling back to any neighbor keeps the Sigil from being permanently lost.
+    const auto& allNeighbors = state.world.cave(pitCave).connections;
+    const auto& candidates = safeNeighbors.empty() ? allNeighbors : safeNeighbors;
+    if (candidates.empty()) return std::nullopt;
+
+    const auto index = static_cast<std::size_t>(
+        rng.range(0, static_cast<int>(candidates.size()) - 1));
+    return candidates[index];
+}
+
+void createBodyIfMissing(
+    MatchState& state,
+    const PlayerState& player,
+    std::optional<CaveId> sigilCave,
+    std::vector<GameEvent>& events) {
+
     const bool exists = std::any_of(state.bodies.begin(), state.bodies.end(),
         [&](const BodyState& body) { return body.owner == player.id; });
     if (exists) return;
 
-    state.bodies.push_back(BodyState{player.id, player.cave, true});
+    state.bodies.push_back(BodyState{
+        player.id,
+        player.cave,
+        true,
+        sigilCave.value_or(player.cave)
+    });
+
     events.push_back(GameEvent{
         GameEventType::BodyCreated,
         std::nullopt,
         player.id,
         player.cave
     });
+
+    if (sigilCave.has_value() && *sigilCave != player.cave) {
+        events.push_back(GameEvent{
+            GameEventType::SigilEjected,
+            std::nullopt,
+            player.id,
+            *sigilCave
+        });
+    }
 }
 
-void killPlayerInPit(MatchState& state, PlayerState& player,
-                     std::vector<GameEvent>& events) {
+void killPlayerInPit(
+    MatchState& state,
+    PlayerState& player,
+    RandomGenerator& rng,
+    std::vector<GameEvent>& events) {
+
     if (!player.alive || !isPitCave(state, player.cave)) return;
 
     player.health = 0;
@@ -65,7 +111,8 @@ void killPlayerInPit(MatchState& state, PlayerState& player,
         player.cave
     });
 
-    createBodyIfMissing(state, player, events);
+    const auto sigilCave = choosePitSigilCave(state, player.cave, rng);
+    createBodyIfMissing(state, player, sigilCave, events);
 }
 
 std::vector<CaveId> jackalMoveOptions(const MatchState& state, const JackalState& jackal) {
@@ -157,7 +204,7 @@ void attackPlayer(MatchState& state, JackalState& jackal, PlayerState& player,
                 player.cave
             });
 
-            killPlayerInPit(state, player, events);
+            killPlayerInPit(state, player, rng, events);
             break;
         }
 
@@ -177,6 +224,9 @@ void attackPlayer(MatchState& state, JackalState& jackal, PlayerState& player,
         }
     }
 
+    // Jackal HP damage is deliberately not active yet. Rules already expose
+    // jackalDamageEnabled/min/max so a future damaging attack can be added here
+    // without reshaping match state or configuration.
     (void)jackal;
 }
 
@@ -184,10 +234,11 @@ void attackPlayer(MatchState& state, JackalState& jackal, PlayerState& player,
 
 void WorldDangerSystem::resolvePits(
     MatchState& state,
+    RandomGenerator& rng,
     std::vector<GameEvent>& events) {
 
     for (auto& player : state.players) {
-        killPlayerInPit(state, player, events);
+        killPlayerInPit(state, player, rng, events);
     }
 }
 
