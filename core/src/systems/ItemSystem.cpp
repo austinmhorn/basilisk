@@ -1,6 +1,9 @@
 #include "basilisk/systems/ItemSystem.hpp"
 
 #include <algorithm>
+#include <optional>
+#include <queue>
+#include <unordered_set>
 
 #include "basilisk/systems/MapDiscoverySystem.hpp"
 
@@ -19,6 +22,27 @@ void emitItemUsed(PlayerState& player,
         std::nullopt,
         item
     });
+}
+
+std::optional<int> distanceBetween(const WorldGraph& world, CaveId start, CaveId target) {
+    if (!world.contains(start) || !world.contains(target)) return std::nullopt;
+    if (start == target) return 0;
+
+    std::queue<std::pair<CaveId, int>> frontier;
+    std::unordered_set<CaveId> seen;
+    frontier.push({start, 0});
+    seen.insert(start);
+
+    while (!frontier.empty()) {
+        const auto [current, distance] = frontier.front();
+        frontier.pop();
+        for (const CaveId next : world.cave(current).connections) {
+            if (!seen.insert(next).second) continue;
+            if (next == target) return distance + 1;
+            frontier.push({next, distance + 1});
+        }
+    }
+    return std::nullopt;
 }
 
 } // namespace
@@ -69,6 +93,7 @@ std::vector<GameEvent> ItemSystem::use(
 
         case ItemType::SurveyFragment:
         case ItemType::BloodBait:
+        case ItemType::OldHuntersMap:
             // World-aware overload handles these.
             break;
     }
@@ -88,7 +113,9 @@ std::vector<GameEvent> ItemSystem::use(
     }
 
     const ItemType item = *action.targetItem;
-    if (item != ItemType::SurveyFragment && item != ItemType::BloodBait) {
+    if (item != ItemType::SurveyFragment &&
+        item != ItemType::BloodBait &&
+        item != ItemType::OldHuntersMap) {
         return use(player, item, state.rules);
     }
 
@@ -100,6 +127,23 @@ std::vector<GameEvent> ItemSystem::use(
         }
         if (!player.inventory.removeOne(item)) return {};
         emitItemUsed(player, item, events);
+        return events;
+    }
+
+    if (item == ItemType::OldHuntersMap) {
+        if (!state.basilisk.alive) return events;
+        const auto distance = distanceBetween(state.world, player.cave, state.basilisk.cave);
+        if (!distance.has_value()) return events;
+        if (!player.inventory.removeOne(item)) return events;
+        events.push_back(GameEvent{
+            GameEventType::OldHuntersMapRead,
+            player.id,
+            std::nullopt,
+            player.cave,
+            *distance,
+            std::nullopt,
+            item
+        });
         return events;
     }
 
