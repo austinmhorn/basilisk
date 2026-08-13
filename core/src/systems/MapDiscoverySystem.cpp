@@ -13,6 +13,16 @@ std::uint64_t connectionKey(CaveId a, CaveId b) {
            static_cast<std::uint64_t>(high);
 }
 
+bool connectionIsKnownOrInferred(
+    const PlayerState& player,
+    CaveId a,
+    CaveId b) {
+
+    return player.discovery.knownConnections.contains(connectionKey(a, b)) ||
+           (player.discovery.knownCaves.contains(a) &&
+            player.discovery.knownCaves.contains(b));
+}
+
 } // namespace
 
 void MapDiscoverySystem::initializePlayer(MatchState& state, PlayerState& player) {
@@ -48,7 +58,7 @@ std::optional<CaveId> MapDiscoverySystem::resolveMoveDestination(
     }
 
     if (state.rules.mapDiscoveryMode == MapDiscoveryMode::FogOfWar &&
-        !knowsConnection(player, player.cave, *action.targetCave)) {
+        !connectionIsKnownOrInferred(player, player.cave, *action.targetCave)) {
         return std::nullopt;
     }
 
@@ -144,7 +154,7 @@ PlayerMapView MapDiscoverySystem::buildView(
             tunnel.strongColdDraft = pitClue != player.knownPitTunnels.end() && pitClue->second == tunnel.id;
 
             if (state.rules.mapDiscoveryMode == MapDiscoveryMode::FullMap ||
-                knowsConnection(player, caveId, destination)) {
+                connectionIsKnownOrInferred(player, caveId, destination)) {
                 tunnel.destination = destination;
             }
 
