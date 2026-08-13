@@ -33,6 +33,8 @@ enum class ObservationType {
     ItemFound,
     ArrowFound,
     ExoticCallingCardFound,
+    OldHuntersMapFound,
+    OldHuntersMapDistance,
     SigilAcquired,
     ExtractionRevealed,
     EscapeAvailable,
