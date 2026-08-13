@@ -11,8 +11,11 @@ void tryAddItem(PlayerState& player,
                 const Rules& rules,
                 std::vector<GameEvent>& events) {
     if (player.inventory.add(ItemInstance{item}, rules.maxInventoryItems)) {
+        const auto eventType = item == ItemType::OldHuntersMap
+            ? GameEventType::OldHuntersMapFound
+            : GameEventType::ItemFound;
         events.push_back(GameEvent{
-            GameEventType::ItemFound,
+            eventType,
             player.id,
             std::nullopt,
             player.cave,
@@ -42,13 +45,14 @@ void resolveWeightedOrdinaryLoot(PlayerState& player,
         std::optional<ItemType> item;
     };
 
-    const std::array<WeightedReward, 6> rewards{{
+    const std::array<WeightedReward, 7> rewards{{
         {rules.searchNothingWeight, std::nullopt},
         {rules.searchHealingWeight, ItemType::HealingDraught},
         {rules.searchJackalRepellentWeight, ItemType::JackalRepellent},
         {rules.searchOldMinersMapWeight, ItemType::OldMinersMap},
         {rules.searchSurveyFragmentWeight, ItemType::SurveyFragment},
-        {rules.searchBloodBaitWeight, ItemType::BloodBait}
+        {rules.searchBloodBaitWeight, ItemType::BloodBait},
+        {rules.searchOldHuntersMapWeight, ItemType::OldHuntersMap}
     }};
 
     std::uint64_t total = 0;
@@ -95,13 +99,9 @@ std::vector<GameEvent> SearchSystem::search(
         player.cave
     });
 
-    // Exactly one ordinary weighted reward outcome (including Nothing).
     resolveWeightedOrdinaryLoot(player, rules, rng, events);
 
     if (rng.chance(rules.searchExoticNumerator, rules.searchExoticDenominator)) {
-        // Prototype probability/event hook only. In online play the backend
-        // owns the permanent Calling Card RNG, weighted rarity pool, duplicate
-        // policy, ownership validation, and account mutation.
         events.push_back(GameEvent{
             GameEventType::ExoticCallingCardFound,
             player.id,
