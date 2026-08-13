@@ -149,12 +149,21 @@ PlayerMapView MapDiscoverySystem::buildView(
 
         for (std::size_t index = 0; index < connections.size(); ++index) {
             const CaveId destination = connections[index];
+            const bool destinationIsKnown =
+                state.rules.mapDiscoveryMode == MapDiscoveryMode::FullMap ||
+                connectionIsKnownOrInferred(player, caveId, destination);
+
+            // Reaching a fatal cave still records the cave and the tunnel used,
+            // but death must not reveal its previously unseen exits.
+            if (!player.alive && caveId == player.cave && !destinationIsKnown) {
+                continue;
+            }
+
             TunnelView tunnel;
             tunnel.id = static_cast<TunnelId>(index + 1);
             tunnel.strongColdDraft = pitClue != player.knownPitTunnels.end() && pitClue->second == tunnel.id;
 
-            if (state.rules.mapDiscoveryMode == MapDiscoveryMode::FullMap ||
-                connectionIsKnownOrInferred(player, caveId, destination)) {
+            if (destinationIsKnown) {
                 tunnel.destination = destination;
             }
 
