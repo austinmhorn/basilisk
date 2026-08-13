@@ -316,6 +316,28 @@ bool playerAlive(const MatchState& state, PlayerId id) {
     return it != state.players.end() && it->alive;
 }
 
+void printFinalRoundFeedback(const MatchState& state, const std::vector<GameEvent>& events) {
+    bool printedHeader = false;
+    for (PlayerId playerId : {PlayerId{1}, PlayerId{2}}) {
+        const auto snapshot = SnapshotSystem::buildForPlayer(state, playerId, events);
+        if (snapshot.observations.empty()) continue;
+
+        if (!printedHeader) {
+            std::cout << "\n============================================================\n";
+            std::cout << "FINAL ROUND\n";
+            std::cout << "============================================================\n";
+            printedHeader = true;
+        }
+
+        std::cout << "HUNTER " << playerId;
+        if (!snapshot.alive) std::cout << "  |  DEAD";
+        std::cout << "  |  HP " << snapshot.health << '/' << snapshot.maxHealth << '\n';
+        for (const auto& observation : snapshot.observations)
+            std::cout << "  • " << observationText(observation) << '\n';
+        std::cout << '\n';
+    }
+}
+
 void printUsage(const char* executable) {
     std::cout << "Basilisk pre-alpha v" << kGameVersion << "\n\n";
     std::cout << "Usage:\n";
@@ -373,8 +395,10 @@ int main(int argc, char** argv) {
         events = controller.resolve(state, actions);
     }
 
+    printFinalRoundFeedback(state, events);
+
     const auto finalSnapshot = SnapshotSystem::buildForPlayer(state, 1, events);
-    std::cout << "\n============================================================\n";
+    std::cout << "============================================================\n";
     std::cout << "HUNT COMPLETE\n";
     std::cout << "============================================================\n";
     std::cout << outcomeText(finalSnapshot) << '\n';
