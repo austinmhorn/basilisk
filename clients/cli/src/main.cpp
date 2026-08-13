@@ -26,6 +26,7 @@ std::string itemName(ItemType item) {
         case ItemType::SurveyFragment: return "Survey Fragment";
         case ItemType::JackalRepellent: return "Jackal Repellent";
         case ItemType::BloodBait: return "Blood Bait";
+        case ItemType::OldHuntersMap: return "Old Hunter's Map";
     }
     return "Unknown Item";
 }
@@ -67,6 +68,14 @@ std::string observationText(const PlayerObservation& observation) {
             return observation.itemType.has_value()
                 ? "You found: " + itemName(*observation.itemType) + "."
                 : "You found an item.";
+        case ObservationType::OldHuntersMapFound:
+            return "You found: Old Hunter's Map.";
+        case ObservationType::OldHuntersMapDistance: {
+            const int low = std::max(0, observation.amount - 1);
+            const int high = observation.amount + 1;
+            return "The markings suggest the Basilisk is roughly " +
+                std::to_string(low) + "–" + std::to_string(high) + " caves away.";
+        }
         case ObservationType::ArrowFound: return "You found " + std::to_string(observation.amount) + " arrow(s).";
         case ObservationType::ExoticCallingCardFound: return "EXOTIC DISCOVERY: a Calling Card reward has been found.";
         case ObservationType::SigilAcquired: return "You recovered the fallen hunter's Sigil.";
@@ -86,18 +95,14 @@ std::string observationText(const PlayerObservation& observation) {
 std::string actionText(const AvailableAction& action) {
     auto targetText = [&]() {
         if (action.targetCave.has_value()) return std::string{"Cave "} + std::to_string(*action.targetCave);
-        if (action.targetTunnel.has_value()) {
-            return std::string{"Tunnel "} + std::to_string(*action.targetTunnel) + " (unknown destination)";
-        }
+        if (action.targetTunnel.has_value()) return std::string{"Tunnel "} + std::to_string(*action.targetTunnel) + " (unknown destination)";
         return std::string{};
     };
-
     switch (action.type) {
         case ActionType::Move: return "MOVE -> " + targetText();
         case ActionType::Search: return "SEARCH current cave";
         case ActionType::Shoot: return "SHOOT -> " + targetText();
-        case ActionType::UseItem:
-            return action.targetItem.has_value() ? "USE -> " + itemName(*action.targetItem) : "USE ITEM";
+        case ActionType::UseItem: return action.targetItem.has_value() ? "USE -> " + itemName(*action.targetItem) : "USE ITEM";
         case ActionType::Contextual:
             if (action.contextualAction == ContextualActionType::Escape) return "ESCAPE";
             return "CONTEXTUAL ACTION";
@@ -126,10 +131,7 @@ void printCurrentCave(const PlayerRoundSnapshot& snapshot) {
     std::cout << "\nCURRENT CAVE: " << snapshot.currentCave << '\n';
     std::cout << "Exits:\n";
     const auto* cave = currentCaveView(snapshot);
-    if (cave == nullptr || cave->exits.empty()) {
-        std::cout << "  none\n";
-        return;
-    }
+    if (cave == nullptr || cave->exits.empty()) { std::cout << "  none\n"; return; }
     for (const auto& exit : cave->exits) {
         std::cout << "  Tunnel " << exit.id << " -> ";
         if (exit.destination.has_value()) std::cout << "Cave " << *exit.destination;
@@ -166,7 +168,6 @@ void printSnapshot(const PlayerRoundSnapshot& snapshot) {
     std::cout << "HP " << snapshot.health << '/' << snapshot.maxHealth
               << " | Arrows " << snapshot.arrows << '/' << snapshot.maxArrows
               << " | Inventory " << snapshot.inventory.items.size() << '/' << snapshot.inventory.capacity << '\n';
-
     if (!snapshot.inventory.items.empty()) {
         std::cout << "Items: ";
         for (std::size_t i = 0; i < snapshot.inventory.items.size(); ++i) {
@@ -175,17 +176,12 @@ void printSnapshot(const PlayerRoundSnapshot& snapshot) {
         }
         std::cout << '\n';
     }
-
     if (snapshot.hasHunterSigil) std::cout << "Hunter's Sigil: ACQUIRED\n";
     if (snapshot.extractionCave.has_value()) std::cout << "Extraction: Cave " << *snapshot.extractionCave << '\n';
-
     if (!snapshot.observations.empty()) {
         std::cout << "\nROUND REPORT:\n";
-        for (const auto& observation : snapshot.observations) {
-            std::cout << "  - " << observationText(observation) << '\n';
-        }
+        for (const auto& observation : snapshot.observations) std::cout << "  - " << observationText(observation) << '\n';
     }
-
     printCurrentCave(snapshot);
     printExplorationHistory(snapshot);
 }
@@ -193,15 +189,13 @@ void printSnapshot(const PlayerRoundSnapshot& snapshot) {
 std::optional<PlayerAction> promptAction(const PlayerRoundSnapshot& snapshot) {
     if (!snapshot.alive || snapshot.availableActions.empty()) return std::nullopt;
     std::cout << "\nAVAILABLE ACTIONS:\n";
-    for (std::size_t i = 0; i < snapshot.availableActions.size(); ++i) {
+    for (std::size_t i = 0; i < snapshot.availableActions.size(); ++i)
         std::cout << "  " << (i + 1) << ") " << actionText(snapshot.availableActions[i]) << '\n';
-    }
     while (true) {
         std::cout << "Choose action [1-" << snapshot.availableActions.size() << "]: ";
         std::size_t choice = 0;
-        if (std::cin >> choice && choice >= 1 && choice <= snapshot.availableActions.size()) {
+        if (std::cin >> choice && choice >= 1 && choice <= snapshot.availableActions.size())
             return materializeAction(snapshot.player, snapshot.availableActions[choice - 1]);
-        }
         std::cin.clear();
         std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
         std::cout << "Invalid choice.\n";
@@ -236,15 +230,11 @@ int runSmoke() {
 std::string outcomeText(const PlayerRoundSnapshot& snapshot) {
     switch (snapshot.matchOutcome) {
         case MatchOutcome::BasiliskKilled:
-            return snapshot.winner.has_value()
-                ? "Player " + std::to_string(*snapshot.winner) + " killed the Basilisk."
-                : "The Basilisk was killed.";
+            return snapshot.winner.has_value() ? "Player " + std::to_string(*snapshot.winner) + " killed the Basilisk." : "The Basilisk was killed.";
         case MatchOutcome::SimultaneousBasiliskKill:
             return "Both hunters struck the Basilisk down in the same round. The match is a draw.";
         case MatchOutcome::EscapedWithSigil:
-            return snapshot.winner.has_value()
-                ? "Player " + std::to_string(*snapshot.winner) + " escaped the caverns with the rival Hunter's Sigil."
-                : "A hunter escaped with the rival Sigil.";
+            return snapshot.winner.has_value() ? "Player " + std::to_string(*snapshot.winner) + " escaped the caverns with the rival Hunter's Sigil." : "A hunter escaped with the rival Sigil.";
         case MatchOutcome::Draw: return "Both hunters died. The hunt ends in a draw.";
         case MatchOutcome::None: return "No result.";
     }
@@ -252,8 +242,7 @@ std::string outcomeText(const PlayerRoundSnapshot& snapshot) {
 }
 
 bool playerAlive(const MatchState& state, PlayerId id) {
-    const auto it = std::find_if(state.players.begin(), state.players.end(),
-        [id](const PlayerState& player) { return player.id == id; });
+    const auto it = std::find_if(state.players.begin(), state.players.end(), [id](const PlayerState& player) { return player.id == id; });
     return it != state.players.end() && it->alive;
 }
 
@@ -261,27 +250,21 @@ bool playerAlive(const MatchState& state, PlayerId id) {
 
 int main(int argc, char** argv) {
     if (argc > 1 && std::string{argv[1]} == "--smoke") return runSmoke();
-
     MapSeed mapSeed = 20260812;
     MatchSeed matchSeed = 424242;
     if (argc > 1) mapSeed = static_cast<MapSeed>(std::stoull(argv[1]));
     if (argc > 2) matchSeed = static_cast<MatchSeed>(std::stoull(argv[2]));
-
     auto state = MapGenerator::generate(mapSeed, matchSeed);
     RoundController controller;
     std::vector<GameEvent> events;
     std::unordered_set<PlayerId> deathScreensShown;
-
     std::cout << "BEWARE THE BASILISK V2 - HEADLESS PROTOTYPE\n";
     std::cout << "Map seed: " << mapSeed << " | Match seed: " << matchSeed << "\n";
     std::cout << "Local hot-seat prototype: living hunters choose before the round resolves.\n";
-
     while (state.result.status == MatchStatus::Active) {
         std::vector<PlayerAction> actions;
-
         for (PlayerId playerId : {PlayerId{1}, PlayerId{2}}) {
             const auto snapshot = SnapshotSystem::buildForPlayer(state, playerId, events);
-
             if (!snapshot.alive) {
                 if (!deathScreensShown.contains(playerId)) {
                     printSnapshot(snapshot);
@@ -290,19 +273,13 @@ int main(int argc, char** argv) {
                 }
                 continue;
             }
-
             printSnapshot(snapshot);
             if (const auto action = promptAction(snapshot); action.has_value()) actions.push_back(*action);
-
-            if (playerId == 1 && playerAlive(state, 2)) {
-                std::cout << "\n--- Pass control to Player 2 ---\n";
-            }
+            if (playerId == 1 && playerAlive(state, 2)) std::cout << "\n--- Pass control to Player 2 ---\n";
         }
-
         if (actions.empty()) break;
         events = controller.resolve(state, actions);
     }
-
     const auto finalSnapshot = SnapshotSystem::buildForPlayer(state, 1, events);
     std::cout << "\n============================================================\n";
     std::cout << "MATCH COMPLETE\n";
