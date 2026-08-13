@@ -60,8 +60,15 @@ std::optional<PlayerAction> prompt(const PlayerRoundSnapshot& snapshot) {
               << " · Cave " << snapshot.currentCave
               << " · HP " << snapshot.health << '/' << snapshot.maxHealth
               << " · Arrows " << snapshot.arrows << '/' << snapshot.maxArrows << "\n";
-    std::cout << "Browser map updated in basilisk_debug_state.json\n\n";
+    std::cout << "Browser map updated in basilisk_debug_state.json\n";
 
+    if (!snapshot.observations.empty()) {
+        std::cout << "\nROUND REPORT:\n";
+        for (const auto& observation : snapshot.observations)
+            std::cout << "  • " << cli_debug::observationText(observation) << '\n';
+    }
+
+    std::cout << '\n';
     for (std::size_t i = 0; i < snapshot.availableActions.size(); ++i)
         std::cout << "  " << i + 1 << ") " << actionText(snapshot.availableActions[i]) << '\n';
 
