@@ -87,3 +87,9 @@ add_executable(BasiliskEvadeRelocationTests
 )
 target_link_libraries(BasiliskEvadeRelocationTests PRIVATE Basilisk::Core)
 add_test(NAME BasiliskEvadeRelocationTests COMMAND BasiliskEvadeRelocationTests)
+
+add_executable(BasiliskOldHuntersMapTests
+    old_hunters_map_tests.cpp
+)
+target_link_libraries(BasiliskOldHuntersMapTests PRIVATE Basilisk::Core)
+add_test(NAME BasiliskOldHuntersMapTests COMMAND BasiliskOldHuntersMapTests)
