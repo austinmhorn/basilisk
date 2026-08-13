@@ -245,6 +245,30 @@ void discoveriesRemainPlayerSpecific() {
     assert(!MapDiscoverySystem::knowsConnection(state.players[1], 1, 2));
 }
 
+void deathDoesNotRevealCurrentCaveUnknownExits() {
+    auto state = makeFogWorld();
+    auto& player = state.players[0];
+    std::vector<GameEvent> events;
+
+    MapDiscoverySystem::initializePlayer(state, player);
+    MapDiscoverySystem::discoverTraversal(player, 1, 2, events);
+    player.cave = 2;
+    player.alive = false;
+
+    const auto view = MapDiscoverySystem::buildView(state, player);
+    const auto& fatalCave = caveView(view, 2);
+
+    assert(fatalCave.exits.size() == 1);
+    assert(fatalCave.exits[0].id == TunnelId{1});
+    assert(fatalCave.exits[0].destination == CaveId{1});
+
+    // Historical unknown exits remain visible; only new information around
+    // the cave where the player died is suppressed.
+    const auto& previousCave = caveView(view, 1);
+    assert(previousCave.exits.size() == 2);
+    assert(!previousCave.exits[1].destination.has_value());
+}
+
 void fullMapModeRevealsCompleteTopology() {
     auto state = makeFogWorld();
     state.rules.mapDiscoveryMode = MapDiscoveryMode::FullMap;
@@ -270,6 +294,7 @@ int main() {
     historicalUnknownExitReconcilesWithoutRevisit();
     shootingUnknownTunnelDoesNotRevealDestination();
     discoveriesRemainPlayerSpecific();
+    deathDoesNotRevealCurrentCaveUnknownExits();
     fullMapModeRevealsCompleteTopology();
 
     std::cout << "Basilisk map discovery tests passed.\n";
