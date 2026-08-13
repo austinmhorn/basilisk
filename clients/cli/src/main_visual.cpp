@@ -26,9 +26,7 @@ namespace {
 
 constexpr const char* kBrowserActionPath = "basilisk_debug_action.txt";
 
-std::string itemName(ItemType item) {
-    return cli_debug::itemName(item);
-}
+std::string itemName(ItemType item) { return cli_debug::itemName(item); }
 
 std::string targetText(const AvailableAction& action) {
     if (action.targetCave.has_value()) return "Cave " + std::to_string(*action.targetCave);
@@ -41,8 +39,7 @@ std::string actionText(const AvailableAction& action) {
         case ActionType::Move: return "Move through " + targetText(action);
         case ActionType::Search: return "Search this cave";
         case ActionType::Shoot: return "Fire an arrow toward " + targetText(action);
-        case ActionType::UseItem:
-            return action.targetItem.has_value() ? "Use " + itemName(*action.targetItem) : "Use item";
+        case ActionType::UseItem: return action.targetItem.has_value() ? "Use " + itemName(*action.targetItem) : "Use item";
         case ActionType::Contextual:
             if (action.contextualAction == ContextualActionType::Escape) return "Escape with the Hunter's Sigil";
             return "Contextual action";
@@ -67,13 +64,11 @@ void printSnapshot(const PlayerRoundSnapshot& snapshot) {
               << " · HP " << snapshot.health << '/' << snapshot.maxHealth
               << " · Arrows " << snapshot.arrows << '/' << snapshot.maxArrows << "\n";
     std::cout << "Browser map updated in basilisk_debug_state.json\n";
-
     if (!snapshot.observations.empty()) {
         std::cout << "\nROUND REPORT:\n";
         for (const auto& observation : snapshot.observations)
             std::cout << "  • " << cli_debug::observationText(observation) << '\n';
     }
-
     std::cout << '\n';
     for (std::size_t i = 0; i < snapshot.availableActions.size(); ++i)
         std::cout << "  " << i + 1 << ") " << actionText(snapshot.availableActions[i]) << '\n';
@@ -96,10 +91,7 @@ std::optional<PlayerAction> promptTerminal(const PlayerRoundSnapshot& snapshot) 
 std::optional<PlayerAction> promptBrowser(const PlayerRoundSnapshot& snapshot) {
     if (!snapshot.alive || snapshot.availableActions.empty()) return std::nullopt;
     printSnapshot(snapshot);
-    std::error_code ec;
-    std::filesystem::remove(kBrowserActionPath, ec);
     std::cout << "\nWaiting for browser action...\n";
-
     while (true) {
         std::ifstream input(kBrowserActionPath);
         if (input) {
@@ -108,6 +100,7 @@ std::optional<PlayerAction> promptBrowser(const PlayerRoundSnapshot& snapshot) {
             std::size_t choice = 0;
             if (input >> player >> round >> choice) {
                 input.close();
+                std::error_code ec;
                 std::filesystem::remove(kBrowserActionPath, ec);
                 if (player == snapshot.player && round == snapshot.round &&
                     choice >= 1 && choice <= snapshot.availableActions.size()) {
@@ -124,15 +117,10 @@ std::optional<PlayerAction> promptBrowser(const PlayerRoundSnapshot& snapshot) {
 std::string outcome(const PlayerRoundSnapshot& snapshot) {
     switch (snapshot.matchOutcome) {
         case MatchOutcome::BasiliskKilled:
-            return snapshot.winner.has_value()
-                ? "Hunter " + std::to_string(*snapshot.winner) + " killed the Basilisk."
-                : "The Basilisk was killed.";
-        case MatchOutcome::SimultaneousBasiliskKill:
-            return "Both hunters killed the Basilisk simultaneously. Draw.";
+            return snapshot.winner.has_value() ? "Hunter " + std::to_string(*snapshot.winner) + " killed the Basilisk." : "The Basilisk was killed.";
+        case MatchOutcome::SimultaneousBasiliskKill: return "Both hunters killed the Basilisk simultaneously. Draw.";
         case MatchOutcome::EscapedWithSigil:
-            return snapshot.winner.has_value()
-                ? "Hunter " + std::to_string(*snapshot.winner) + " escaped with the rival Sigil."
-                : "A hunter escaped with the rival Sigil.";
+            return snapshot.winner.has_value() ? "Hunter " + std::to_string(*snapshot.winner) + " escaped with the rival Sigil." : "A hunter escaped with the rival Sigil.";
         case MatchOutcome::Draw: return "No hunter survived. Draw.";
         case MatchOutcome::None: return "Match ended without a recorded result.";
     }
@@ -148,15 +136,9 @@ int main(int argc, char** argv) {
     int positional = 0;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
-        if (arg == "--browser-actions") {
-            browserActions = true;
-        } else if (positional == 0) {
-            mapSeed = static_cast<MapSeed>(std::stoull(arg));
-            ++positional;
-        } else if (positional == 1) {
-            matchSeed = static_cast<MatchSeed>(std::stoull(arg));
-            ++positional;
-        }
+        if (arg == "--browser-actions") browserActions = true;
+        else if (positional == 0) { mapSeed = static_cast<MapSeed>(std::stoull(arg)); ++positional; }
+        else if (positional == 1) { matchSeed = static_cast<MatchSeed>(std::stoull(arg)); ++positional; }
     }
 
     auto state = MapGenerator::generate(mapSeed, matchSeed);
@@ -181,12 +163,15 @@ int main(int argc, char** argv) {
             const auto snapshot = SnapshotSystem::buildForPlayer(state, playerId, events);
             if (!snapshot.alive) continue;
 
+            if (browserActions) {
+                std::error_code ec;
+                std::filesystem::remove(kBrowserActionPath, ec);
+            }
             cli_debug::writeWebDebugState(snapshot);
             cli_debug::writeDebugTruthState(state, playerId, events);
             const auto action = browserActions ? promptBrowser(snapshot) : promptTerminal(snapshot);
             if (action.has_value()) actions.push_back(*action);
         }
-
         if (actions.empty()) break;
         events = controller.resolve(state, actions);
     }
