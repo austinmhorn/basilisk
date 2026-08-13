@@ -85,16 +85,14 @@ inline std::optional<int> debugDistance(const WorldGraph& world, CaveId start, C
     if (start == target) return 0;
     std::queue<CaveId> queue;
     std::unordered_map<CaveId, int> distance;
-    queue.push(start);
-    distance.emplace(start, 0);
+    queue.push(start); distance.emplace(start, 0);
     while (!queue.empty()) {
         const CaveId cave = queue.front(); queue.pop();
         for (const CaveId next : world.cave(cave).connections) {
             if (distance.contains(next)) continue;
             const int nextDistance = distance.at(cave) + 1;
             if (next == target) return nextDistance;
-            distance.emplace(next, nextDistance);
-            queue.push(next);
+            distance.emplace(next, nextDistance); queue.push(next);
         }
     }
     return std::nullopt;
@@ -106,101 +104,44 @@ inline const PlayerState* debugPlayer(const MatchState& state, PlayerId id) {
 }
 
 inline void writeOptionalNumber(std::ostream& out, const std::optional<CaveId>& value) {
-    if (value.has_value()) out << *value;
-    else out << "null";
+    if (value.has_value()) out << *value; else out << "null";
 }
 
-inline void writeDebugTruthState(const MatchState& state,
-                                 PlayerId viewerId,
+inline void writeDebugTruthState(const MatchState& state, PlayerId viewerId,
                                  const std::vector<GameEvent>& events,
                                  const std::string& path = "basilisk_debug_truth.json") {
     std::ofstream out(path, std::ios::trunc);
     if (!out) return;
-
     const PlayerState* viewer = debugPlayer(state, viewerId);
     const auto distance = viewer ? debugDistance(state.world, viewer->cave, state.basilisk.cave) : std::nullopt;
 
-    out << "{\n";
-    out << "  \"viewer\":" << viewerId << ",\n";
-    out << "  \"round\":" << state.round << ",\n";
-    out << "  \"basilisk\":{\"alive\":" << (state.basilisk.alive ? "true" : "false")
-        << ",\"cave\":" << state.basilisk.cave << ",\"behavior\":";
+    out << "{\n  \"viewer\":" << viewerId << ",\n  \"round\":" << state.round << ",\n";
+    out << "  \"basilisk\":{\"alive\":" << (state.basilisk.alive ? "true" : "false") << ",\"cave\":" << state.basilisk.cave << ",\"behavior\":";
     writeQuoted(out, behaviorName(state.basilisk.behavior));
-    out << ",\"lastCave\":";
-    writeOptionalNumber(out, state.basilisk.lastCave);
-    out << ",\"roundsSinceMove\":" << state.basilisk.roundsSinceMove
-        << ",\"trueEncounters\":" << state.basilisk.trueEncounters
-        << ",\"distanceFromViewer\":";
+    out << ",\"lastCave\":"; writeOptionalNumber(out, state.basilisk.lastCave);
+    out << ",\"roundsSinceMove\":" << state.basilisk.roundsSinceMove << ",\"trueEncounters\":" << state.basilisk.trueEncounters << ",\"distanceFromViewer\":";
     if (distance.has_value()) out << *distance; else out << "null";
     out << ",\"adjacentToViewer\":" << (distance.has_value() && *distance == 1 ? "true" : "false") << "},\n";
 
     out << "  \"players\":[";
-    for (std::size_t i = 0; i < state.players.size(); ++i) {
-        if (i) out << ',';
-        const auto& player = state.players[i];
-        out << "{\"id\":" << player.id << ",\"cave\":" << player.cave << ",\"health\":" << player.health
-            << ",\"arrows\":" << player.arrows << ",\"alive\":" << (player.alive ? "true" : "false") << '}';
-    }
-    out << "],\n";
+    for (std::size_t i=0;i<state.players.size();++i){if(i)out<<',';const auto&p=state.players[i];out<<"{\"id\":"<<p.id<<",\"cave\":"<<p.cave<<",\"health\":"<<p.health<<",\"arrows\":"<<p.arrows<<",\"alive\":"<<(p.alive?"true":"false")<<'}';}
+    out << "],\n  \"pits\":[";
+    bool first=true;for(const auto&pit:state.pits){if(!pit.active)continue;if(!first)out<<',';first=false;out<<pit.cave;}out<<"],\n";
+    out << "  \"jackals\":[";for(std::size_t i=0;i<state.jackals.size();++i){if(i)out<<',';out<<"{\"cave\":"<<state.jackals[i].cave<<",\"lastCave\":";writeOptionalNumber(out,state.jackals[i].lastCave);out<<'}';}out<<"],\n";
+    out << "  \"looseArrows\":[";for(std::size_t i=0;i<state.looseArrows.size();++i){if(i)out<<',';out<<state.looseArrows[i];}out<<"],\n";
+    out << "  \"extraction\":{\"active\":"<<(state.extraction.active?"true":"false")<<",\"cave\":";writeOptionalNumber(out,state.extraction.cave);out<<"},\n";
+    out << "  \"bait\":{\"cave\":";writeOptionalNumber(out,state.basiliskBaitCave);out<<",\"rounds\":"<<state.basiliskBaitRounds<<"},\n";
 
-    out << "  \"pits\":[";
-    bool firstPit = true;
-    for (const auto& pit : state.pits) {
-        if (!pit.active) continue;
-        if (!firstPit) out << ',';
-        firstPit = false;
-        out << pit.cave;
-    }
-    out << "],\n";
-
-    out << "  \"jackals\":[";
-    for (std::size_t i = 0; i < state.jackals.size(); ++i) {
-        if (i) out << ',';
-        out << "{\"cave\":" << state.jackals[i].cave << ",\"lastCave\":";
-        writeOptionalNumber(out, state.jackals[i].lastCave);
-        out << '}';
-    }
-    out << "],\n";
-
-    out << "  \"looseArrows\":[";
-    for (std::size_t i = 0; i < state.looseArrows.size(); ++i) { if (i) out << ','; out << state.looseArrows[i]; }
-    out << "],\n";
-
-    out << "  \"extraction\":{\"active\":" << (state.extraction.active ? "true" : "false") << ",\"cave\":";
-    writeOptionalNumber(out, state.extraction.cave);
-    out << "},\n";
-
-    out << "  \"bait\":{\"cave\":";
-    writeOptionalNumber(out, state.basiliskBaitCave);
-    out << ",\"rounds\":" << state.basiliskBaitRounds << "},\n";
-
+    // Authoritative graph geometry source. Each connection includes the local
+    // tunnel number used by actions from this cave. The browser uses this full
+    // graph to compute one stable layout at match start, then fog-of-war only
+    // controls visibility; discovering caves never rearranges the map.
     out << "  \"world\":[\n";
-    const auto caveIds = state.world.caveIds();
-    for (std::size_t i = 0; i < caveIds.size(); ++i) {
-        const CaveId caveId = caveIds[i];
-        out << "    {\"id\":" << caveId << ",\"connections\":[";
-        const auto& connections = state.world.cave(caveId).connections;
-        for (std::size_t j = 0; j < connections.size(); ++j) { if (j) out << ','; out << connections[j]; }
-        out << "]}";
-        if (i + 1 < caveIds.size()) out << ',';
-        out << '\n';
-    }
-    out << "  ],\n";
+    auto caveIds=state.world.caveIds();std::sort(caveIds.begin(),caveIds.end());
+    for(std::size_t i=0;i<caveIds.size();++i){const CaveId id=caveIds[i];const auto&con=state.world.cave(id).connections;out<<"    {\"id\":"<<id<<",\"connections\":[";for(std::size_t j=0;j<con.size();++j){if(j)out<<',';out<<"{\"cave\":"<<con[j]<<",\"tunnel\":"<<(j+1)<<'}';}out<<"]}";if(i+1<caveIds.size())out<<',';out<<'\n';}out<<"  ],\n";
 
     out << "  \"events\":[";
-    for (std::size_t i = 0; i < events.size(); ++i) {
-        if (i) out << ',';
-        const auto& event = events[i];
-        out << "{\"type\":"; writeQuoted(out, eventName(event.type));
-        out << ",\"actor\":"; if (event.actor.has_value()) out << *event.actor; else out << "null";
-        out << ",\"targetPlayer\":"; if (event.targetPlayer.has_value()) out << *event.targetPlayer; else out << "null";
-        out << ",\"cave\":"; writeOptionalNumber(out, event.cave);
-        out << ",\"amount\":" << event.amount;
-        out << ",\"behavior\":"; if (event.basiliskBehavior.has_value()) writeQuoted(out, behaviorName(*event.basiliskBehavior)); else out << "null";
-        out << '}';
-    }
-    out << "]\n";
-    out << "}\n";
+    for(std::size_t i=0;i<events.size();++i){if(i)out<<',';const auto&e=events[i];out<<"{\"type\":";writeQuoted(out,eventName(e.type));out<<",\"actor\":";if(e.actor)out<<*e.actor;else out<<"null";out<<",\"targetPlayer\":";if(e.targetPlayer)out<<*e.targetPlayer;else out<<"null";out<<",\"cave\":";writeOptionalNumber(out,e.cave);out<<",\"amount\":"<<e.amount<<",\"behavior\":";if(e.basiliskBehavior)writeQuoted(out,behaviorName(*e.basiliskBehavior));else out<<"null";out<<'}';}out<<"]\n}\n";
 }
 
 } // namespace basilisk::cli_debug
