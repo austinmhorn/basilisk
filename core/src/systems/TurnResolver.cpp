@@ -222,26 +222,21 @@ void resolveBasiliskShotBatch(MatchState& state, const std::vector<PlayerId>& sh
     for (const PlayerId shooter : shooters) {
         events.push_back(GameEvent{GameEventType::ArrowReachedBasilisk, shooter, std::nullopt,
             state.basilisk.cave, encounter, state.basilisk.behavior});
-        if (basiliskKillRoll(encounter, rng)) {
-            successfulShooters.push_back(shooter);
-        }
+        if (basiliskKillRoll(encounter, rng)) successfulShooters.push_back(shooter);
     }
 
     if (successfulShooters.size() == 1) {
         recordSingleBasiliskKill(state, successfulShooters.front(), events);
         return;
     }
-
     if (successfulShooters.size() > 1) {
         state.basilisk.alive = false;
         state.result.status = MatchStatus::Completed;
         state.result.outcome = MatchOutcome::SimultaneousBasiliskKill;
         state.result.winner.reset();
-
-        for (const PlayerId shooter : successfulShooters) {
+        for (const PlayerId shooter : successfulShooters)
             events.push_back(GameEvent{GameEventType::BasiliskKilled, shooter, std::nullopt,
                 state.basilisk.cave, 0, state.basilisk.behavior});
-        }
         events.push_back(GameEvent{GameEventType::MatchDrawn});
         return;
     }
@@ -249,17 +244,11 @@ void resolveBasiliskShotBatch(MatchState& state, const std::vector<PlayerId>& sh
     events.push_back(GameEvent{GameEventType::BasiliskEvaded, std::nullopt, std::nullopt,
         state.basilisk.cave, encounter, state.basilisk.behavior});
     relocateBasiliskAfterEvade(state, encounter, rng, events);
-
     if (encounter == 1) {
-        if (rng.chance(1, 2)) {
-            changeBasiliskBehavior(state, randomFirstEvadeBehavior(rng), std::nullopt, events);
-        }
+        if (rng.chance(1, 2)) changeBasiliskBehavior(state, randomFirstEvadeBehavior(rng), std::nullopt, events);
         return;
     }
-
-    if (encounter == 2) {
-        changeBasiliskBehavior(state, BasiliskBehavior::Enraged, std::nullopt, events);
-    }
+    if (encounter == 2) changeBasiliskBehavior(state, BasiliskBehavior::Enraged, std::nullopt, events);
 }
 
 int movementInterval(BasiliskBehavior behavior) {
@@ -302,18 +291,13 @@ void discoverDynamicBodyContents(MatchState& state, PlayerState& player,
                                  std::vector<GameEvent>& events) {
     for (auto& body : state.bodies) {
         if (!body.sigilAvailable || body.owner == player.id) continue;
-
         const CaveId sigilCave = body.sigilCave.value_or(body.cave);
         if (sigilCave != player.cave) continue;
-
-        if (body.cave == player.cave) {
+        if (body.cave == player.cave)
             events.push_back(GameEvent{GameEventType::BodyFound, player.id, body.owner, body.cave});
-        }
-
         body.sigilAvailable = false;
         player.heldSigilFrom = body.owner;
         events.push_back(GameEvent{GameEventType::SigilAcquired, player.id, body.owner, sigilCave});
-
         state.extraction.active = true;
         state.extraction.sigilHolder = player.id;
         state.extraction.cave = chooseExtractionCave(state, player.cave);
@@ -326,12 +310,8 @@ void discoverDynamicBodyContents(MatchState& state, PlayerState& player,
 void resolveEscape(MatchState& state, PlayerState& player, std::vector<GameEvent>& events) {
     if (state.result.status != MatchStatus::Active || !player.alive ||
         !state.extraction.active || !state.extraction.cave.has_value() ||
-        !state.extraction.sigilHolder.has_value() ||
-        *state.extraction.sigilHolder != player.id ||
-        !player.heldSigilFrom.has_value() || player.cave != *state.extraction.cave) {
-        return;
-    }
-
+        !state.extraction.sigilHolder.has_value() || *state.extraction.sigilHolder != player.id ||
+        !player.heldSigilFrom.has_value() || player.cave != *state.extraction.cave) return;
     state.result.status = MatchStatus::Completed;
     state.result.outcome = MatchOutcome::EscapedWithSigil;
     state.result.winner = player.id;
@@ -355,7 +335,6 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
                                              const std::vector<PlayerAction>& actions) const {
     std::vector<GameEvent> events;
     if (state.result.status == MatchStatus::Completed) return events;
-
     RandomGenerator rng(roundSeed(state));
     std::vector<PlayerAction> orderedActions = actions;
     std::stable_sort(orderedActions.begin(), orderedActions.end(),
@@ -369,40 +348,33 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
         player.cave = *action.targetCave;
         events.push_back(GameEvent{GameEventType::PlayerMoved, player.id, std::nullopt, player.cave});
         if (state.extraction.active && state.extraction.cave == player.cave &&
-            state.extraction.sigilHolder == player.id && player.heldSigilFrom.has_value()) {
+            state.extraction.sigilHolder == player.id && player.heldSigilFrom.has_value())
             events.push_back(GameEvent{GameEventType::EscapeAvailable, player.id, std::nullopt, player.cave});
-        }
     }
 
     struct PendingDamage { PlayerId target; PlayerId attacker; CaveId cave; int amount; };
     std::vector<PendingDamage> pendingDamage;
     std::vector<PlayerId> basiliskShooters;
-
     for (const auto& action : orderedActions) {
         if (action.type != ActionType::Shoot) continue;
         auto& shooter = playerById(state, action.player);
         if (!shooter.alive || shooter.arrows <= 0 || !action.targetCave.has_value() ||
             !state.world.areConnected(shooter.cave, *action.targetCave)) continue;
-
         --shooter.arrows;
         events.push_back(GameEvent{GameEventType::ArrowFired, shooter.id, std::nullopt, *action.targetCave});
-
-        const auto targetPlayer = std::find_if(state.players.begin(), state.players.end(),
-            [&](const PlayerState& player) {
-                return player.id != shooter.id && player.alive && player.cave == *action.targetCave;
-            });
+        const auto targetPlayer = std::find_if(state.players.begin(), state.players.end(), [&](const PlayerState& player) {
+            return player.id != shooter.id && player.alive && player.cave == *action.targetCave;
+        });
         if (targetPlayer != state.players.end()) {
             pendingDamage.push_back({targetPlayer->id, shooter.id, targetPlayer->cave, state.rules.arrowDamage});
             events.push_back(GameEvent{GameEventType::ArrowHitPlayer, shooter.id, targetPlayer->id,
                 targetPlayer->cave, state.rules.arrowDamage});
             continue;
         }
-
         if (state.basilisk.alive && state.basilisk.cave == *action.targetCave) {
             basiliskShooters.push_back(shooter.id);
             continue;
         }
-
         const auto targetJackal = std::find_if(state.jackals.begin(), state.jackals.end(),
             [&](const JackalState& jackal) { return jackal.cave == *action.targetCave; });
         if (targetJackal != state.jackals.end()) {
@@ -412,12 +384,10 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
                 targetJackal->cave, state.rules.jackalStunPhases});
             continue;
         }
-
         events.push_back(GameEvent{GameEventType::ArrowMissed, shooter.id, std::nullopt, *action.targetCave});
     }
 
     resolveBasiliskShotBatch(state, basiliskShooters, rng, events);
-
     std::unordered_map<PlayerId, PlayerId> lethalAttackerByTarget;
     for (const auto& damage : pendingDamage) {
         auto& target = playerById(state, damage.target);
@@ -426,7 +396,6 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
             damage.cave, damage.amount});
         if (target.health <= 0) lethalAttackerByTarget[target.id] = damage.attacker;
     }
-
     for (auto& player : state.players) {
         if (player.alive && player.health <= 0) {
             player.alive = false;
@@ -437,72 +406,52 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
             createBodyIfMissing(state, player, events);
         }
     }
-
-    if (state.result.status != MatchStatus::Completed) {
-        resolveMutualDeathDraw(state, events);
-    }
+    if (state.result.status != MatchStatus::Completed) resolveMutualDeathDraw(state, events);
 
     std::optional<CaveId> mostRecentSearchCave;
     for (const auto& action : orderedActions) {
         if (action.type != ActionType::Search) continue;
         auto& player = playerById(state, action.player);
         if (!player.alive) continue;
-
         mostRecentSearchCave = player.cave;
         discoverDynamicBodyContents(state, player, events);
         auto searchEvents = SearchSystem::search(player, state.rules, rng);
         events.insert(events.end(), searchEvents.begin(), searchEvents.end());
-
         if (state.basilisk.alive && state.basilisk.behavior == BasiliskBehavior::Skittish &&
-            state.world.areConnected(player.cave, state.basilisk.cave)) {
-            moveBasiliskRandomly(state, rng, events);
-        }
+            state.world.areConnected(player.cave, state.basilisk.cave)) moveBasiliskRandomly(state, rng, events);
     }
 
     for (const auto& action : orderedActions) {
         if (action.type != ActionType::UseItem || !action.targetItem.has_value()) continue;
         auto& player = playerById(state, action.player);
         if (!player.alive) continue;
-        auto itemEvents = ItemSystem::use(player, *action.targetItem, state.rules);
+        auto itemEvents = ItemSystem::use(state, player, action);
         events.insert(events.end(), itemEvents.begin(), itemEvents.end());
     }
 
     WorldDangerSystem::resolvePits(state, rng, events);
-    if (state.result.status == MatchStatus::Active) {
-        resolveMutualDeathDraw(state, events);
-    }
-
+    if (state.result.status == MatchStatus::Active) resolveMutualDeathDraw(state, events);
     WorldDangerSystem::resolveJackals(state, rng, events);
-    if (state.result.status == MatchStatus::Active) {
-        resolveMutualDeathDraw(state, events);
-    }
+    if (state.result.status == MatchStatus::Active) resolveMutualDeathDraw(state, events);
 
     if (state.basilisk.alive && state.result.status == MatchStatus::Active) {
         ++state.basilisk.roundsSinceMove;
         const int interval = movementInterval(state.basilisk.behavior);
         if (interval > 0 && state.basilisk.roundsSinceMove >= interval) {
-            const auto target = mostRecentSearchCave.has_value()
-                ? mostRecentSearchCave : state.mostRecentSearchCave;
+            const auto target = mostRecentSearchCave.has_value() ? mostRecentSearchCave : state.mostRecentSearchCave;
             if (state.basilisk.behavior == BasiliskBehavior::Enraged) {
                 if (const auto hunterCave = nearestLivingHunterCave(state); hunterCave.has_value()) {
                     const auto distance = distanceTo(state.world, state.basilisk.cave, *hunterCave);
                     if (distance.has_value() && *distance == 1) {
-                        auto hunterIt = std::find_if(state.players.begin(), state.players.end(),
-                            [&](const PlayerState& player) {
-                                return player.alive && player.cave == *hunterCave;
-                            });
+                        auto hunterIt = std::find_if(state.players.begin(), state.players.end(), [&](const PlayerState& player) {
+                            return player.alive && player.cave == *hunterCave;
+                        });
                         if (hunterIt != state.players.end()) {
                             emitBasiliskMove(state, hunterIt->cave, events);
                             hunterIt->health = 0;
                             hunterIt->alive = false;
-                            events.push_back(GameEvent{
-                                GameEventType::PlayerKilled,
-                                std::nullopt,
-                                hunterIt->id,
-                                hunterIt->cave,
-                                0,
-                                BasiliskBehavior::Enraged
-                            });
+                            events.push_back(GameEvent{GameEventType::PlayerKilled, std::nullopt, hunterIt->id,
+                                hunterIt->cave, 0, BasiliskBehavior::Enraged});
                             createBodyIfMissing(state, *hunterIt, events);
                             resolveMutualDeathDraw(state, events);
                         }
