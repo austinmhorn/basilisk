@@ -20,6 +20,17 @@ inline const char* itemName(ItemType item) {
     return "Unknown Item";
 }
 
+inline const char* actionTypeName(ActionType type) {
+    switch (type) {
+        case ActionType::Move: return "move";
+        case ActionType::Search: return "search";
+        case ActionType::Shoot: return "shoot";
+        case ActionType::UseItem: return "use-item";
+        case ActionType::Contextual: return "contextual";
+    }
+    return "unknown";
+}
+
 inline std::string observationText(const PlayerObservation& observation) {
     switch (observation.type) {
         case ObservationType::RivalNearby: return "You hear another hunter moving somewhere nearby.";
@@ -171,7 +182,17 @@ inline void writeWebDebugState(const PlayerRoundSnapshot& snapshot,
     out << "  \"actions\":[";
     for (std::size_t i = 0; i < snapshot.availableActions.size(); ++i) {
         if (i) out << ',';
-        writeQuoted(out, actionText(snapshot.availableActions[i]));
+        const auto& action = snapshot.availableActions[i];
+        out << "{\"index\":" << (i + 1) << ",\"type\":";
+        writeQuoted(out, actionTypeName(action.type));
+        out << ",\"text\":"; writeQuoted(out, actionText(action));
+        out << ",\"targetCave\":";
+        if (action.targetCave.has_value()) out << *action.targetCave; else out << "null";
+        out << ",\"targetTunnel\":";
+        if (action.targetTunnel.has_value()) out << *action.targetTunnel; else out << "null";
+        out << ",\"item\":";
+        if (action.targetItem.has_value()) writeQuoted(out, itemName(*action.targetItem)); else out << "null";
+        out << '}';
     }
     out << "],\n";
 
