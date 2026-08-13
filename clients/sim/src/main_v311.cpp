@@ -2,11 +2,13 @@
 #include <iomanip>
 #include <sstream>
 
-// V3.11 layers matchup science onto the complete V3.10 simulator without
-// changing gameplay. main_v310.cpp remains the authoritative simulation logic.
-#define main basilisk_v310_main
-#include "main_v310.cpp"
+// V3.11 includes the proven V3.9 simulator exactly once, then layers the
+// main-free V3.10 telemetry helper and V3.11 matchup telemetry on top.
+// No simulator source includes another versioned main file beyond this point.
+#define main basilisk_v39_main
+#include "main_v39.cpp"
 #undef main
+#include "v310_enraged_telemetry.hpp"
 
 namespace {
 
@@ -38,7 +40,6 @@ void runOneV311(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
     const auto row = static_cast<std::size_t>(styleFor(matchSeed, 1));
     const auto col = static_cast<std::size_t>(styleFor(matchSeed, 2));
 
-    const auto beforeCompleted = stats.completed;
     const auto beforeStalled = stats.stalled;
     const auto beforeBasilisk = stats.basiliskWins;
     const auto beforeExtraction = stats.extractionWins;
@@ -79,8 +80,6 @@ void runOneV311(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
         cell.pvpKills += stylePvpKillsTotal(stats, row) - beforeRowPvp;
         cell.deaths += styleDeathsTotal(stats, row) - beforeRowDeaths;
     }
-
-    (void)beforeCompleted;
 }
 
 void printPctV311(std::uint64_t n, std::uint64_t d) {
