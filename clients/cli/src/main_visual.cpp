@@ -17,6 +17,7 @@
 #include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/MatchResult.hpp"
 #include "basilisk/systems/RoundController.hpp"
+#include "basilisk/systems/SoloCoordinator.hpp"
 #include "basilisk/systems/SnapshotSystem.hpp"
 #include "basilisk/world/MapGenerator.hpp"
 
@@ -133,20 +134,32 @@ int main(int argc, char** argv) {
     MapSeed mapSeed = 20260812;
     MatchSeed matchSeed = 424242;
     bool browserActions = false;
+    bool solo = false;
     int positional = 0;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--browser-actions") browserActions = true;
+        else if (arg == "--solo") solo = true;
         else if (positional == 0) { mapSeed = static_cast<MapSeed>(std::stoull(arg)); ++positional; }
         else if (positional == 1) { matchSeed = static_cast<MatchSeed>(std::stoull(arg)); ++positional; }
     }
 
     auto state = MapGenerator::generate(mapSeed, matchSeed);
+    if (solo) {
+        std::erase_if(state.players, [](const PlayerState& player) {
+            return player.id != PlayerId{1};
+        });
+    }
     RoundController controller;
+    SoloCoordinator soloCoordinator{state};
     std::vector<GameEvent> events;
+    const std::vector<PlayerId> activePlayers = solo
+        ? std::vector<PlayerId>{PlayerId{1}}
+        : std::vector<PlayerId>{PlayerId{1}, PlayerId{2}};
 
     std::cout << "BASILISK VISUAL DEBUG CLIENT\n"
               << "Map seed: " << mapSeed << " | Match seed: " << matchSeed << "\n";
+    if (solo) std::cout << "Solo debug mode enabled: only Hunter 1 is active.\n";
     if (browserActions) {
         std::cout << "Browser action mode enabled.\n"
                   << "Run: python3 clients/web-debug/server.py\n"
@@ -159,7 +172,7 @@ int main(int argc, char** argv) {
 
     while (state.result.status == MatchStatus::Active) {
         std::vector<PlayerAction> actions;
-        for (PlayerId playerId : {PlayerId{1}, PlayerId{2}}) {
+        for (const PlayerId playerId : activePlayers) {
             const auto snapshot = SnapshotSystem::buildForPlayer(state, playerId, events);
             if (!snapshot.alive) continue;
 
@@ -173,7 +186,12 @@ int main(int argc, char** argv) {
             if (action.has_value()) actions.push_back(*action);
         }
         if (actions.empty()) break;
-        events = controller.resolve(state, actions);
+        if (solo) {
+            if (!soloCoordinator.submitAction(actions.front())) break;
+            events = soloCoordinator.lastEvents();
+        } else {
+            events = controller.resolve(state, actions);
+        }
     }
 
     const auto finalSnapshot = SnapshotSystem::buildForPlayer(state, 1, events);
