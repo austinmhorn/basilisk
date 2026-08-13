@@ -1,9 +1,14 @@
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <optional>
+#include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "DebugTruthState.hpp"
@@ -18,6 +23,8 @@
 using namespace basilisk;
 
 namespace {
+
+constexpr const char* kBrowserActionPath = "basilisk_debug_action.txt";
 
 std::string itemName(ItemType item) {
     return cli_debug::itemName(item);
@@ -54,9 +61,7 @@ PlayerAction materialize(PlayerId player, const AvailableAction& available) {
     return action;
 }
 
-std::optional<PlayerAction> prompt(const PlayerRoundSnapshot& snapshot) {
-    if (!snapshot.alive || snapshot.availableActions.empty()) return std::nullopt;
-
+void printSnapshot(const PlayerRoundSnapshot& snapshot) {
     std::cout << "\nHunter " << snapshot.player << " · Round " << snapshot.round
               << " · Cave " << snapshot.currentCave
               << " · HP " << snapshot.health << '/' << snapshot.maxHealth
@@ -72,7 +77,11 @@ std::optional<PlayerAction> prompt(const PlayerRoundSnapshot& snapshot) {
     std::cout << '\n';
     for (std::size_t i = 0; i < snapshot.availableActions.size(); ++i)
         std::cout << "  " << i + 1 << ") " << actionText(snapshot.availableActions[i]) << '\n';
+}
 
+std::optional<PlayerAction> promptTerminal(const PlayerRoundSnapshot& snapshot) {
+    if (!snapshot.alive || snapshot.availableActions.empty()) return std::nullopt;
+    printSnapshot(snapshot);
     while (true) {
         std::cout << "\nAction [1-" << snapshot.availableActions.size() << "]: ";
         std::size_t choice = 0;
@@ -81,6 +90,34 @@ std::optional<PlayerAction> prompt(const PlayerRoundSnapshot& snapshot) {
         std::cin.clear();
         std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
         std::cout << "Invalid choice.\n";
+    }
+}
+
+std::optional<PlayerAction> promptBrowser(const PlayerRoundSnapshot& snapshot) {
+    if (!snapshot.alive || snapshot.availableActions.empty()) return std::nullopt;
+    printSnapshot(snapshot);
+    std::error_code ec;
+    std::filesystem::remove(kBrowserActionPath, ec);
+    std::cout << "\nWaiting for browser action...\n";
+
+    while (true) {
+        std::ifstream input(kBrowserActionPath);
+        if (input) {
+            PlayerId player{};
+            RoundNumber round{};
+            std::size_t choice = 0;
+            if (input >> player >> round >> choice) {
+                input.close();
+                std::filesystem::remove(kBrowserActionPath, ec);
+                if (player == snapshot.player && round == snapshot.round &&
+                    choice >= 1 && choice <= snapshot.availableActions.size()) {
+                    std::cout << "Browser selected " << choice << ") "
+                              << actionText(snapshot.availableActions[choice - 1]) << '\n';
+                    return materialize(snapshot.player, snapshot.availableActions[choice - 1]);
+                }
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(75));
     }
 }
 
@@ -107,17 +144,36 @@ std::string outcome(const PlayerRoundSnapshot& snapshot) {
 int main(int argc, char** argv) {
     MapSeed mapSeed = 20260812;
     MatchSeed matchSeed = 424242;
-    if (argc > 1) mapSeed = static_cast<MapSeed>(std::stoull(argv[1]));
-    if (argc > 2) matchSeed = static_cast<MatchSeed>(std::stoull(argv[2]));
+    bool browserActions = false;
+    int positional = 0;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--browser-actions") {
+            browserActions = true;
+        } else if (positional == 0) {
+            mapSeed = static_cast<MapSeed>(std::stoull(arg));
+            ++positional;
+        } else if (positional == 1) {
+            matchSeed = static_cast<MatchSeed>(std::stoull(arg));
+            ++positional;
+        }
+    }
 
     auto state = MapGenerator::generate(mapSeed, matchSeed);
     RoundController controller;
     std::vector<GameEvent> events;
 
     std::cout << "BASILISK VISUAL DEBUG CLIENT\n"
-              << "Map seed: " << mapSeed << " | Match seed: " << matchSeed << "\n"
-              << "Serve the repo root with: python3 -m http.server 8765\n"
-              << "Open: http://localhost:8765/clients/web-debug/index.html\n";
+              << "Map seed: " << mapSeed << " | Match seed: " << matchSeed << "\n";
+    if (browserActions) {
+        std::cout << "Browser action mode enabled.\n"
+                  << "Run: python3 clients/web-debug/server.py\n"
+                  << "Open: http://localhost:8765/clients/web-debug/index.html\n";
+    } else {
+        std::cout << "Serve the repo root with: python3 -m http.server 8765\n"
+                  << "Open: http://localhost:8765/clients/web-debug/index.html\n"
+                  << "Tip: add --browser-actions and use clients/web-debug/server.py for point-and-click input.\n";
+    }
 
     while (state.result.status == MatchStatus::Active) {
         std::vector<PlayerAction> actions;
@@ -127,7 +183,8 @@ int main(int argc, char** argv) {
 
             cli_debug::writeWebDebugState(snapshot);
             cli_debug::writeDebugTruthState(state, playerId, events);
-            if (const auto action = prompt(snapshot); action.has_value()) actions.push_back(*action);
+            const auto action = browserActions ? promptBrowser(snapshot) : promptTerminal(snapshot);
+            if (action.has_value()) actions.push_back(*action);
         }
 
         if (actions.empty()) break;
