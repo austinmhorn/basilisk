@@ -1,0 +1,159 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Basilisk Debug Map</title>
+<style>
+  :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b0d10; color: #e9edf1; }
+  header { display:flex; gap:20px; align-items:center; padding:14px 18px; border-bottom:1px solid #282d33; background:#12161b; position:sticky; top:0; z-index:5; }
+  header strong { letter-spacing:.08em; }
+  .stats { display:flex; gap:14px; flex-wrap:wrap; font-size:14px; color:#bac3cc; }
+  .stat b { color:#fff; }
+  main { display:grid; grid-template-columns:minmax(0,1fr) 330px; min-height:calc(100vh - 55px); }
+  #mapWrap { position:relative; min-height:720px; overflow:hidden; }
+  svg { width:100%; height:100%; min-height:720px; display:block; background:radial-gradient(circle at center,#151a20 0,#0d1014 65%); }
+  aside { border-left:1px solid #282d33; background:#101419; padding:18px; overflow:auto; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.09em; margin:4px 0 10px; color:#8f9ba7; }
+  .panel { margin-bottom:24px; }
+  .list { display:grid; gap:8px; }
+  .row { padding:9px 10px; background:#171c22; border:1px solid #262d35; border-radius:8px; font-size:13px; line-height:1.4; }
+  .empty { color:#7f8a95; font-size:13px; }
+  .legend { position:absolute; left:14px; bottom:14px; display:flex; gap:12px; flex-wrap:wrap; padding:8px 10px; border:1px solid #303740; border-radius:8px; background:#101419dd; font-size:12px; color:#aeb7c1; }
+  .key { display:flex; align-items:center; gap:6px; }
+  .dot { width:12px; height:12px; border-radius:50%; border:2px solid #87929d; background:#222831; }
+  .dot.current { background:#d9ae52; border-color:#ffe09a; }
+  .dot.pit { border-color:#ef6b6b; box-shadow:0 0 0 2px #ef6b6b44; }
+  .line { width:18px; border-top:2px solid #59636e; }
+  .line.unknown { border-top-style:dashed; }
+  .edge { stroke:#56616d; stroke-width:2.2; opacity:.85; }
+  .unknown-edge { stroke:#68737e; stroke-width:1.8; stroke-dasharray:5 5; opacity:.75; }
+  .unknown-edge.danger { stroke:#efc75e; stroke-width:3; }
+  .node circle { fill:#20262e; stroke:#87929d; stroke-width:2.5; }
+  .node.current circle { fill:#b88422; stroke:#ffe09a; stroke-width:4; }
+  .node.pit circle { stroke:#ef6b6b; stroke-width:4; }
+  .node text { fill:#f5f7f9; font-size:13px; font-weight:700; text-anchor:middle; dominant-baseline:middle; pointer-events:none; }
+  .stub circle { fill:#0e1216; stroke:#68737e; stroke-width:1.5; stroke-dasharray:3 3; }
+  .stub.danger circle { stroke:#efc75e; stroke-width:3; }
+  .stub text { fill:#89949f; font-size:10px; text-anchor:middle; dominant-baseline:middle; }
+  #status { position:absolute; right:14px; top:14px; padding:7px 10px; border-radius:7px; border:1px solid #303740; background:#101419dd; color:#96a2ad; font-size:12px; }
+  @media (max-width:900px) { main { grid-template-columns:1fr; } aside { border-left:0; border-top:1px solid #282d33; } #mapWrap, svg { min-height:600px; } }
+</style>
+<header>
+  <strong>BASILISK · LIVE MAP</strong>
+  <div class="stats">
+    <span class="stat">Hunter <b id="player">—</b></span>
+    <span class="stat">Round <b id="round">—</b></span>
+    <span class="stat">HP <b id="hp">—</b></span>
+    <span class="stat">Arrows <b id="arrows">—</b></span>
+    <span class="stat">Inventory <b id="inventoryCount">—</b></span>
+  </div>
+</header>
+<main>
+  <section id="mapWrap">
+    <svg id="map" viewBox="0 0 1000 760" aria-label="Discovered cave graph"></svg>
+    <div id="status">Waiting for basilisk_debug_state.json…</div>
+    <div class="legend">
+      <span class="key"><span class="dot current"></span>Current cave</span>
+      <span class="key"><span class="dot"></span>Discovered cave</span>
+      <span class="key"><span class="dot pit"></span>Known pit</span>
+      <span class="key"><span class="line"></span>Known tunnel</span>
+      <span class="key"><span class="line unknown"></span>Unknown exit</span>
+    </div>
+  </section>
+  <aside>
+    <div class="panel"><h2>Round report</h2><div id="observations" class="list"></div></div>
+    <div class="panel"><h2>Inventory</h2><div id="inventory" class="list"></div></div>
+    <div class="panel"><h2>Temporary pit intel</h2><div id="pits" class="list"></div></div>
+    <div class="panel"><h2>Available actions</h2><div id="actions" class="list"></div></div>
+  </aside>
+</main>
+<script>
+const svg = document.getElementById('map');
+const positions = new Map();
+let lastFingerprint = '';
+
+function el(name, attrs={}) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', name);
+  for (const [k,v] of Object.entries(attrs)) node.setAttribute(k, v);
+  return node;
+}
+
+function listInto(id, values, empty='None') {
+  const root = document.getElementById(id);
+  root.replaceChildren();
+  if (!values || !values.length) {
+    const d = document.createElement('div'); d.className='empty'; d.textContent=empty; root.appendChild(d); return;
+  }
+  for (const value of values) { const d=document.createElement('div'); d.className='row'; d.textContent=value; root.appendChild(d); }
+}
+
+function initializePositions(caves, links) {
+  const ids = new Set(caves.map(c=>c.id));
+  for (const id of [...positions.keys()]) if (!ids.has(id)) positions.delete(id);
+  for (const cave of caves) {
+    if (positions.has(cave.id)) continue;
+    const neighbors = links.filter(l=>l.a===cave.id || l.b===cave.id).map(l=>l.a===cave.id?l.b:l.a).filter(n=>positions.has(n));
+    if (neighbors.length) {
+      const p=positions.get(neighbors[0]);
+      positions.set(cave.id,{x:p.x+(Math.random()-.5)*120,y:p.y+(Math.random()-.5)*120,vx:0,vy:0});
+    } else {
+      const angle=(positions.size+1)*2.399963;
+      positions.set(cave.id,{x:500+Math.cos(angle)*150,y:380+Math.sin(angle)*150,vx:0,vy:0});
+    }
+  }
+}
+
+function settle(caves, links) {
+  initializePositions(caves, links);
+  const nodes=caves.map(c=>({id:c.id,...positions.get(c.id)}));
+  const byId=new Map(nodes.map(n=>[n.id,n]));
+  for(let step=0;step<90;step++) {
+    for(let i=0;i<nodes.length;i++) for(let j=i+1;j<nodes.length;j++) {
+      const a=nodes[i],b=nodes[j]; let dx=a.x-b.x,dy=a.y-b.y; const d2=Math.max(100,dx*dx+dy*dy); const f=11000/d2;
+      const d=Math.sqrt(d2); dx/=d;dy/=d; a.vx+=dx*f; a.vy+=dy*f; b.vx-=dx*f; b.vy-=dy*f;
+    }
+    for(const l of links){ const a=byId.get(l.a),b=byId.get(l.b); if(!a||!b)continue; let dx=b.x-a.x,dy=b.y-a.y; const d=Math.max(1,Math.hypot(dx,dy)); const f=(d-120)*.012; dx/=d;dy/=d; a.vx+=dx*f;a.vy+=dy*f;b.vx-=dx*f;b.vy-=dy*f; }
+    for(const n of nodes){ n.vx+=(500-n.x)*.0008;n.vy+=(380-n.y)*.0008;n.vx*=.78;n.vy*=.78;n.x=Math.max(75,Math.min(925,n.x+n.vx));n.y=Math.max(70,Math.min(690,n.y+n.vy)); }
+  }
+  for(const n of nodes) positions.set(n.id,{x:n.x,y:n.y,vx:0,vy:0});
+}
+
+function render(data) {
+  document.getElementById('player').textContent=data.player;
+  document.getElementById('round').textContent=data.round;
+  document.getElementById('hp').textContent=`${data.health}/${data.maxHealth}`;
+  document.getElementById('arrows').textContent=`${data.arrows}/${data.maxArrows}`;
+  document.getElementById('inventoryCount').textContent=`${data.inventory.length}/${data.inventoryCapacity}`;
+  listInto('observations',data.observations,'No new observations.');
+  listInto('inventory',data.inventory,'Inventory empty.');
+  listInto('pits',data.temporaryPitCaves.map(c=>`Cave ${c}`),'No temporary pit intel.');
+  listInto('actions',data.actions,'No available actions.');
+
+  const links=[]; const seen=new Set();
+  for(const cave of data.caves) for(const ex of cave.exits) if(ex.destination!=null){ const a=Math.min(cave.id,ex.destination),b=Math.max(cave.id,ex.destination),key=`${a}-${b}`; if(!seen.has(key)){seen.add(key);links.push({a,b});} }
+  const fp=JSON.stringify({ids:data.caves.map(c=>c.id),links});
+  if(fp!==lastFingerprint){ settle(data.caves,links); lastFingerprint=fp; }
+
+  svg.replaceChildren();
+  for(const l of links){ const a=positions.get(l.a),b=positions.get(l.b); svg.appendChild(el('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:'edge'})); }
+  const pitSet=new Set(data.temporaryPitCaves);
+  for(const cave of data.caves){
+    const p=positions.get(cave.id); const unknown=cave.exits.filter(e=>e.destination==null);
+    unknown.forEach((ex,i)=>{ const angle=(i/Math.max(1,unknown.length))*Math.PI*2 + cave.id*.73; const sx=p.x+Math.cos(angle)*62, sy=p.y+Math.sin(angle)*62;
+      svg.appendChild(el('line',{x1:p.x,y1:p.y,x2:sx,y2:sy,class:`unknown-edge${ex.strongColdDraft?' danger':''}`}));
+      const g=el('g',{class:`stub${ex.strongColdDraft?' danger':''}`}); g.appendChild(el('circle',{cx:sx,cy:sy,r:10})); const t=el('text',{x:sx,y:sy+1});t.textContent='?';g.appendChild(t);svg.appendChild(g);
+    });
+  }
+  for(const cave of data.caves){ const p=positions.get(cave.id), classes=['node']; if(cave.id===data.currentCave)classes.push('current'); if(pitSet.has(cave.id))classes.push('pit');
+    const g=el('g',{class:classes.join(' ')});g.appendChild(el('circle',{cx:p.x,cy:p.y,r:cave.id===data.currentCave?25:21}));const t=el('text',{x:p.x,y:p.y+1});t.textContent=cave.id;g.appendChild(t);svg.appendChild(g);
+  }
+  document.getElementById('status').textContent=`Live · Hunter ${data.player} · ${data.caves.length} caves discovered`;
+}
+
+async function poll(){
+  try { const r=await fetch('/basilisk_debug_state.json?ts='+Date.now(),{cache:'no-store'}); if(!r.ok)throw new Error(); render(await r.json()); }
+  catch { document.getElementById('status').textContent='Waiting for CLI --web-debug state…'; }
+}
+poll(); setInterval(poll,400);
+</script>
