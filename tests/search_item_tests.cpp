@@ -32,6 +32,7 @@ Rules guaranteedHealingSearchRules() {
     rules.searchOldMinersMapWeight = 0;
     rules.searchSurveyFragmentWeight = 0;
     rules.searchBloodBaitWeight = 0;
+    rules.searchOldHuntersMapWeight = 0;
     rules.searchExoticNumerator = 1;
     rules.searchExoticDenominator = 1;
     return rules;
