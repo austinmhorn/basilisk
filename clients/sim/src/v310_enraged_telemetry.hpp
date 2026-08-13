@@ -4,6 +4,14 @@
 
 namespace {
 
+std::optional<PlayerAction> chooseAction(
+    Playstyle style,
+    const PlayerRoundSnapshot& s,
+    BotMemory& memory,
+    MatchSeed matchSeed,
+    Stats& stats,
+    bool& stalenessMove);
+
 struct EnragedLethalityStats {
     std::uint64_t assignments{0};
     std::uint64_t assignmentsNoContactKills{0};
