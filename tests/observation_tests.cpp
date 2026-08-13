@@ -189,6 +189,35 @@ void pitDeathExplainsCauseAndHidesRivalLocation() {
     assert(!rivalDied->otherPlayer.has_value());
 }
 
+void jackalAttacksExplainCauseOnlyToVictim() {
+    auto state = makeObservationWorld();
+    const std::vector<GameEvent> events{
+        GameEvent{GameEventType::JackalRobbedArrow, std::nullopt, PlayerId{1}, CaveId{1}, 1},
+        GameEvent{GameEventType::JackalScaredPlayer, std::nullopt, PlayerId{1}, CaveId{5}},
+        GameEvent{GameEventType::JackalKnockedOutPlayer, std::nullopt, PlayerId{1}, CaveId{6}, 5},
+        GameEvent{GameEventType::PlayerDamaged, std::nullopt, PlayerId{1}, CaveId{6}, 5},
+        GameEvent{GameEventType::JackalRepelled, PlayerId{1}, PlayerId{1}, CaveId{6}}
+    };
+
+    const auto victim = ObservationSystem::buildForPlayer(state, 1, events);
+    const auto rival = ObservationSystem::buildForPlayer(state, 2, events);
+
+    assert(hasType(victim, ObservationType::JackalRobbedYou));
+    assert(hasType(victim, ObservationType::JackalScaredYou));
+    assert(hasType(victim, ObservationType::JackalKnockedOutYou));
+    assert(hasType(victim, ObservationType::JackalRepelled));
+    assert(hasType(victim, ObservationType::YouWereDamaged));
+
+    const auto* robbed = findType(victim, ObservationType::JackalRobbedYou);
+    assert(robbed != nullptr && robbed->amount == 1);
+
+    assert(!hasType(rival, ObservationType::JackalRobbedYou));
+    assert(!hasType(rival, ObservationType::JackalScaredYou));
+    assert(!hasType(rival, ObservationType::JackalKnockedOutYou));
+    assert(!hasType(rival, ObservationType::JackalRepelled));
+    assert(!hasType(rival, ObservationType::YouWereDamaged));
+}
+
 } // namespace
 
 int main() {
@@ -200,6 +229,7 @@ int main() {
     exactRivalMovementEventIsNotForwarded();
     ownBasiliskShotGetsOutcomeFeedback();
     pitDeathExplainsCauseAndHidesRivalLocation();
+    jackalAttacksExplainCauseOnlyToVictim();
 
     std::cout << "Basilisk observation tests passed.\n";
     return 0;
