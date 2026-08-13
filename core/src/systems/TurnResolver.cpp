@@ -329,6 +329,21 @@ void resolveMutualDeathDraw(MatchState& state, std::vector<GameEvent>& events) {
     events.push_back(GameEvent{GameEventType::MatchDrawn});
 }
 
+void resolveBasiliskContactDeaths(MatchState& state, std::vector<GameEvent>& events) {
+    if (!state.basilisk.alive || state.result.status != MatchStatus::Active) return;
+
+    for (auto& player : state.players) {
+        if (!player.alive || player.cave != state.basilisk.cave) continue;
+        player.health = 0;
+        player.alive = false;
+        events.push_back(GameEvent{GameEventType::PlayerKilled, std::nullopt, player.id,
+            player.cave, 0, state.basilisk.behavior});
+        createBodyIfMissing(state, player, events);
+    }
+
+    resolveMutualDeathDraw(state, events);
+}
+
 } // namespace
 
 std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
@@ -351,6 +366,8 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
             state.extraction.sigilHolder == player.id && player.heldSigilFrom.has_value())
             events.push_back(GameEvent{GameEventType::EscapeAvailable, player.id, std::nullopt, player.cave});
     }
+
+    resolveBasiliskContactDeaths(state, events);
 
     struct PendingDamage { PlayerId target; PlayerId attacker; CaveId cave; int amount; };
     std::vector<PendingDamage> pendingDamage;
