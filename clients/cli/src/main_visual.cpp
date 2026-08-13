@@ -83,19 +83,6 @@ std::optional<PlayerAction> prompt(const PlayerRoundSnapshot& snapshot) {
     }
 }
 
-bool alive(const MatchState& state, PlayerId playerId) {
-    const auto it = std::find_if(state.players.begin(), state.players.end(),
-        [playerId](const PlayerState& p) { return p.id == playerId; });
-    return it != state.players.end() && it->alive;
-}
-
-void handoff(PlayerId next) {
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    std::cout << "\nPass control to Hunter " << next << ". Press ENTER when ready.";
-    std::cin.get();
-    std::cout << std::string(10, '\n');
-}
-
 std::string outcome(const PlayerRoundSnapshot& snapshot) {
     switch (snapshot.matchOutcome) {
         case MatchOutcome::BasiliskKilled:
@@ -139,8 +126,6 @@ int main(int argc, char** argv) {
 
             cli_debug::writeWebDebugState(snapshot);
             if (const auto action = prompt(snapshot); action.has_value()) actions.push_back(*action);
-
-            if (playerId == 1 && alive(state, 2)) handoff(2);
         }
 
         if (actions.empty()) break;
