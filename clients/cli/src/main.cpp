@@ -57,6 +57,16 @@ std::string observationText(const PlayerObservation& observation) {
         case ObservationType::YouKilledRival: return "The rival hunter falls.";
         case ObservationType::YouDied: return "You have died.";
         case ObservationType::FellIntoPit: return "You stepped into a hidden Pit and fell to your death.";
+        case ObservationType::JackalRobbedYou:
+            return observation.amount == 1
+                ? "A Jackal darts in and steals one of your arrows."
+                : "A Jackal darts in and steals " + std::to_string(observation.amount) + " of your arrows.";
+        case ObservationType::JackalScaredYou:
+            return "A Jackal lunges from the darkness and sends you fleeing into a nearby cave.";
+        case ObservationType::JackalKnockedOutYou:
+            return "A Jackal overwhelms you, knocks you unconscious, and drags you deeper into the caverns.";
+        case ObservationType::JackalRepelled:
+            return "Your Jackal Repellent drives the attacking Jackal back.";
         case ObservationType::RivalDied:
             return "The rival hunter has died somewhere in the caverns. The hunt continues; their Sigil can still be recovered.";
         case ObservationType::RivalDisconnected:
