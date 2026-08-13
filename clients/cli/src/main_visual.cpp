@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "DebugTruthState.hpp"
 #include "WebDebugState.hpp"
 #include "basilisk/Action.hpp"
 #include "basilisk/ClientSnapshot.hpp"
@@ -125,6 +126,7 @@ int main(int argc, char** argv) {
             if (!snapshot.alive) continue;
 
             cli_debug::writeWebDebugState(snapshot);
+            cli_debug::writeDebugTruthState(state, playerId, events);
             if (const auto action = prompt(snapshot); action.has_value()) actions.push_back(*action);
         }
 
@@ -134,6 +136,7 @@ int main(int argc, char** argv) {
 
     const auto finalSnapshot = SnapshotSystem::buildForPlayer(state, 1, events);
     cli_debug::writeWebDebugState(finalSnapshot);
+    cli_debug::writeDebugTruthState(state, 1, events);
     std::cout << "\nHUNT COMPLETE: " << outcome(finalSnapshot) << '\n';
     return 0;
 }
