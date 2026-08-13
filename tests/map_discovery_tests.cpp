@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <iostream>
 #include <optional>
@@ -157,6 +158,48 @@ void connectedKnownCavesRevealTheirTunnel() {
     assert(MapDiscoverySystem::resolveMoveDestination(state, player, move) == CaveId{4});
 }
 
+void historicalUnknownExitReconcilesWithoutRevisit() {
+    MatchState state;
+    state.rules.mapDiscoveryMode = MapDiscoveryMode::FogOfWar;
+    for (CaveId cave = 1; cave <= 4; ++cave) state.world.addCave(cave);
+
+    // Cave 2 has a direct edge to Cave 4, while 1 -> 3 -> 4 provides a
+    // different discovery route that does not revisit Cave 2.
+    state.world.connect(1, 2);
+    state.world.connect(2, 4);
+    state.world.connect(1, 3);
+    state.world.connect(3, 4);
+    state.players = {PlayerState{1, 1, 100, 3, true}};
+
+    auto& player = state.players.front();
+    std::vector<GameEvent> events;
+    MapDiscoverySystem::initializePlayer(state, player);
+    MapDiscoverySystem::discoverTraversal(player, 1, 2, events);
+    player.cave = 2;
+
+    const auto before = MapDiscoverySystem::buildView(state, player);
+    const auto& caveTwoBefore = caveView(before, 2);
+    assert(!caveTwoBefore.exits[1].destination.has_value());
+
+    MapDiscoverySystem::discoverTraversal(player, 2, 1, events);
+    player.cave = 1;
+    MapDiscoverySystem::discoverTraversal(player, 1, 3, events);
+    player.cave = 3;
+    MapDiscoverySystem::discoverTraversal(player, 3, 4, events);
+    player.cave = 4;
+
+    assert(!MapDiscoverySystem::knowsConnection(player, 2, 4));
+    const auto after = MapDiscoverySystem::buildView(state, player);
+    const auto& caveTwoAfter = caveView(after, 2);
+    assert(caveTwoAfter.exits[1].destination == CaveId{4});
+
+    const auto& caveFourAfter = caveView(after, 4);
+    assert(std::any_of(
+        caveFourAfter.exits.begin(),
+        caveFourAfter.exits.end(),
+        [](const TunnelView& exit) { return exit.destination == CaveId{2}; }));
+}
+
 void shootingUnknownTunnelDoesNotRevealDestination() {
     auto state = makeFogWorld();
     RoundController controller;
@@ -224,6 +267,7 @@ int main() {
     hiddenDestinationCannotBeSubmittedDirectly();
     opaqueTunnelTraversalRevealsDestination();
     connectedKnownCavesRevealTheirTunnel();
+    historicalUnknownExitReconcilesWithoutRevisit();
     shootingUnknownTunnelDoesNotRevealDestination();
     discoveriesRemainPlayerSpecific();
     fullMapModeRevealsCompleteTopology();

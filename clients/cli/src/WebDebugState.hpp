@@ -185,6 +185,7 @@ inline void writeWebDebugState(const PlayerRoundSnapshot& snapshot,
         const auto& action = snapshot.availableActions[i];
         out << "{\"index\":" << (i + 1) << ",\"type\":";
         writeQuoted(out, actionTypeName(action.type));
+        out << ",\"sourceCave\":" << snapshot.currentCave;
         out << ",\"text\":"; writeQuoted(out, actionText(action));
         out << ",\"targetCave\":";
         if (action.targetCave.has_value()) out << *action.targetCave; else out << "null";
@@ -203,7 +204,8 @@ inline void writeWebDebugState(const PlayerRoundSnapshot& snapshot,
         for (std::size_t j = 0; j < cave.exits.size(); ++j) {
             const auto& exit = cave.exits[j];
             if (j) out << ',';
-            out << "{\"tunnel\":" << exit.id << ",\"destination\":";
+            out << "{\"sourceCave\":" << cave.cave
+                << ",\"tunnel\":" << exit.id << ",\"destination\":";
             if (exit.destination.has_value()) out << *exit.destination;
             else out << "null";
             out << ",\"strongColdDraft\":" << (exit.strongColdDraft ? "true" : "false") << '}';

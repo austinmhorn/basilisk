@@ -5,6 +5,7 @@
 
 #include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/MatchState.hpp"
+#include "basilisk/systems/MapDiscoverySystem.hpp"
 #include "basilisk/systems/SnapshotSystem.hpp"
 
 using namespace basilisk;
@@ -67,6 +68,13 @@ bool hasObservation(const PlayerRoundSnapshot& snapshot, ObservationType type) {
         [type](const PlayerObservation& observation) { return observation.type == type; });
 }
 
+const DiscoveredCaveView& caveView(const PlayerMapView& view, CaveId cave) {
+    const auto it = std::find_if(view.caves.begin(), view.caves.end(),
+        [cave](const DiscoveredCaveView& entry) { return entry.cave == cave; });
+    assert(it != view.caves.end());
+    return *it;
+}
+
 void snapshotContainsOnlyPlayerFacingCoreState() {
     const auto state = makeSnapshotWorld();
     const auto snapshot = SnapshotSystem::buildForPlayer(state, 1, {});
@@ -120,6 +128,73 @@ void snapshotDerivesLegalActionsFromVisibleKnowledge() {
     assert(shootCount == 2);
     assert(healCount == 1);
     assert(hasAction(snapshot, ActionType::Search));
+}
+
+void opaqueActionsAreScopedToCurrentCave() {
+    auto state = makeSnapshotWorld();
+    state.players[0].discovery.knownCaves.insert(CaveId{4});
+
+    const auto snapshot = SnapshotSystem::buildForPlayer(state, 1, {});
+    const auto& current = caveView(snapshot.map, CaveId{1});
+    const auto& historical = caveView(snapshot.map, CaveId{4});
+
+    // TunnelId is local to its source cave. Both views legitimately contain
+    // an unresolved Tunnel 1, but actions are generated only from currentCave.
+    assert(current.exits[0].id == TunnelId{1});
+    assert(!current.exits[0].destination.has_value());
+    assert(historical.exits[0].id == TunnelId{1});
+    assert(!historical.exits[0].destination.has_value());
+    assert(snapshot.map.currentCave == CaveId{1});
+
+    int opaqueMoveCount = 0;
+    for (const auto& action : snapshot.availableActions) {
+        if (action.type != ActionType::Move ||
+            action.targetTunnel != TunnelId{1}) continue;
+        ++opaqueMoveCount;
+    }
+    assert(opaqueMoveCount == 1);
+}
+
+void sharedDiscoveredDestinationIsReachableFromEitherCave() {
+    MatchState state;
+    state.rules.mapDiscoveryMode = MapDiscoveryMode::FogOfWar;
+    for (const CaveId cave : {CaveId{2}, CaveId{4}, CaveId{13}, CaveId{24}})
+        state.world.addCave(cave);
+    state.world.connect(13, 4);
+    state.world.connect(4, 2);
+    state.world.connect(4, 24);
+    state.world.connect(2, 24);
+    state.players = {PlayerState{1, 4, 100, 3, true}};
+    state.basilisk.cave = 13;
+
+    auto& player = state.players.front();
+    std::vector<GameEvent> events;
+    MapDiscoverySystem::initializePlayer(state, player);
+    MapDiscoverySystem::discoverTraversal(player, 4, 24, events);
+    MapDiscoverySystem::discoverTraversal(player, 4, 2, events);
+
+    // The player learned Cave 24 through Cave 4, not by traversing 2 -> 24.
+    assert(!MapDiscoverySystem::knowsConnection(player, 2, 24));
+
+    player.cave = 2;
+    const auto fromTwo = SnapshotSystem::buildForPlayer(state, 1, {});
+    assert(std::any_of(
+        fromTwo.availableActions.begin(),
+        fromTwo.availableActions.end(),
+        [](const AvailableAction& action) {
+            return action.type == ActionType::Move &&
+                   action.targetCave == CaveId{24};
+        }));
+
+    player.cave = 4;
+    const auto fromFour = SnapshotSystem::buildForPlayer(state, 1, {});
+    assert(std::any_of(
+        fromFour.availableActions.begin(),
+        fromFour.availableActions.end(),
+        [](const AvailableAction& action) {
+            return action.type == ActionType::Move &&
+                   action.targetCave == CaveId{24};
+        }));
 }
 
 void snapshotUsesFilteredObservationsInsteadOfHiddenState() {
@@ -205,6 +280,8 @@ void fullHealthDoesNotAdvertiseHealingAction() {
 int main() {
     snapshotContainsOnlyPlayerFacingCoreState();
     snapshotDerivesLegalActionsFromVisibleKnowledge();
+    opaqueActionsAreScopedToCurrentCave();
+    sharedDiscoveredDestinationIsReachableFromEitherCave();
     snapshotUsesFilteredObservationsInsteadOfHiddenState();
     extractionIsVisibleOnlyToEligibleSigilHolder();
     escapeActionAppearsOnlyAtActiveExtraction();
