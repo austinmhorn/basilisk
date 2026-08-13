@@ -114,6 +114,7 @@ void bodyRemainsDynamicAfterStaticSearch() {
 
 void escapeRequiresExplicitContextualAction() {
     auto state = makeObjectiveMatch();
+    state.basilisk.alive = false;
     state.players[1].alive = false;
     state.bodies.push_back(BodyState{2, 1, true});
     TurnResolver resolver;

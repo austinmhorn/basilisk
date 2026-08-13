@@ -72,6 +72,41 @@ void movementResolvesBeforeShooting() {
     assert(state.players[0].arrows == 2);
 }
 
+void enteringBasiliskCaveKillsHunter() {
+    auto state = makeTestMatch();
+    state.players = {
+        PlayerState{1, 1, 100, 3, true},
+        PlayerState{2, 6, 100, 3, true}
+    };
+    state.basilisk.cave = 2;
+    state.basilisk.behavior = BasiliskBehavior::Normal;
+
+    TurnResolver resolver;
+    const auto events = resolver.resolve(state, {
+        PlayerAction{1, ActionType::Move, CaveId{2}}
+    });
+
+    assert(state.players[0].cave == 2);
+    assert(state.players[0].health == 0);
+    assert(!state.players[0].alive);
+    assert(state.basilisk.alive);
+    assert(hasEvent(events, GameEventType::PlayerMoved));
+    assert(hasEvent(events, GameEventType::PlayerKilled));
+    assert(hasEvent(events, GameEventType::BodyCreated));
+
+    bool attributedToBasilisk = false;
+    for (const auto& event : events) {
+        if (event.type == GameEventType::PlayerKilled &&
+            event.targetPlayer == PlayerId{1} &&
+            event.cave == CaveId{2} &&
+            event.basiliskBehavior == BasiliskBehavior::Normal) {
+            attributedToBasilisk = true;
+            break;
+        }
+    }
+    assert(attributedToBasilisk);
+}
+
 void lethalShotsResolveSimultaneously() {
     auto state = makeTestMatch();
     state.players = {
@@ -323,6 +358,7 @@ void identicalSeedAndActionsProduceIdenticalBasiliskOutcome() {
 
 int main() {
     movementResolvesBeforeShooting();
+    enteringBasiliskCaveKillsHunter();
     lethalShotsResolveSimultaneously();
     randomGeneratorIsDeterministic();
     shootingJackalStunsForThreeNpcPhases();
