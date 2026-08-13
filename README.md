@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/austinmhorn/basilisk/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/austinmhorn/basilisk/actions/workflows/ci.yml)
 
-**Beware the Basilisk** is a pre-alpha deterministic C++ cave-hunting game engine designed to support native desktop, browser/WebAssembly, and authoritative multiplayer server clients from one shared core.
+**Basilisk** is a pre-alpha deterministic C++ cave-hunting game engine designed to support native desktop, browser/WebAssembly, and authoritative multiplayer server clients from one shared core.
 
 ## Versioning
 
