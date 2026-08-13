@@ -218,6 +218,24 @@ void jackalAttacksExplainCauseOnlyToVictim() {
     assert(!hasType(rival, ObservationType::YouWereDamaged));
 }
 
+void multipleJackalTheftsAggregateIntoOneObservation() {
+    auto state = makeObservationWorld();
+    const std::vector<GameEvent> events{
+        GameEvent{GameEventType::JackalRobbedArrow, std::nullopt, PlayerId{1}, CaveId{1}, 1},
+        GameEvent{GameEventType::JackalRobbedArrow, std::nullopt, PlayerId{1}, CaveId{1}, 1}
+    };
+
+    const auto observations = ObservationSystem::buildForPlayer(state, 1, events);
+    const auto count = std::count_if(observations.begin(), observations.end(),
+        [](const PlayerObservation& observation) {
+            return observation.type == ObservationType::JackalRobbedYou;
+        });
+
+    assert(count == 1);
+    const auto* robbed = findType(observations, ObservationType::JackalRobbedYou);
+    assert(robbed != nullptr && robbed->amount == 2);
+}
+
 } // namespace
 
 int main() {
@@ -230,6 +248,7 @@ int main() {
     ownBasiliskShotGetsOutcomeFeedback();
     pitDeathExplainsCauseAndHidesRivalLocation();
     jackalAttacksExplainCauseOnlyToVictim();
+    multipleJackalTheftsAggregateIntoOneObservation();
 
     std::cout << "Basilisk observation tests passed.\n";
     return 0;
