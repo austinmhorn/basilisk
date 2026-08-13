@@ -79,6 +79,7 @@ void addEventFeedback(const MatchState& state, const PlayerState& viewer,
                       std::vector<PlayerObservation>& observations) {
     bool viewerReachedBasilisk = false;
     bool viewerKilledBasilisk = false;
+    int jackalArrowsStolen = 0;
     const bool viewerFellIntoPit = std::any_of(events.begin(), events.end(), [&](const GameEvent& event) {
         return event.type == GameEventType::PitTriggered && event.targetPlayer == viewer.id;
     });
@@ -96,7 +97,7 @@ void addEventFeedback(const MatchState& state, const PlayerState& viewer,
                 if (event.targetPlayer == viewer.id) observations.push_back(PlayerObservation{ObservationType::FellIntoPit, viewer.id, event.cave});
                 break;
             case GameEventType::JackalRobbedArrow:
-                if (event.targetPlayer == viewer.id) observations.push_back(PlayerObservation{ObservationType::JackalRobbedYou, viewer.id, std::nullopt, std::nullopt, event.amount});
+                if (event.targetPlayer == viewer.id) jackalArrowsStolen += event.amount;
                 break;
             case GameEventType::JackalScaredPlayer:
                 if (event.targetPlayer == viewer.id) observations.push_back(PlayerObservation{ObservationType::JackalScaredYou, viewer.id});
@@ -159,6 +160,8 @@ void addEventFeedback(const MatchState& state, const PlayerState& viewer,
             default: break;
         }
     }
+    if (jackalArrowsStolen > 0)
+        observations.push_back(PlayerObservation{ObservationType::JackalRobbedYou, viewer.id, std::nullopt, std::nullopt, jackalArrowsStolen});
     if (viewerKilledBasilisk) observations.push_back(PlayerObservation{ObservationType::BasiliskKilled, viewer.id, state.basilisk.cave});
     else if (viewerReachedBasilisk && state.basilisk.alive) observations.push_back(PlayerObservation{ObservationType::BasiliskEvaded, viewer.id});
 }
