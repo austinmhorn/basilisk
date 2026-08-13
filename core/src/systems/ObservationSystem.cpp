@@ -95,6 +95,18 @@ void addEventFeedback(const MatchState& state, const PlayerState& viewer,
             case GameEventType::PitTriggered:
                 if (event.targetPlayer == viewer.id) observations.push_back(PlayerObservation{ObservationType::FellIntoPit, viewer.id, event.cave});
                 break;
+            case GameEventType::JackalRobbedArrow:
+                if (event.targetPlayer == viewer.id) observations.push_back(PlayerObservation{ObservationType::JackalRobbedYou, viewer.id, std::nullopt, std::nullopt, event.amount});
+                break;
+            case GameEventType::JackalScaredPlayer:
+                if (event.targetPlayer == viewer.id) observations.push_back(PlayerObservation{ObservationType::JackalScaredYou, viewer.id});
+                break;
+            case GameEventType::JackalKnockedOutPlayer:
+                if (event.targetPlayer == viewer.id) observations.push_back(PlayerObservation{ObservationType::JackalKnockedOutYou, viewer.id});
+                break;
+            case GameEventType::JackalRepelled:
+                if (event.targetPlayer == viewer.id) observations.push_back(PlayerObservation{ObservationType::JackalRepelled, viewer.id});
+                break;
             case GameEventType::PitInvestigationSucceeded:
                 if (event.actor == viewer.id) { PlayerObservation o{ObservationType::PitInvestigationSucceeded, viewer.id}; o.cave = event.cave; o.tunnel = event.tunnel; observations.push_back(o); }
                 break;
