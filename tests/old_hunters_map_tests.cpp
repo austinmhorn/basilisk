@@ -1,11 +1,11 @@
-#include <cassert>
 #include <algorithm>
+#include <cassert>
 
 #include "basilisk/Action.hpp"
 #include "basilisk/Observation.hpp"
 #include "basilisk/items/Item.hpp"
-#include "basilisk/systems/ItemSystem.hpp"
 #include "basilisk/systems/ObservationSystem.hpp"
+#include "basilisk/systems/TurnResolver.hpp"
 #include "basilisk/world/MapGenerator.hpp"
 
 using namespace basilisk;
@@ -20,7 +20,8 @@ int main() {
     action.type = ActionType::UseItem;
     action.targetItem = ItemType::OldHuntersMap;
 
-    const auto events = ItemSystem::use(state, player, action);
+    TurnResolver resolver;
+    const auto events = resolver.resolve(state, {action});
     const auto read = std::find_if(events.begin(), events.end(), [](const GameEvent& event) {
         return event.type == GameEventType::OldHuntersMapRead;
     });
