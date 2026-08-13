@@ -91,6 +91,7 @@ std::vector<AvailableAction> buildAvailableActions(
     if (player.health < state.rules.maxHealth)
         appendUseItemAction(player, ItemType::HealingDraught, actions);
     appendUseItemAction(player, ItemType::OldMinersMap, actions);
+    appendUseItemAction(player, ItemType::OldHuntersMap, actions);
     appendUseItemAction(player, ItemType::JackalRepellent, actions);
     appendSurveyActions(player, map, actions);
     appendUseItemAction(player, ItemType::BloodBait, actions);
