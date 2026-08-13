@@ -127,7 +127,14 @@ void addEventFeedback(const MatchState& state, const PlayerState& viewer,
                 if (event.actor.has_value() && event.actor != viewer.id) observations.push_back(PlayerObservation{ObservationType::RivalDisconnectTimedOut, viewer.id});
                 break;
             case GameEventType::PlayerKilled:
-                if (event.targetPlayer == viewer.id) { if (!viewerFellIntoPit) observations.push_back(PlayerObservation{ObservationType::YouDied, viewer.id, event.cave}); }
+                if (event.targetPlayer == viewer.id) {
+                    if (!viewerFellIntoPit) {
+                        const auto type = event.basiliskBehavior.has_value()
+                            ? ObservationType::BasiliskFoundYou
+                            : ObservationType::YouDied;
+                        observations.push_back(PlayerObservation{type, viewer.id, event.cave});
+                    }
+                }
                 else if (event.targetPlayer.has_value() && viewer.alive) observations.push_back(PlayerObservation{ObservationType::RivalDied, viewer.id});
                 break;
             case GameEventType::ItemFound:

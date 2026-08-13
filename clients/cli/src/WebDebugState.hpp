@@ -53,6 +53,7 @@ inline std::string observationText(const PlayerObservation& observation) {
         case ObservationType::YouWereDamaged: return "You take " + std::to_string(observation.amount) + " damage.";
         case ObservationType::YouKilledRival: return "The rival hunter falls.";
         case ObservationType::YouDied: return "You have died.";
+        case ObservationType::BasiliskFoundYou: return "The Basilisk found you. You did not survive.";
         case ObservationType::FellIntoPit: return "You stepped into a hidden Pit and fell to your death.";
         case ObservationType::JackalRobbedYou:
             return observation.amount == 1

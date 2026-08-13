@@ -189,6 +189,39 @@ void pitDeathExplainsCauseAndHidesRivalLocation() {
     assert(!rivalDied->otherPlayer.has_value());
 }
 
+void basiliskContactDeathExplainsCauseOnlyToVictim() {
+    auto state = makeObservationWorld();
+    state.players[0].alive = false;
+    state.players[0].health = 0;
+
+    const std::vector<GameEvent> events{
+        GameEvent{GameEventType::PlayerKilled, std::nullopt, PlayerId{1},
+                  CaveId{3}, 0, BasiliskBehavior::Normal}
+    };
+
+    const auto victim = ObservationSystem::buildForPlayer(state, 1, events);
+    const auto rival = ObservationSystem::buildForPlayer(state, 2, events);
+
+    assert(hasType(victim, ObservationType::BasiliskFoundYou));
+    assert(!hasType(victim, ObservationType::YouDied));
+    assert(!hasType(rival, ObservationType::BasiliskFoundYou));
+    assert(hasType(rival, ObservationType::RivalDied));
+}
+
+void nonBasiliskDeathKeepsGenericDeathObservation() {
+    auto state = makeObservationWorld();
+    state.players[0].alive = false;
+    state.players[0].health = 0;
+
+    const std::vector<GameEvent> events{
+        GameEvent{GameEventType::PlayerKilled, PlayerId{2}, PlayerId{1}, CaveId{1}}
+    };
+
+    const auto victim = ObservationSystem::buildForPlayer(state, 1, events);
+    assert(hasType(victim, ObservationType::YouDied));
+    assert(!hasType(victim, ObservationType::BasiliskFoundYou));
+}
+
 void jackalAttacksExplainCauseOnlyToVictim() {
     auto state = makeObservationWorld();
     const std::vector<GameEvent> events{
@@ -247,6 +280,8 @@ int main() {
     exactRivalMovementEventIsNotForwarded();
     ownBasiliskShotGetsOutcomeFeedback();
     pitDeathExplainsCauseAndHidesRivalLocation();
+    basiliskContactDeathExplainsCauseOnlyToVictim();
+    nonBasiliskDeathKeepsGenericDeathObservation();
     jackalAttacksExplainCauseOnlyToVictim();
     multipleJackalTheftsAggregateIntoOneObservation();
 

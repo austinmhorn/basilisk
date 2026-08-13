@@ -116,6 +116,14 @@ std::optional<PlayerAction> promptBrowser(const PlayerRoundSnapshot& snapshot) {
 }
 
 std::string outcome(const PlayerRoundSnapshot& snapshot) {
+    const bool basiliskFoundPlayer = std::any_of(
+        snapshot.observations.begin(),
+        snapshot.observations.end(),
+        [](const PlayerObservation& observation) {
+            return observation.type == ObservationType::BasiliskFoundYou;
+        });
+    if (basiliskFoundPlayer) return "The Basilisk found you. You did not survive.";
+
     switch (snapshot.matchOutcome) {
         case MatchOutcome::BasiliskKilled:
             return snapshot.winner.has_value() ? "Hunter " + std::to_string(*snapshot.winner) + " killed the Basilisk." : "The Basilisk was killed.";
