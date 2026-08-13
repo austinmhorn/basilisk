@@ -131,6 +131,32 @@ void opaqueTunnelTraversalRevealsDestination() {
     assert(hiddenExits == 2);
 }
 
+void connectedKnownCavesRevealTheirTunnel() {
+    auto state = makeFogWorld();
+    auto& player = state.players[0];
+
+    // Cave 2 and Cave 4 are both known through other exploration, but their
+    // direct edge has never been explicitly traversed or revealed.
+    player.cave = 2;
+    player.discovery.knownCaves.insert(2);
+    player.discovery.knownCaves.insert(4);
+    assert(!MapDiscoverySystem::knowsConnection(player, 2, 4));
+
+    const auto view = MapDiscoverySystem::buildView(state, player);
+    bool revealedDirectEdge = false;
+    for (const auto& exit : caveView(view, 2).exits) {
+        if (exit.destination == CaveId{4}) revealedDirectEdge = true;
+    }
+    assert(revealedDirectEdge);
+
+    PlayerAction move;
+    move.player = 1;
+    move.type = ActionType::Move;
+    move.targetCave = CaveId{4};
+
+    assert(MapDiscoverySystem::resolveMoveDestination(state, player, move) == CaveId{4});
+}
+
 void shootingUnknownTunnelDoesNotRevealDestination() {
     auto state = makeFogWorld();
     RoundController controller;
@@ -197,6 +223,7 @@ int main() {
     initialFogShowsExitsButHidesDestinations();
     hiddenDestinationCannotBeSubmittedDirectly();
     opaqueTunnelTraversalRevealsDestination();
+    connectedKnownCavesRevealTheirTunnel();
     shootingUnknownTunnelDoesNotRevealDestination();
     discoveriesRemainPlayerSpecific();
     fullMapModeRevealsCompleteTopology();
