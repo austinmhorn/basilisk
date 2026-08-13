@@ -7,7 +7,8 @@ enum class ItemType {
     OldMinersMap,
     SurveyFragment,
     JackalRepellent,
-    BloodBait
+    BloodBait,
+    OldHuntersMap
 };
 
 struct ItemInstance {
