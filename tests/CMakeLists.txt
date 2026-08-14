@@ -58,6 +58,14 @@ add_executable(BasiliskClientRoutePlannerTests
 target_link_libraries(BasiliskClientRoutePlannerTests PRIVATE Basilisk::ClientNavigation)
 add_test(NAME BasiliskClientRoutePlannerTests COMMAND BasiliskClientRoutePlannerTests)
 
+if(TARGET BasiliskGameMapLayout)
+    add_executable(BasiliskGameMapLayoutTests
+        game_map_layout_tests.cpp
+    )
+    target_link_libraries(BasiliskGameMapLayoutTests PRIVATE Basilisk::GameMapLayout)
+    add_test(NAME BasiliskGameMapLayoutTests COMMAND BasiliskGameMapLayoutTests)
+endif()
+
 add_executable(BasiliskSnapshotTests
     snapshot_tests.cpp
 )
