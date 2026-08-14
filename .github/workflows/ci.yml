@@ -27,6 +27,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Bootstrap Ubuntu dependencies
+        if: runner.os == 'Linux'
+        run: ./scripts/install-dependencies-ubuntu.sh
+
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBASILISK_BUILD_GAME=ON
 
@@ -49,7 +53,8 @@ jobs:
         run: |
           emcc --version
           em++ --version
-          emcmake --version
+          command -v emcmake
+          emcmake cmake --version
 
       - name: Configure
         run: >-

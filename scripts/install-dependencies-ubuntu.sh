@@ -53,6 +53,7 @@ log "Installing native build tools and SDL3 desktop-video build prerequisites...
     libxfixes-dev \
     libxi-dev \
     libxss-dev \
+    libxtst-dev \
     libxkbcommon-dev \
     libgl1-mesa-dev \
     libegl1-mesa-dev \
