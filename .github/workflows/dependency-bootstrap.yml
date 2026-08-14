@@ -59,8 +59,15 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-dependencies-windows.ps1
-          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-dependencies-windows.ps1
+          & powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-dependencies-windows.ps1
+          if ($LASTEXITCODE -ne 0) {
+              throw "The first Windows bootstrap run failed with exit code $LASTEXITCODE."
+          }
+
+          & powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-dependencies-windows.ps1
+          if ($LASTEXITCODE -ne 0) {
+              throw "The second Windows bootstrap run failed with exit code $LASTEXITCODE."
+          }
 
       - name: Verify Ubuntu tools
         if: runner.os == 'Linux'

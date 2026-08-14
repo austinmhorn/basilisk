@@ -2,6 +2,7 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+$WingetUpdateNotApplicableExitCode = -1978335189
 
 function Write-Step {
     param([Parameter(Mandatory)][string]$Message)
@@ -29,8 +30,13 @@ function Install-WingetPackage {
     ) + $AdditionalArguments
 
     & winget @arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "winget could not install or upgrade $Name (package $Id, exit code $LASTEXITCODE)."
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -eq $WingetUpdateNotApplicableExitCode) {
+        Write-Step "$Name is already installed and no update is available."
+        return
+    }
+    if ($exitCode -ne 0) {
+        throw "winget could not install or upgrade $Name (package $Id, exit code $exitCode)."
     }
 }
 
