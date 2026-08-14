@@ -231,7 +231,7 @@ void runOneV313(MapSeed mapSeed, MatchSeed matchSeed, std::uint64_t maxRounds,
         for (const auto& action : selected) lockOk &= coordinator.lockAction(action.player);
         if (!lockOk) break;
 
-        previousEvents = coordinator.lastEvents();
+        previousEvents = coordinator.authoritativeEvents();
         collectEvents(previousEvents, state, stats, styles, pitDeadPlayers, zeroBefore,
             stalenessMovers, memories, huntTiming, personalityTracker);
         collectEnragedEvents(previousEvents, state, enragedTracker, enragedTelemetry);

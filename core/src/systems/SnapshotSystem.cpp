@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-#include "basilisk/Extraction.hpp"
+#include "ExtractionVisibility.hpp"
 #include "basilisk/systems/MapDiscoverySystem.hpp"
 #include "basilisk/systems/ObservationSystem.hpp"
 
@@ -17,21 +17,6 @@ PlayerState& playerById(MatchState& state, PlayerId id) {
         [id](const PlayerState& player) { return player.id == id; });
     if (it == state.players.end()) throw std::invalid_argument("Snapshot requested for an unknown player.");
     return *it;
-}
-
-bool extractionVisibleTo(const MatchState& state, const PlayerState& player) {
-    if (!state.extraction.active || !state.extraction.cave.has_value() ||
-        state.extraction.sigilHolder != player.id) return false;
-    const CaveId extraction = *state.extraction.cave;
-    switch (state.extraction.revealPolicy) {
-        case ExtractionRevealPolicy::RevealImmediately: return true;
-        case ExtractionRevealPolicy::DiscoverThroughExploration:
-            return player.discovery.knownCaves.contains(extraction);
-        case ExtractionRevealPolicy::ProximityOnly:
-            return player.cave == extraction || state.world.areConnected(player.cave, extraction);
-        case ExtractionRevealPolicy::Hidden: return false;
-    }
-    return false;
 }
 
 const DiscoveredCaveView* currentCaveView(const PlayerMapView& map) {
@@ -139,8 +124,17 @@ PlayerRoundSnapshot SnapshotSystem::buildForPlayer(
     snapshot.inventory.capacity = visibleState.rules.maxInventoryItems;
     for (const auto& item : player.inventory.items) snapshot.inventory.items.push_back(item.type);
 
+    snapshot.recoverableRivalSigilAvailable =
+        player.alive && visibleState.result.status == MatchStatus::Active &&
+        std::any_of(
+            visibleState.bodies.begin(),
+            visibleState.bodies.end(),
+            [&](const BodyState& body) {
+                return body.owner != player.id && body.sigilAvailable;
+            });
     snapshot.hasHunterSigil = player.heldSigilFrom.has_value();
-    if (extractionVisibleTo(visibleState, player)) snapshot.extractionCave = visibleState.extraction.cave;
+    if (isExtractionVisibleTo(visibleState, player))
+        snapshot.extractionCave = visibleState.extraction.cave;
 
     snapshot.availableActions = buildAvailableActions(visibleState, player, snapshot.map);
     snapshot.observations = ObservationSystem::buildForPlayer(visibleState, viewer, events);

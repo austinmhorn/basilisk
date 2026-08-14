@@ -24,7 +24,7 @@ bool bodyExists(const MatchState& state, PlayerId owner) {
 
 MatchCoordinator::MatchCoordinator(MatchState& state) : state_(state) {
     for (const auto& player : state_.players) {
-        PlayerSessionState session;
+        HostSessionState session;
         session.reserveRemainingMs = state_.rules.multiplayerReserveMs;
         session.disconnectGraceRemainingMs = state_.rules.disconnectGraceMs;
         sessions_.emplace(player.id, session);
@@ -37,7 +37,7 @@ bool MatchCoordinator::isLivingPlayer(PlayerId player) const {
     return it != state_.players.end() && it->alive;
 }
 
-const PlayerSessionState* MatchCoordinator::session(PlayerId player) const {
+const HostSessionState* MatchCoordinator::hostSession(PlayerId player) const {
     const auto it = sessions_.find(player);
     return it == sessions_.end() ? nullptr : &it->second;
 }

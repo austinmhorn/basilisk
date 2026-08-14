@@ -61,11 +61,52 @@ bool hasAction(const PlayerRoundSnapshot& snapshot, ActionType type) {
         [type](const AvailableAction& action) { return action.type == type; });
 }
 
+bool hasEscapeAction(const PlayerRoundSnapshot& snapshot) {
+    return std::any_of(
+        snapshot.availableActions.begin(),
+        snapshot.availableActions.end(),
+        [](const AvailableAction& action) {
+            return action.type == ActionType::Contextual &&
+                   action.contextualAction == ContextualActionType::Escape;
+        });
+}
+
 bool hasObservation(const PlayerRoundSnapshot& snapshot, ObservationType type) {
     return std::any_of(
         snapshot.observations.begin(),
         snapshot.observations.end(),
         [type](const PlayerObservation& observation) { return observation.type == type; });
+}
+
+const PlayerObservation* observationOfType(
+    const PlayerRoundSnapshot& snapshot,
+    ObservationType type) {
+
+    const auto it = std::find_if(
+        snapshot.observations.begin(),
+        snapshot.observations.end(),
+        [type](const PlayerObservation& observation) {
+            return observation.type == type;
+        });
+    return it == snapshot.observations.end() ? nullptr : &*it;
+}
+
+GameEvent extractionActivatedEvent() {
+    return GameEvent{
+        GameEventType::ExtractionActivated,
+        PlayerId{1},
+        std::nullopt,
+        CaveId{4}};
+}
+
+MatchState makeActiveExtraction(ExtractionRevealPolicy policy) {
+    auto state = makeSnapshotWorld();
+    state.players[0].heldSigilFrom = PlayerId{2};
+    state.extraction.active = true;
+    state.extraction.cave = CaveId{4};
+    state.extraction.sigilHolder = PlayerId{1};
+    state.extraction.revealPolicy = policy;
+    return state;
 }
 
 const DiscoveredCaveView& caveView(const PlayerMapView& view, CaveId cave) {
@@ -215,21 +256,205 @@ void snapshotUsesFilteredObservationsInsteadOfHiddenState() {
     }
 }
 
-void extractionIsVisibleOnlyToEligibleSigilHolder() {
+void enragedExactLocationIsIntelligenceNotMapDiscovery() {
     auto state = makeSnapshotWorld();
-    state.players[0].heldSigilFrom = PlayerId{2};
-    state.extraction.active = true;
-    state.extraction.cave = CaveId{4};
-    state.extraction.sigilHolder = PlayerId{1};
-    state.extraction.revealPolicy = ExtractionRevealPolicy::RevealImmediately;
+    state.basilisk.behavior = BasiliskBehavior::Enraged;
+    state.basilisk.cave = CaveId{6};
+    state.basilisk.lastCave = CaveId{2};
 
-    const auto a = SnapshotSystem::buildForPlayer(state, 1, {});
-    const auto b = SnapshotSystem::buildForPlayer(state, 2, {});
+    const auto& playerBefore = state.players[0];
+    assert(!playerBefore.discovery.knownCaves.contains(CaveId{2}));
+    assert(playerBefore.discovery.knownConnections.empty());
+
+    const auto snapshot = SnapshotSystem::buildForPlayer(state, 1, {});
+
+    // Enraged last-known location is exact intelligence, not map discovery.
+    const auto* observation = observationOfType(
+        snapshot, ObservationType::EnragedLastKnownCave);
+    assert(observation != nullptr);
+    assert(observation->cave == CaveId{2});
+    assert(observation->cave != state.basilisk.cave);
+
+    assert(std::none_of(
+        snapshot.map.caves.begin(),
+        snapshot.map.caves.end(),
+        [](const DiscoveredCaveView& cave) { return cave.cave == CaveId{2}; }));
+
+    const auto& current = caveView(snapshot.map, CaveId{1});
+    assert(std::none_of(
+        current.exits.begin(),
+        current.exits.end(),
+        [](const TunnelView& exit) { return exit.destination == CaveId{2}; }));
+
+    assert(std::none_of(
+        snapshot.availableActions.begin(),
+        snapshot.availableActions.end(),
+        [](const AvailableAction& action) {
+            return action.type == ActionType::Move &&
+                   action.targetCave == CaveId{2};
+        }));
+    assert(std::none_of(
+        snapshot.availableActions.begin(),
+        snapshot.availableActions.end(),
+        [](const AvailableAction& action) {
+            return action.type == ActionType::Shoot &&
+                   action.targetCave == CaveId{2};
+        }));
+
+    const auto& playerAfter = state.players[0];
+    assert(!playerAfter.discovery.knownCaves.contains(CaveId{2}));
+    assert(playerAfter.discovery.knownConnections.empty());
+}
+
+void revealImmediatelyExposesExtractionConsistently() {
+    const auto state = makeActiveExtraction(ExtractionRevealPolicy::RevealImmediately);
+    const std::vector<GameEvent> events{extractionActivatedEvent()};
+
+    const auto a = SnapshotSystem::buildForPlayer(state, 1, events);
+    const auto b = SnapshotSystem::buildForPlayer(state, 2, events);
 
     assert(a.hasHunterSigil);
     assert(a.extractionCave == CaveId{4});
+    const auto* revealed = observationOfType(a, ObservationType::ExtractionRevealed);
+    assert(revealed != nullptr);
+    assert(revealed->cave == CaveId{4});
     assert(!b.hasHunterSigil);
     assert(!b.extractionCave.has_value());
+    assert(!hasObservation(b, ObservationType::ExtractionRevealed));
+}
+
+void inactiveExtractionUsesFalseNullRepresentation() {
+    const auto state = makeSnapshotWorld();
+    const auto snapshot = SnapshotSystem::buildForPlayer(state, 1, {});
+
+    assert(!snapshot.hasHunterSigil);
+    assert(!snapshot.extractionCave.has_value());
+    assert(snapshot.matchStatus == MatchStatus::Active);
+    assert(snapshot.matchOutcome == MatchOutcome::None);
+}
+
+void rivalOwnedExtractionRemainsIndistinguishableFromInactive() {
+    const auto inactiveState = makeSnapshotWorld();
+    const auto activeState = makeActiveExtraction(
+        ExtractionRevealPolicy::RevealImmediately);
+
+    const auto inactive = SnapshotSystem::buildForPlayer(inactiveState, 2, {});
+    const auto rivalOwned = SnapshotSystem::buildForPlayer(activeState, 2, {});
+
+    assert(inactive.hasHunterSigil == rivalOwned.hasHunterSigil);
+    assert(inactive.extractionCave == rivalOwned.extractionCave);
+    assert(!rivalOwned.hasHunterSigil);
+    assert(!rivalOwned.extractionCave.has_value());
+}
+
+void recoverableRivalSigilPersistsWithoutEvents() {
+    auto state = makeSnapshotWorld();
+    const auto beforeDeath = SnapshotSystem::buildForPlayer(state, 1, {});
+    assert(!beforeDeath.recoverableRivalSigilAvailable);
+
+    state.players[1].alive = false;
+    state.players[1].health = 0;
+    state.bodies.push_back(BodyState{PlayerId{2}, CaveId{2}, true, CaveId{2}});
+
+    const auto afterDeath = SnapshotSystem::buildForPlayer(state, 1, {});
+    assert(afterDeath.recoverableRivalSigilAvailable);
+
+    const auto owner = SnapshotSystem::buildForPlayer(state, 2, {});
+    assert(!owner.recoverableRivalSigilAvailable);
+}
+
+void pitEjectedSigilAvailabilityDoesNotRevealLocation() {
+    auto state = makeSnapshotWorld();
+    state.players[1].alive = false;
+    state.players[1].health = 0;
+    state.players[1].cave = CaveId{3};
+    state.bodies.push_back(BodyState{
+        PlayerId{2}, CaveId{3}, true, CaveId{5}});
+
+    const auto snapshot = SnapshotSystem::buildForPlayer(state, 1, {});
+    assert(snapshot.recoverableRivalSigilAvailable);
+    assert(snapshot.map.caves.size() == 1);
+    assert(snapshot.map.caves.front().cave == CaveId{1});
+    assert(std::all_of(
+        snapshot.map.caves.front().exits.begin(),
+        snapshot.map.caves.front().exits.end(),
+        [](const TunnelView& exit) { return !exit.destination.has_value(); }));
+    assert(state.players[0].discovery.knownConnections.empty());
+
+    assert(std::none_of(
+        snapshot.availableActions.begin(),
+        snapshot.availableActions.end(),
+        [](const AvailableAction& action) {
+            return (action.type == ActionType::Move ||
+                    action.type == ActionType::Shoot) &&
+                   (action.targetCave == CaveId{3} ||
+                    action.targetCave == CaveId{5});
+        }));
+}
+
+void recoveredRivalSigilIsNoLongerAvailable() {
+    auto state = makeActiveExtraction(
+        ExtractionRevealPolicy::RevealImmediately);
+    state.players[1].alive = false;
+    state.players[1].health = 0;
+    state.bodies.push_back(BodyState{
+        PlayerId{2}, CaveId{2}, false, CaveId{2}});
+
+    const auto snapshot = SnapshotSystem::buildForPlayer(state, 1, {});
+    assert(!snapshot.recoverableRivalSigilAvailable);
+    assert(snapshot.hasHunterSigil);
+}
+
+void discoveryPolicyDoesNotLeakUndiscoveredExtraction() {
+    auto state = makeActiveExtraction(
+        ExtractionRevealPolicy::DiscoverThroughExploration);
+    const std::vector<GameEvent> events{extractionActivatedEvent()};
+
+    const auto undiscovered = SnapshotSystem::buildForPlayer(state, 1, events);
+    assert(!undiscovered.extractionCave.has_value());
+    assert(!hasObservation(undiscovered, ObservationType::ExtractionRevealed));
+
+    std::vector<GameEvent> discoveryEvents;
+    MapDiscoverySystem::discoverCave(
+        state.players[0], CaveId{4}, discoveryEvents);
+    const auto discovered = SnapshotSystem::buildForPlayer(state, 1, events);
+    assert(discovered.extractionCave == CaveId{4});
+    const auto* revealed = observationOfType(
+        discovered, ObservationType::ExtractionRevealed);
+    assert(revealed != nullptr);
+    assert(revealed->cave == CaveId{4});
+}
+
+void proximityPolicyDoesNotLeakDistantExtraction() {
+    auto state = makeActiveExtraction(ExtractionRevealPolicy::ProximityOnly);
+    const std::vector<GameEvent> events{extractionActivatedEvent()};
+
+    const auto distant = SnapshotSystem::buildForPlayer(state, 1, events);
+    assert(!distant.extractionCave.has_value());
+    assert(!hasObservation(distant, ObservationType::ExtractionRevealed));
+
+    state.players[0].cave = CaveId{2};
+    const auto nearby = SnapshotSystem::buildForPlayer(state, 1, events);
+    assert(nearby.extractionCave == CaveId{4});
+    const auto* revealed = observationOfType(
+        nearby, ObservationType::ExtractionRevealed);
+    assert(revealed != nullptr);
+    assert(revealed->cave == CaveId{4});
+}
+
+void hiddenPolicyNeverRevealsExtraction() {
+    auto state = makeActiveExtraction(ExtractionRevealPolicy::Hidden);
+    state.players[0].cave = CaveId{4};
+    std::vector<GameEvent> discoveryEvents;
+    MapDiscoverySystem::discoverCave(
+        state.players[0], CaveId{4}, discoveryEvents);
+    const std::vector<GameEvent> events{extractionActivatedEvent()};
+
+    const auto snapshot = SnapshotSystem::buildForPlayer(state, 1, events);
+    assert(snapshot.hasHunterSigil);
+    assert(!snapshot.extractionCave.has_value());
+    assert(!hasObservation(snapshot, ObservationType::ExtractionRevealed));
+    assert(hasEscapeAction(snapshot));
 }
 
 void escapeActionAppearsOnlyAtActiveExtraction() {
@@ -264,6 +489,23 @@ void completedMatchOffersNoFurtherActions() {
     assert(snapshot.winner == PlayerId{1});
 }
 
+void completedExtractionIsDistinguishedByMatchResult() {
+    auto state = makeActiveExtraction(
+        ExtractionRevealPolicy::RevealImmediately);
+    state.result.status = MatchStatus::Completed;
+    state.result.outcome = MatchOutcome::EscapedWithSigil;
+    state.result.winner = PlayerId{1};
+
+    const auto snapshot = SnapshotSystem::buildForPlayer(state, 1, {});
+
+    assert(snapshot.hasHunterSigil);
+    assert(snapshot.extractionCave == CaveId{4});
+    assert(snapshot.matchStatus == MatchStatus::Completed);
+    assert(snapshot.matchOutcome == MatchOutcome::EscapedWithSigil);
+    assert(snapshot.winner == PlayerId{1});
+    assert(snapshot.availableActions.empty());
+}
+
 void fullHealthDoesNotAdvertiseHealingAction() {
     auto state = makeSnapshotWorld();
     state.players[0].health = state.rules.maxHealth;
@@ -283,9 +525,19 @@ int main() {
     opaqueActionsAreScopedToCurrentCave();
     sharedDiscoveredDestinationIsReachableFromEitherCave();
     snapshotUsesFilteredObservationsInsteadOfHiddenState();
-    extractionIsVisibleOnlyToEligibleSigilHolder();
+    enragedExactLocationIsIntelligenceNotMapDiscovery();
+    inactiveExtractionUsesFalseNullRepresentation();
+    revealImmediatelyExposesExtractionConsistently();
+    rivalOwnedExtractionRemainsIndistinguishableFromInactive();
+    recoverableRivalSigilPersistsWithoutEvents();
+    pitEjectedSigilAvailabilityDoesNotRevealLocation();
+    recoveredRivalSigilIsNoLongerAvailable();
+    discoveryPolicyDoesNotLeakUndiscoveredExtraction();
+    proximityPolicyDoesNotLeakDistantExtraction();
+    hiddenPolicyNeverRevealsExtraction();
     escapeActionAppearsOnlyAtActiveExtraction();
     completedMatchOffersNoFurtherActions();
+    completedExtractionIsDistinguishedByMatchResult();
     fullHealthDoesNotAdvertiseHealingAction();
 
     std::cout << "Basilisk snapshot tests passed.\n";

@@ -3,6 +3,7 @@ add_library(BasiliskCore STATIC
     src/world/MapGenerator.cpp
     src/world/WorldGraph.cpp
     src/systems/BasiliskBaitSystem.cpp
+    src/systems/ExtractionVisibility.cpp
     src/systems/ItemSystem.cpp
     src/systems/LooseArrowSystem.cpp
     src/systems/MapDiscoverySystem.cpp

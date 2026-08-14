@@ -50,6 +50,15 @@ struct PlayerRoundSnapshot {
     std::vector<AvailableAction> availableActions;
     std::vector<PlayerObservation> observations;
 
+    // True only when the living viewer can still recover a rival's Sigil in
+    // an active match. This reveals existence, never the body or Sigil cave.
+    bool recoverableRivalSigilAvailable{false};
+
+    // Player-owned extraction state is encoded by this pair:
+    // false/null means no player-owned active extraction; true/null means the
+    // extraction is active but its location is unavailable; true/cave means
+    // the active extraction location is visible. matchStatus and matchOutcome,
+    // rather than these fields, determine whether extraction is complete.
     bool hasHunterSigil{false};
     std::optional<CaveId> extractionCave;
 

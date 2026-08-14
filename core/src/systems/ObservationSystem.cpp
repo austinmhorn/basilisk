@@ -5,6 +5,8 @@
 #include <queue>
 #include <unordered_map>
 
+#include "ExtractionVisibility.hpp"
+
 namespace basilisk {
 namespace {
 
@@ -156,7 +158,11 @@ void addEventFeedback(const MatchState& state, const PlayerState& viewer,
                 if (event.actor == viewer.id) observations.push_back(PlayerObservation{ObservationType::SigilAcquired, viewer.id, event.cave, event.targetPlayer});
                 break;
             case GameEventType::ExtractionActivated:
-                if (event.actor == viewer.id) observations.push_back(PlayerObservation{ObservationType::ExtractionRevealed, viewer.id, event.cave});
+                if (event.actor == viewer.id && isExtractionVisibleTo(state, viewer))
+                    observations.push_back(PlayerObservation{
+                        ObservationType::ExtractionRevealed,
+                        viewer.id,
+                        state.extraction.cave});
                 break;
             case GameEventType::EscapeAvailable:
                 if (event.actor == viewer.id) observations.push_back(PlayerObservation{ObservationType::EscapeAvailable, viewer.id, event.cave});

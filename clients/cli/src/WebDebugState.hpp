@@ -156,6 +156,8 @@ inline void writeWebDebugState(const PlayerRoundSnapshot& snapshot,
     out << "  \"alive\":" << (snapshot.alive ? "true" : "false") << ",\n";
     out << "  \"currentCave\":" << snapshot.currentCave << ",\n";
     out << "  \"looseArrowPresent\":" << (snapshot.looseArrowPresent ? "true" : "false") << ",\n";
+    out << "  \"recoverableRivalSigilAvailable\":"
+        << (snapshot.recoverableRivalSigilAvailable ? "true" : "false") << ",\n";
     out << "  \"hasHunterSigil\":" << (snapshot.hasHunterSigil ? "true" : "false") << ",\n";
     out << "  \"inventoryCapacity\":" << snapshot.inventory.capacity << ",\n";
 

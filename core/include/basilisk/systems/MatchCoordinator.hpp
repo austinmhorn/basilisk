@@ -11,7 +11,9 @@
 
 namespace basilisk {
 
-struct PlayerSessionState {
+// Host-private orchestration state, including a player's pending action.
+// This must not be exposed directly to players.
+struct HostSessionState {
     bool connected{true};
     bool actionLocked{false};
     std::optional<PlayerAction> pendingAction;
@@ -36,12 +38,15 @@ public:
     void reconnect(PlayerId player);
     void advanceTime(std::uint64_t elapsedMs);
 
-    [[nodiscard]] const PlayerSessionState* session(PlayerId player) const;
-    [[nodiscard]] const std::vector<GameEvent>& lastEvents() const { return lastEvents_; }
+    [[nodiscard]] const HostSessionState* hostSession(PlayerId player) const;
+
+    // Unfiltered authoritative events for trusted host processing only. These
+    // must not be exposed directly to players.
+    [[nodiscard]] const std::vector<GameEvent>& authoritativeEvents() const { return lastEvents_; }
 
 private:
     MatchState& state_;
-    std::unordered_map<PlayerId, PlayerSessionState> sessions_;
+    std::unordered_map<PlayerId, HostSessionState> sessions_;
     std::vector<GameEvent> lastEvents_;
 
     [[nodiscard]] bool isLivingPlayer(PlayerId player) const;
