@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Basilisk player-facing interface reference">
+    <title>Basilisk · Player Interface Reference</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="demo-data.js" defer></script>
+    <script src="app.js" defer></script>
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <div>
+                <strong>BASILISK</strong>
+                <span>Player field view</span>
+            </div>
+        </div>
+        <div class="player-hud" aria-label="Hunter status">
+            <div class="matchup-hud" aria-label="Player matchup">
+                <section class="player-card" data-player-index="0">
+                    <span class="player-emblem" data-asset-slot="player-emblem" aria-hidden="true"><i></i></span>
+                    <div class="player-identity">
+                        <span class="player-designation">P1</span>
+                        <strong class="player-name">—</strong>
+                    </div>
+                    <span class="local-player-mark">You</span>
+                </section>
+                <div class="versus" aria-hidden="true"><span>VS</span></div>
+                <section class="player-card" data-player-index="1">
+                    <span class="player-emblem" data-asset-slot="player-emblem" aria-hidden="true"><i></i></span>
+                    <div class="player-identity">
+                        <span class="player-designation">P2</span>
+                        <strong class="player-name">—</strong>
+                    </div>
+                    <span class="local-player-mark">You</span>
+                </section>
+            </div>
+            <div class="gameplay-hud">
+                <div class="round-badge">
+                    <span>Round</span>
+                    <strong id="round">—</strong>
+                </div>
+                <div class="health-hud">
+                    <div class="hud-label">
+                        <span>HP</span>
+                        <strong id="hp">—</strong>
+                    </div>
+                    <div class="health-track" aria-hidden="true"><span id="healthFill"></span></div>
+                </div>
+                <div class="ammo-hud">
+                    <span class="hud-label">Arrows</span>
+                    <div id="ammoSlots" class="ammo-slots" aria-hidden="true"></div>
+                    <span id="arrowCount" class="visually-hidden"></span>
+                </div>
+                <div class="pack-hud">
+                    <span class="hud-label">Pack</span>
+                    <div id="packSlots" class="pack-slots" aria-hidden="true"></div>
+                    <span id="packCount" class="visually-hidden"></span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="shell">
+        <section class="map-panel" aria-labelledby="map-heading">
+            <div class="map-heading">
+                <div>
+                    <p class="eyebrow">Current location</p>
+                    <h1 id="map-heading">Cave <span id="currentCaveHeading">—</span></h1>
+                    <p id="mapStatus" class="map-context">Preparing map…</p>
+                </div>
+            </div>
+            <div class="map-frame">
+                <svg id="map" viewBox="0 0 1000 720" role="img" aria-label="Discovered Basilisk cave map"></svg>
+                <div class="map-vignette" aria-hidden="true"></div>
+                <section class="reference-states development-aid" aria-labelledby="reference-states-heading" aria-describedby="development-aid-label">
+                    <div class="reference-heading">
+                        <div>
+                            <strong id="reference-states-heading">Development reference</strong>
+                            <span id="development-aid-label">Development aid · not shipping UI</span>
+                        </div>
+                    </div>
+                    <div class="state-grid">
+                        <span><i class="state-node"></i>Normal cave</span>
+                        <span><i class="state-node hovered"></i>Hovered cave</span>
+                        <span><i class="state-node destination"></i>Route destination</span>
+                        <span><i class="state-line route"></i>Planned route</span>
+                        <span><i class="state-line warning"></i>Pit-warning tunnel</span>
+                    </div>
+                    <div class="modal-previews">
+                        <span>Objective demo states</span>
+                        <div class="objective-previews">
+                            <a data-objective-preview="start" href="?objective=start">Start</a>
+                            <a data-objective-preview="recoverable" href="?objective=recoverable">Recoverable</a>
+                            <a data-objective-preview="secured-hidden" href="?objective=secured-hidden">Secured · hidden</a>
+                            <a data-objective-preview="secured-visible" href="?objective=secured-visible">Secured · visible</a>
+                        </div>
+                    </div>
+                    <div class="modal-previews">
+                        <span>Modal demo states</span>
+                        <div>
+                            <button type="button" data-modal-preview="first-death">First death</button>
+                            <button type="button" data-modal-preview="final-death">Final death</button>
+                            <button type="button" data-modal-preview="hunt-ended">Hunt ended</button>
+                        </div>
+                    </div>
+                </section>
+                <div class="legend" aria-label="Map legend">
+                    <span><i class="legend-node current"></i>Current cave</span>
+                    <span><i class="legend-node"></i>Discovered cave</span>
+                    <span><i class="legend-node pit"></i>Temporary Pit</span>
+                    <span><i class="legend-line"></i>Known tunnel</span>
+                    <span><i class="legend-line unknown"></i>Unknown exit</span>
+                </div>
+            </div>
+        </section>
+
+        <aside class="sidebar">
+            <div class="objective-stack">
+                <section class="objective-card primary-objective" aria-labelledby="primary-objective-heading">
+                    <div class="section-heading">
+                        <div>
+                            <p class="eyebrow">Primary objective</p>
+                            <h2 id="primary-objective-heading">Slay the Basilisk</h2>
+                        </div>
+                        <span class="badge">Active</span>
+                    </div>
+                    <div class="objective-emblem basilisk-emblem" aria-hidden="true"><span></span></div>
+                    <p class="objective-copy">Find the Basilisk in the caverns and end its reign.</p>
+                </section>
+
+                <section id="secondaryObjective" class="objective-card secondary-objective" aria-labelledby="secondary-objective-heading" hidden>
+                    <div class="section-heading">
+                        <div>
+                            <p class="eyebrow">Secondary objective</p>
+                            <h2 id="secondary-objective-heading">Hunter’s Sigil</h2>
+                        </div>
+                        <span id="secondaryObjectiveBadge" class="badge">—</span>
+                    </div>
+                    <div class="objective-emblem sigil-emblem" aria-hidden="true"><span></span></div>
+                    <p id="secondaryObjectiveText" class="objective-copy"></p>
+                    <div id="extractionState" class="objective-state" hidden></div>
+                </section>
+            </div>
+
+            <section class="panel" aria-labelledby="report-heading">
+                <div class="section-heading compact">
+                    <h2 id="report-heading">Round report</h2>
+                    <span class="count" id="observationCount">0</span>
+                </div>
+                <div id="observations" class="list"></div>
+            </section>
+
+            <section class="panel" aria-labelledby="inventory-heading">
+                <div class="section-heading compact">
+                    <h2 id="inventory-heading">Inventory</h2>
+                    <span class="count" id="inventoryCapacity">0 / 0</span>
+                </div>
+                <div id="inventory" class="inventory-grid"></div>
+            </section>
+
+            <section class="panel actions-panel" aria-labelledby="actions-heading">
+                <div class="section-heading compact">
+                    <h2 id="actions-heading">Available actions</h2>
+                    <span class="count" id="actionCount">0</span>
+                </div>
+                <div id="actions" class="actions"></div>
+                <p class="prototype-note">Visual reference only · actions are not connected</p>
+            </section>
+        </aside>
+    </main>
+
+    <div id="modalLayer" class="modal-layer" hidden>
+        <section class="death-modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="modalSummary">
+            <p id="modalEyebrow" class="modal-eyebrow">Hunter status</p>
+            <h2 id="modalTitle">You died</h2>
+            <div class="modal-divider" aria-hidden="true"><span></span></div>
+            <p id="modalSummary" class="modal-summary"></p>
+            <div id="modalActions" class="modal-actions"></div>
+            <button id="closeModal" class="modal-close" type="button" aria-label="Close modal preview">×</button>
+        </section>
+    </div>
+</body>
+</html>
