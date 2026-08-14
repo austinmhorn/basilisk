@@ -93,3 +93,13 @@ add_executable(BasiliskOldHuntersMapTests
 )
 target_link_libraries(BasiliskOldHuntersMapTests PRIVATE Basilisk::Core)
 add_test(NAME BasiliskOldHuntersMapTests COMMAND BasiliskOldHuntersMapTests)
+
+find_program(BASILISK_NODE_EXECUTABLE NAMES node nodejs)
+if(BASILISK_NODE_EXECUTABLE)
+    add_test(
+        NAME BasiliskWebRoutePlannerTests
+        COMMAND "${BASILISK_NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/web_route_planner_tests.js"
+    )
+else()
+    message(STATUS "Node.js not found; web route planner unit tests will not be registered.")
+endif()
