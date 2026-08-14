@@ -12,6 +12,7 @@ option(BASILISK_BUILD_SIM "Build the automated simulation harness" ON)
 option(BASILISK_BUILD_GAME "Build the SDL3 graphical client" OFF)
 
 add_subdirectory(core)
+add_subdirectory(clients/shared)
 
 if(BASILISK_BUILD_CLI)
     add_subdirectory(clients/cli)

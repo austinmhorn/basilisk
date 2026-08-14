@@ -16,6 +16,7 @@
 #include "basilisk/Action.hpp"
 #include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/MatchResult.hpp"
+#include "basilisk/client/Presentation.hpp"
 #include "basilisk/systems/RoundController.hpp"
 #include "basilisk/systems/SoloCoordinator.hpp"
 #include "basilisk/systems/SnapshotSystem.hpp"
@@ -26,8 +27,6 @@ using namespace basilisk;
 namespace {
 
 constexpr const char* kBrowserActionPath = "basilisk_debug_action.txt";
-
-std::string itemName(ItemType item) { return cli_debug::itemName(item); }
 
 std::string targetText(const AvailableAction& action) {
     if (action.targetCave.has_value()) return "Cave " + std::to_string(*action.targetCave);
@@ -40,7 +39,10 @@ std::string actionText(const AvailableAction& action) {
         case ActionType::Move: return "Move through " + targetText(action);
         case ActionType::Search: return "Search this cave";
         case ActionType::Shoot: return "Fire an arrow toward " + targetText(action);
-        case ActionType::UseItem: return action.targetItem.has_value() ? "Use " + itemName(*action.targetItem) : "Use item";
+        case ActionType::UseItem:
+            return action.targetItem.has_value()
+                ? "Use " + std::string(presentation::itemName(*action.targetItem))
+                : "Use item";
         case ActionType::Contextual:
             if (action.contextualAction == ContextualActionType::Escape) return "Escape with the Hunter's Sigil";
             return "Contextual action";
@@ -68,7 +70,7 @@ void printSnapshot(const PlayerRoundSnapshot& snapshot) {
     if (!snapshot.observations.empty()) {
         std::cout << "\nROUND REPORT:\n";
         for (const auto& observation : snapshot.observations)
-            std::cout << "  • " << cli_debug::observationText(observation) << '\n';
+            std::cout << "  • " << presentation::observationText(observation) << '\n';
     }
     std::cout << '\n';
     for (std::size_t i = 0; i < snapshot.availableActions.size(); ++i)

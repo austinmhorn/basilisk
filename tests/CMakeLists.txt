@@ -46,6 +46,12 @@ add_executable(BasiliskObservationTests
 target_link_libraries(BasiliskObservationTests PRIVATE Basilisk::Core)
 add_test(NAME BasiliskObservationTests COMMAND BasiliskObservationTests)
 
+add_executable(BasiliskClientPresentationTests
+    client_presentation_tests.cpp
+)
+target_link_libraries(BasiliskClientPresentationTests PRIVATE Basilisk::ClientPresentation)
+add_test(NAME BasiliskClientPresentationTests COMMAND BasiliskClientPresentationTests)
+
 add_executable(BasiliskSnapshotTests
     snapshot_tests.cpp
 )
