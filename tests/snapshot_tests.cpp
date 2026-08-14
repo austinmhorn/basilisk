@@ -122,6 +122,7 @@ void snapshotContainsOnlyPlayerFacingCoreState() {
 
     assert(snapshot.player == 1);
     assert(snapshot.currentCave == 1);
+    assert(snapshot.currentCave == snapshot.map.currentCave);
     assert(snapshot.health == 60);
     assert(snapshot.maxHealth == 100);
     assert(snapshot.arrows == 2);

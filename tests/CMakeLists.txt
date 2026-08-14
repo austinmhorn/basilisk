@@ -52,6 +52,12 @@ add_executable(BasiliskClientPresentationTests
 target_link_libraries(BasiliskClientPresentationTests PRIVATE Basilisk::ClientPresentation)
 add_test(NAME BasiliskClientPresentationTests COMMAND BasiliskClientPresentationTests)
 
+add_executable(BasiliskClientRoutePlannerTests
+    client_route_planner_tests.cpp
+)
+target_link_libraries(BasiliskClientRoutePlannerTests PRIVATE Basilisk::ClientNavigation)
+add_test(NAME BasiliskClientRoutePlannerTests COMMAND BasiliskClientRoutePlannerTests)
+
 add_executable(BasiliskSnapshotTests
     snapshot_tests.cpp
 )
