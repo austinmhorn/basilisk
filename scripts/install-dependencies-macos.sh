@@ -4,6 +4,19 @@ set -euo pipefail
 
 readonly HOMEBREW_INSTALL_URL="https://brew.sh/"
 
+install_web=false
+if (($# > 1)); then
+    printf 'Usage: %s [--with-web]\n' "$0" >&2
+    exit 2
+fi
+if (($# == 1)); then
+    [[ "$1" == "--with-web" ]] || {
+        printf 'Usage: %s [--with-web]\n' "$0" >&2
+        exit 2
+    }
+    install_web=true
+fi
+
 log() {
     printf '[Basilisk bootstrap] %s\n' "$*"
 }
@@ -42,8 +55,13 @@ fi
 log "Updating Homebrew package metadata..."
 brew update
 
+required_packages=(git cmake python)
+if [[ "$install_web" == true ]]; then
+    required_packages+=(emscripten)
+fi
+
 packages=()
-for package in git cmake python; do
+for package in "${required_packages[@]}"; do
     if brew list --versions "$package" >/dev/null 2>&1; then
         log "$package is already installed."
     else
@@ -63,9 +81,6 @@ if brew outdated --quiet cmake | grep -qx 'cmake'; then
     brew upgrade cmake
 fi
 
-# Future SFML extension point:
-# Add the Homebrew "sfml" formula here when Basilisk introduces an SFML client.
-
 log "Verifying development tools..."
 git --version
 cmake --version | head -n 1
@@ -77,4 +92,14 @@ else
     c++ --version | head -n 1
 fi
 
-log "Dependencies are ready."
+if [[ "$install_web" == true ]]; then
+    emcc --version | head -n 1
+    em++ --version | head -n 1
+    emcmake --version
+fi
+
+if [[ "$install_web" == true ]]; then
+    log "Native and optional WebAssembly dependencies are ready."
+else
+    log "Native dependencies are ready. Use --with-web to also install Emscripten."
+fi

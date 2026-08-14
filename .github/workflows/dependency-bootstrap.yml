@@ -126,7 +126,7 @@ jobs:
           }
 
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBASILISK_BUILD_GAME=ON
 
       - name: Build
         run: cmake --build build --config Release
@@ -157,7 +157,7 @@ jobs:
               cmake --version
               python3 --version
               g++ --version
-              cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+              cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBASILISK_BUILD_GAME=ON
               cmake --build build --config Release
               ctest --test-dir build --build-config Release --output-on-failure
             '

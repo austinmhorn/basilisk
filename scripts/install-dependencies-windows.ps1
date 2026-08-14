@@ -58,9 +58,8 @@ Install-WingetPackage `
         '--wait --passive --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended'
     )
 
-# Future SFML extension point:
-# Add the selected Windows SFML distribution/package here when Basilisk
-# introduces an SFML client. Do not couple it to the current Core bootstrap.
+# SDL3 is fetched and built by the project when BASILISK_BUILD_GAME is enabled;
+# no system-wide SDL installation is required.
 
 Refresh-ProcessPath
 Write-Step 'Verifying development tools...'

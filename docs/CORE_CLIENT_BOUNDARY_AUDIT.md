@@ -57,6 +57,31 @@ The current CLI:
 
 This is a strong foundation for the first playable prototype.
 
+### One SDL3 source now targets native desktop and the browser
+
+The opt-in `BasiliskGame` target in `clients/game` links `BasiliskCore` and
+uses SDL3 main callbacks. SDL3 3.4.10 is pinned through CMake FetchContent, and
+the same C++ source has been proven as both a native application and an
+Emscripten/WebAssembly browser application:
+
+```text
+BasiliskCore
+    |
+clients/game (C++ / SDL3)
+    |
+    +-- native desktop
+    +-- Emscripten / WebAssembly browser
+```
+
+This target is intentionally only a graphical foundation today: it creates a
+window and renderer, runs the callback lifecycle, and demonstrates a safe Core
+link. Future presentation must consume `PlayerRoundSnapshot` and Core-produced
+legal actions; it must not expose `MatchState`.
+
+`clients/web-debug` remains useful as a developer debug and acceptance harness.
+It is not the architecture for the shipping browser UI and should not be
+ported into `clients/game` wholesale.
+
 ## Audit findings / work items
 
 ### P0 — freeze BOT V3.14 as regression benchmark
@@ -118,11 +143,11 @@ Each `PlayerObservation` must be derivable from information the player is entitl
 
 Item names and observation strings currently live in the CLI, while simulator files also contain their own item-name helpers. These are presentation concerns, but repeated mappings are easy to let drift when new items are added.
 
-Before a graphical client, introduce a small presentation/shared-client layer or stable IDs so each client does not need to maintain separate exhaustive mappings manually.
+Before adding gameplay presentation to the graphical client, introduce a small presentation/shared-client layer or stable IDs so each client does not need to maintain separate exhaustive mappings manually.
 
 ### P1 — make CLI the first playable acceptance client
 
-Before implementing a graphical client or server transport, the CLI should support a complete understandable game without developer knowledge.
+Before implementing graphical gameplay or a server transport, the CLI should support a complete understandable game without developer knowledge.
 
 Acceptance target:
 
@@ -164,9 +189,10 @@ Do not serialize `MatchState` directly. Build network DTOs from the same player-
 1. Keep BOT V3.14 frozen.
 2. Treat game development as pre-alpha `v0.x`.
 3. Add boundary/regression tests before large refactors.
-4. Upgrade the CLI from developer hot-seat prototype to first playable acceptance client.
-5. Human-playtest before designing the final graphical client or multiplayer protocol.
+4. Keep upgrading the CLI as the first playable acceptance client.
+5. Grow `clients/game` from its proven native/browser SDL3 foundation using only player-safe snapshots and legal actions.
+6. Human-playtest before designing the final graphical gameplay interface or multiplayer protocol.
 
 ## Definition of success for this phase
 
-The phase is complete when a human can play repeated full matches through the CLI using only information supplied by Core, while the frozen V3.14 seeded simulator remains behaviorally stable except for explicitly approved gameplay changes.
+The phase is complete when a human can play repeated full matches through a player-facing client using only information supplied by Core, while the frozen V3.14 seeded simulator remains behaviorally stable except for explicitly approved gameplay changes. The current SDL3 target proves portability and lifecycle integration only; it does not yet meet that gameplay criterion.

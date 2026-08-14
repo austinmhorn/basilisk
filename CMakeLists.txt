@@ -9,6 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(BASILISK_BUILD_TESTS "Build BasiliskCore tests" ON)
 option(BASILISK_BUILD_CLI "Build the headless playable CLI" ON)
 option(BASILISK_BUILD_SIM "Build the automated simulation harness" ON)
+option(BASILISK_BUILD_GAME "Build the SDL3 graphical client" OFF)
 
 add_subdirectory(core)
 
@@ -18,6 +19,10 @@ endif()
 
 if(BASILISK_BUILD_SIM)
     add_subdirectory(clients/sim)
+endif()
+
+if(BASILISK_BUILD_GAME)
+    add_subdirectory(clients/game)
 endif()
 
 if(BASILISK_BUILD_TESTS)

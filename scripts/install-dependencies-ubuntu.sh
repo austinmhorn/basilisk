@@ -39,11 +39,25 @@ fi
 log "Updating apt package metadata..."
 "${apt_prefix[@]}" apt-get update
 
-log "Installing Git, CMake, Python 3, and the GNU C++ build toolchain..."
-"${apt_prefix[@]}" apt-get install -y git cmake python3 build-essential
-
-# Future SFML extension point:
-# Add Ubuntu's libsfml-dev package here when Basilisk introduces an SFML client.
+log "Installing native build tools and SDL3 desktop-video build prerequisites..."
+"${apt_prefix[@]}" apt-get install -y \
+    git \
+    cmake \
+    python3 \
+    build-essential \
+    pkg-config \
+    libx11-dev \
+    libxext-dev \
+    libxrandr-dev \
+    libxcursor-dev \
+    libxfixes-dev \
+    libxi-dev \
+    libxss-dev \
+    libxkbcommon-dev \
+    libgl1-mesa-dev \
+    libegl1-mesa-dev \
+    libgles2-mesa-dev \
+    libudev-dev
 
 log "Verifying development tools..."
 git --version
