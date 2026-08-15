@@ -48,7 +48,7 @@ void payloadObservationTextIsStable() {
     auto enraged = observation(ObservationType::EnragedLastKnownCave);
     enraged.cave = CaveId{17};
     assert(presentation::observationText(enraged) ==
-           "The enraged Basilisk was last seen in Cave 17.");
+           "A monstrous hiss echoes through the tunnels from Cave 17.");
 
     auto pit = observation(ObservationType::PitInvestigationSucceeded);
     pit.tunnel = TunnelId{9};

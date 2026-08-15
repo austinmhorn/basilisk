@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <memory>
 #include <new>
 #include <optional>
@@ -36,6 +37,7 @@ struct AppState {
     Uint8 backgroundBlue{24};
     bool demoMapEnabled{false};
     bool screenShellEnabled{false};
+    bool autoLockSelectedActions{false};
     std::size_t demoSnapshotStage{0};
 
     std::unique_ptr<basilisk::game::ClientSessionController> session;
@@ -77,6 +79,13 @@ void ingestDemoSnapshot(
     (void)session.ingestSnapshot(std::move(snapshot));
 }
 
+void autoLockSelectedAction(AppState& state) {
+    if (!state.autoLockSelectedActions) return;
+    if (!state.actionSelection.submitAndLock(*state.session)) {
+        SDL_Log("Automatic local-game action submit/lock failed");
+    }
+}
+
 } // namespace
 
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
@@ -105,15 +114,42 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
             break;
         } else if (argv != nullptr && argv[index] != nullptr &&
                    std::string_view{argv[index]} == "--local-game") {
+            basilisk::MapSeed mapSeed{20260812};
+            for (int seedIndex = 1; seedIndex < argc; ++seedIndex) {
+                if (argv[seedIndex] == nullptr ||
+                    std::string_view{argv[seedIndex]} != "--map-seed") {
+                    continue;
+                }
+                if (seedIndex + 1 >= argc || argv[seedIndex + 1] == nullptr) {
+                    SDL_Log("--map-seed requires an unsigned integer value");
+                    return SDL_APP_FAILURE;
+                }
+                const std::string_view value{argv[++seedIndex]};
+                basilisk::MapSeed parsed{};
+                const auto result = std::from_chars(
+                    value.data(), value.data() + value.size(), parsed);
+                if (result.ec != std::errc{} ||
+                    result.ptr != value.data() + value.size()) {
+                    SDL_Log(
+                        "Invalid --map-seed value '%s'; expected an unsigned integer",
+                        argv[seedIndex]);
+                    return SDL_APP_FAILURE;
+                }
+                mapSeed = parsed;
+            }
+
             state->session = basilisk::game::LocalGameSessionAdapter::create(
-                basilisk::MapSeed{20260812},
+                mapSeed,
                 basilisk::MatchSeed{424242});
             if (state->session == nullptr) {
                 SDL_Log("Unable to create local Core session");
                 return SDL_APP_FAILURE;
             }
             state->screenShellEnabled = true;
-            SDL_Log("Trusted local Core session enabled");
+            state->autoLockSelectedActions = true;
+            SDL_Log(
+                "Trusted local Core session enabled (map seed: %llu)",
+                static_cast<unsigned long long>(mapSeed));
             break;
         }
     }
@@ -306,6 +342,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             state->mapActionMenu.dismiss();
             state->actionSelection.ensureVisible(
                 index, state->actionGeometry.visibleCapacity);
+            autoLockSelectedAction(*state);
         }
         return SDL_APP_CONTINUE;
     }
@@ -408,6 +445,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                             state->actionSelection.ensureVisible(
                                 menuChoice->actionIndex,
                                 state->actionGeometry.visibleCapacity);
+                            autoLockSelectedAction(*state);
                         }
                     } else if (state->mapActionMenu.target().has_value() &&
                                state->mapActionMenu.target()->kind ==
@@ -440,20 +478,24 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             event->button.button == SDL_BUTTON_LEFT) {
             if (const auto item = basilisk::game::hitTestInventoryItem(
                     state->inventoryGeometry, pointer); item.has_value()) {
-                (void)basilisk::game::selectInventoryItemAction(
-                    *item,
-                    snapshot->availableActions,
-                    state->session->viewContext(),
-                    state->actionSelection);
+                if (basilisk::game::selectInventoryItemAction(
+                        *item,
+                        snapshot->availableActions,
+                        state->session->viewContext(),
+                        state->actionSelection)) {
+                    autoLockSelectedAction(*state);
+                }
                 state->mapActionMenu.dismiss();
                 return SDL_APP_CONTINUE;
             }
             if (const auto actionIndex = basilisk::game::hitTestActionRow(
                     state->actionGeometry, pointer); actionIndex.has_value()) {
-                (void)state->actionSelection.select(
-                    *actionIndex,
-                    snapshot->availableActions,
-                    state->session->viewContext());
+                if (state->actionSelection.select(
+                        *actionIndex,
+                        snapshot->availableActions,
+                        state->session->viewContext())) {
+                    autoLockSelectedAction(*state);
+                }
                 state->mapActionMenu.dismiss();
                 return SDL_APP_CONTINUE;
             }

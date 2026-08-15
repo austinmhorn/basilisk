@@ -14,6 +14,9 @@
 #include "LocalGameSessionAdapter.hpp"
 #include "MapActionMenu.hpp"
 #include "SnapshotPresentation.hpp"
+#include "basilisk/systems/RoundController.hpp"
+#include "basilisk/systems/SnapshotSystem.hpp"
+#include "basilisk/world/MapGenerator.hpp"
 
 using namespace basilisk;
 using namespace basilisk::game;
@@ -76,6 +79,42 @@ public:
         quitPlayer = player;
         return true;
     }
+};
+
+class CoreRoundSink final : public ActionCommandSink {
+public:
+    explicit CoreRoundSink(MatchState& state) : state_(state) {}
+
+    void attach(ClientSessionController& session) noexcept {
+        session_ = &session;
+    }
+
+    bool submitAction(const PlayerAction& action) override {
+        submitted = action;
+        pending_ = action;
+        return true;
+    }
+
+    bool lockAction(PlayerId player) override {
+        if (session_ == nullptr || !pending_.has_value() ||
+            pending_->player != player) {
+            return false;
+        }
+        locked = *pending_;
+        pending_.reset();
+        RoundController controller;
+        const auto events = controller.resolve(state_, {*locked});
+        return session_->ingestSnapshot(
+            SnapshotSystem::buildForPlayer(state_, player, events));
+    }
+
+    std::optional<PlayerAction> submitted;
+    std::optional<PlayerAction> locked;
+
+private:
+    MatchState& state_;
+    ClientSessionController* session_{nullptr};
+    std::optional<PlayerAction> pending_;
 };
 
 void ingestSnapshotForView(
@@ -633,6 +672,59 @@ void inventoryItemSelectsOnlyMatchingLegalUseAction() {
     assert(!unusableSelection.draft().has_value());
 }
 
+void huntersMapStaysHuntersMapThroughClientActionPipeline() {
+    MatchState state = MapGenerator::generate(MapSeed{1}, MatchSeed{424242});
+    std::erase_if(state.players, [](const PlayerState& player) {
+        return player.id != PlayerId{1};
+    });
+    PlayerState& player = state.players.front();
+    player.cave = CaveId{6};
+    player.discovery.knownCaves = {CaveId{6}};
+    player.discovery.knownConnections.clear();
+    const auto& exits = state.world.cave(CaveId{6}).connections;
+    const auto caveSeven = std::find(exits.begin(), exits.end(), CaveId{7});
+    assert(caveSeven != exits.end());
+    player.knownPitTunnels[CaveId{6}] = static_cast<TunnelId>(
+        std::distance(exits.begin(), caveSeven) + 1);
+    player.inventory.items = {ItemInstance{ItemType::OldHuntersMap}};
+    player.pitMapRevealRounds = 0;
+    state.jackals.clear();
+    state.looseArrows.clear();
+
+    auto commands = std::make_unique<CoreRoundSink>(state);
+    CoreRoundSink* core = commands.get();
+    ClientSessionController session(
+        {}, {}, playingView(), std::move(commands), nullptr);
+    core->attach(session);
+    assert(session.ingestSnapshot(
+        SnapshotSystem::buildForPlayer(state, player.id, {})));
+
+    const PlayerRoundSnapshot* before = session.displayedSnapshot();
+    assert(before != nullptr);
+    ActionSelectionState selection;
+    selection.synchronize(
+        before->round, before->availableActions.size(), playingView());
+    assert(selectInventoryItemAction(
+        ItemType::OldHuntersMap,
+        before->availableActions,
+        playingView(),
+        selection));
+    assert(selection.draft()->targetItem == ItemType::OldHuntersMap);
+    assert(selection.submitAndLock(session));
+
+    assert(core->submitted->targetItem == ItemType::OldHuntersMap);
+    assert(core->locked->targetItem == ItemType::OldHuntersMap);
+    assert(player.pitMapRevealRounds == 0);
+    const PlayerRoundSnapshot* after = session.displayedSnapshot();
+    assert(after != nullptr);
+    assert(after->temporarilyRevealedPitCaves.empty());
+    assert(std::none_of(
+        after->map.caves.begin(), after->map.caves.end(),
+        [](const DiscoveredCaveView& cave) {
+            return cave.cave == CaveId{7};
+        }));
+}
+
 void mapMenuAndSidebarShareOneDraft() {
     AvailableAction move = actionWithShape(ActionType::Move);
     move.targetCave = CaveId{12};
@@ -830,6 +922,7 @@ int main() {
     caveMenuUsesOnlyLiteralTargetMatches();
     currentCaveMenuUsesOnlyCurrentLocationActions();
     inventoryItemSelectsOnlyMatchingLegalUseAction();
+    huntersMapStaysHuntersMapThroughClientActionPipeline();
     mapMenuAndSidebarShareOneDraft();
     unknownExitMatchesExactCurrentCaveProvenance();
     spectatorCannotOpenOrChooseMapAction();

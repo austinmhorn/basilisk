@@ -27,7 +27,8 @@ std::string observationText(const PlayerObservation& observation) {
         case ObservationType::RestlessBasiliskNoise: return "A heavy scraping sound echoes through distant tunnels.";
         case ObservationType::EnragedLastKnownCave:
             return observation.cave.has_value()
-                ? "The enraged Basilisk was last seen in Cave " + std::to_string(*observation.cave) + "."
+                ? "A monstrous hiss echoes through the tunnels from Cave " +
+                    std::to_string(*observation.cave) + "."
                 : "The enraged Basilisk left a recent trail.";
         case ObservationType::PitInvestigationSucceeded:
             return observation.tunnel.has_value()
