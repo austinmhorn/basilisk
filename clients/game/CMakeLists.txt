@@ -90,14 +90,17 @@ unset(_font_name)
 
 add_executable(BasiliskGame
     src/DemoMap.cpp
+    src/DemoUi.cpp
     src/main.cpp
     src/MapRenderer.cpp
+    src/ScreenShell.cpp
     src/TextRenderer.cpp
 )
 
 target_link_libraries(BasiliskGame
     PRIVATE
         Basilisk::GameMapLayout
+        Basilisk::ClientPresentation
         SDL3::SDL3
         SDL3_ttf::SDL3_ttf
 )

@@ -2,6 +2,7 @@
 
 #include <SDL3_ttf/SDL_ttf.h>
 
+#include <algorithm>
 #include <array>
 #include <string>
 
@@ -112,6 +113,30 @@ bool TextRenderer::drawText(
         return true;
     }
 
+    const auto cached = std::find_if(
+        textCache_.begin(),
+        textCache_.end(),
+        [&](const CachedText& entry) {
+            return entry.text == text && entry.weight == weight &&
+                entry.pointSize == pointSize && entry.color.r == color.r &&
+                entry.color.g == color.g && entry.color.b == color.b &&
+                entry.color.a == color.a;
+        });
+    if (cached != textCache_.end()) {
+        const SDL_FRect destination{
+            position.x,
+            position.y,
+            static_cast<float>(cached->size.width),
+            static_cast<float>(cached->size.height),
+        };
+        if (!SDL_RenderTexture(renderer_, cached->texture, nullptr, &destination)) {
+            error = errorWithSdlDetail("Unable to draw cached text texture");
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+
     TTF_Font* font = sizedFont(weight, pointSize, error);
     if (font == nullptr) return false;
 
@@ -123,12 +148,7 @@ bool TextRenderer::drawText(
     }
 
     SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer_, surface);
-    const SDL_FRect destination{
-        position.x,
-        position.y,
-        static_cast<float>(surface->w),
-        static_cast<float>(surface->h),
-    };
+    const TextSize renderedSize{surface->w, surface->h};
     SDL_DestroySurface(surface);
 
     if (texture == nullptr) {
@@ -136,8 +156,15 @@ bool TextRenderer::drawText(
         return false;
     }
 
+    textCache_.push_back(CachedText{
+        std::string{text}, weight, pointSize, color, texture, renderedSize});
+    const SDL_FRect destination{
+        position.x,
+        position.y,
+        static_cast<float>(renderedSize.width),
+        static_cast<float>(renderedSize.height),
+    };
     const bool rendered = SDL_RenderTexture(renderer_, texture, nullptr, &destination);
-    SDL_DestroyTexture(texture);
     if (!rendered) {
         error = errorWithSdlDetail("Unable to draw text texture");
         return false;
@@ -148,6 +175,9 @@ bool TextRenderer::drawText(
 }
 
 void TextRenderer::reset() {
+    for (CachedText& text : textCache_) SDL_DestroyTexture(text.texture);
+    textCache_.clear();
+
     for (TTF_Font*& font : fonts_) {
         if (font != nullptr) {
             TTF_CloseFont(font);

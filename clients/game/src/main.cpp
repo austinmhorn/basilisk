@@ -9,7 +9,9 @@
 #include <string_view>
 
 #include "DemoMap.hpp"
+#include "DemoUi.hpp"
 #include "MapRenderer.hpp"
+#include "ScreenShell.hpp"
 #include "TextRenderer.hpp"
 #include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/Random.hpp"
@@ -27,41 +29,13 @@ struct AppState {
     // rather than exposing the authoritative MatchState to the client.
     basilisk::PlayerRoundSnapshot snapshot{};
     basilisk::game::PlayerMapLayout mapLayout;
+    basilisk::game::ScreenShellData demoScreenData;
 };
 
 std::string bundledFontDirectory() {
     const char* basePath = SDL_GetBasePath();
     if (basePath == nullptr) return {};
     return std::string{basePath} + "assets/fonts";
-}
-
-bool renderDemoTypography(basilisk::game::TextRenderer& textRenderer) {
-    using basilisk::game::FontWeight;
-
-    std::string error;
-    const SDL_Color primary{237, 241, 244, SDL_ALPHA_OPAQUE};
-    const SDL_Color muted{141, 153, 164, SDL_ALPHA_OPAQUE};
-    const SDL_Color gold{228, 185, 88, SDL_ALPHA_OPAQUE};
-
-    const bool rendered =
-        textRenderer.drawText(
-            "BASILISK", FontWeight::Bold, 18.0F, primary, {28.0F, 22.0F}, error) &&
-        textRenderer.drawText(
-            "PLAYER FIELD VIEW", FontWeight::Medium, 10.0F, muted, {28.0F, 46.0F}, error) &&
-        textRenderer.drawText(
-            "CURRENT LOCATION", FontWeight::Bold, 10.0F, gold, {28.0F, 82.0F}, error) &&
-        textRenderer.drawText(
-            "Cave 7", FontWeight::SemiBold, 28.0F, primary, {28.0F, 98.0F}, error) &&
-        textRenderer.drawText(
-            "6 discovered \xC2\xB7 40 total",
-            FontWeight::Regular,
-            11.0F,
-            muted,
-            {28.0F, 132.0F},
-            error);
-
-    if (!rendered) SDL_Log("Typography rendering failed: %s", error.c_str());
-    return rendered;
 }
 
 } // namespace
@@ -78,6 +52,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         if (argv != nullptr && argv[index] != nullptr &&
             std::string_view{argv[index]} == "--demo-map") {
             state->snapshot = basilisk::game::demo::makeDemoMapSnapshot();
+            state->demoScreenData = basilisk::game::demo::makeDemoScreenShellData();
             state->demoMapEnabled = true;
             SDL_Log("Development demo map enabled");
             break;
@@ -89,10 +64,29 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         return SDL_APP_FAILURE;
     }
 
+    constexpr SDL_WindowFlags windowFlags =
+        SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_RESIZABLE;
     if (!SDL_CreateWindowAndRenderer(
-            "Basilisk", 960, 540, 0, &state->window, &state->renderer)) {
+            "Basilisk", 1440, 900, windowFlags, &state->window, &state->renderer)) {
         SDL_Log("SDL_CreateWindowAndRenderer failed: %s", SDL_GetError());
         return SDL_APP_FAILURE;
+    }
+
+    int logicalWidth = 0;
+    int logicalHeight = 0;
+    int outputWidth = 0;
+    int outputHeight = 0;
+    if (SDL_GetWindowSize(state->window, &logicalWidth, &logicalHeight) &&
+        SDL_GetRenderOutputSize(state->renderer, &outputWidth, &outputHeight)) {
+        SDL_Log(
+            "Window: logical=%dx%d, render-output=%dx%d, pixel-density=%.2f, "
+            "display-scale=%.2f",
+            logicalWidth,
+            logicalHeight,
+            outputWidth,
+            outputHeight,
+            SDL_GetWindowPixelDensity(state->window),
+            SDL_GetWindowDisplayScale(state->window));
     }
 
     if (!SDL_SetRenderVSync(state->renderer, 1)) {
@@ -132,8 +126,6 @@ SDL_AppResult SDL_AppEvent(void*, SDL_Event* event) {
 SDL_AppResult SDL_AppIterate(void* appstate) {
     auto* state = static_cast<AppState*>(appstate);
 
-    state->mapLayout.update(state->snapshot.map);
-
     SDL_SetRenderDrawColor(
         state->renderer, 12, 16, state->backgroundBlue, SDL_ALPHA_OPAQUE);
     SDL_RenderClear(state->renderer);
@@ -141,25 +133,38 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
     int outputWidth = 0;
     int outputHeight = 0;
     if (SDL_GetRenderOutputSize(state->renderer, &outputWidth, &outputHeight)) {
-        constexpr float padding = 24.0F;
-        const basilisk::game::MapViewport viewport{
-            SDL_FRect{
-                padding,
-                padding,
-                std::max(0.0F, static_cast<float>(outputWidth) - padding * 2.0F),
-                std::max(0.0F, static_cast<float>(outputHeight) - padding * 2.0F)},
-            basilisk::game::LogicalPoint{},
-            42.0F};
-        basilisk::game::renderPlayerKnownMap(
-            state->renderer,
-            state->snapshot.map,
-            state->mapLayout,
-            state->snapshot.currentCave,
-            viewport);
-    }
-
-    if (state->demoMapEnabled && !renderDemoTypography(*state->textRenderer)) {
-        return SDL_APP_FAILURE;
+        if (state->demoMapEnabled) {
+            std::string screenError;
+            if (!basilisk::game::renderScreenShell(
+                    state->renderer,
+                    *state->textRenderer,
+                    state->snapshot,
+                    state->mapLayout,
+                    state->demoScreenData,
+                    outputWidth,
+                    outputHeight,
+                    screenError)) {
+                SDL_Log("Screen shell rendering failed: %s", screenError.c_str());
+                return SDL_APP_FAILURE;
+            }
+        } else {
+            state->mapLayout.update(state->snapshot.map);
+            constexpr float padding = 24.0F;
+            const basilisk::game::MapViewport viewport{
+                SDL_FRect{
+                    padding,
+                    padding,
+                    std::max(0.0F, static_cast<float>(outputWidth) - padding * 2.0F),
+                    std::max(0.0F, static_cast<float>(outputHeight) - padding * 2.0F)},
+                basilisk::game::LogicalPoint{},
+                42.0F};
+            basilisk::game::renderPlayerKnownMap(
+                state->renderer,
+                state->snapshot.map,
+                state->mapLayout,
+                state->snapshot.currentCave,
+                viewport);
+        }
     }
 
     SDL_RenderPresent(state->renderer);

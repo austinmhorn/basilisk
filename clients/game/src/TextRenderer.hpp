@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 struct TTF_Font;
 
@@ -53,6 +54,15 @@ class TextRenderer {
         std::string& error);
 
   private:
+    struct CachedText {
+        std::string text;
+        FontWeight weight{FontWeight::Regular};
+        float pointSize{};
+        SDL_Color color{};
+        SDL_Texture* texture{nullptr};
+        TextSize size{};
+    };
+
     void reset();
     [[nodiscard]] TTF_Font* fontFor(FontWeight weight) const;
     [[nodiscard]] TTF_Font* sizedFont(
@@ -60,6 +70,7 @@ class TextRenderer {
 
     SDL_Renderer* renderer_{nullptr};
     std::array<TTF_Font*, 4> fonts_{};
+    std::vector<CachedText> textCache_;
     bool ttfInitialized_{false};
 };
 
