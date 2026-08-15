@@ -4,6 +4,7 @@
 #include <cmath>
 #include <optional>
 #include <string>
+#include <sstream>
 
 #include "ActionPresentation.hpp"
 #include "MapRenderer.hpp"
@@ -159,6 +160,95 @@ struct DrawingContext {
         return false;
     }
 };
+
+std::optional<std::vector<std::string>> wrapTextLines(
+    const DrawingContext& context,
+    std::string_view text,
+    FontWeight weight,
+    float size,
+    float maxWidth) {
+
+    std::vector<std::string> lines;
+    std::istringstream stream(std::string{text});
+
+    std::string word;
+    std::string currentLine;
+
+    const float pointSize = size * context.scale;
+
+    while (stream >> word) {
+        const std::string candidate =
+            currentLine.empty() ? word : currentLine + " " + word;
+
+        const auto measured =
+            context.text->measureText(
+                candidate,
+                weight,
+                pointSize,
+                *context.error);
+
+        if (!measured.has_value()) {
+            return std::nullopt;
+        }
+
+        if (!currentLine.empty() &&
+            static_cast<float>(measured->width) > maxWidth) {
+
+            lines.push_back(currentLine);
+            currentLine = word;
+        } else {
+            currentLine = candidate;
+        }
+    }
+
+    if (!currentLine.empty()) {
+        lines.push_back(currentLine);
+    }
+
+    if (lines.empty()) {
+        lines.emplace_back();
+    }
+
+    return lines;
+}
+
+std::optional<float> roundReportHeight(
+    const DrawingContext& context,
+    const PlayerRoundSnapshot& snapshot,
+    float panelWidth) {
+
+    const float scale = context.scale;
+    const std::vector<std::string> report = roundReportText(snapshot);
+    const std::size_t visible = std::min<std::size_t>(3, report.size());
+
+    const float rowWidth = panelWidth - 26.0F * scale;
+    const float textWidth = rowWidth - 25.0F * scale;
+
+    float height = 40.0F * scale;
+
+    for (std::size_t index = 0; index < visible; ++index) {
+        const auto lines = wrapTextLines(
+            context,
+            report[index],
+            FontWeight::Regular,
+            ui::Typography::reportBody,
+            textWidth);
+
+        if (!lines.has_value()) {
+            return std::nullopt;
+        }
+
+        const float rowHeight = std::max(
+            25.0F * scale,
+            (10.0F + static_cast<float>(lines->size()) * 14.0F) * scale);
+
+        height += rowHeight + 4.0F * scale;
+    }
+
+    height += 8.0F * scale;
+
+    return std::max(130.0F * scale, height);
+}
 
 const PublicPlayerSlot* findSlot(
     const ClientSessionController& session, PlayerSlot slot) {
@@ -790,6 +880,7 @@ bool drawRoundReport(
     SDL_FRect panel) {
 
     const float scale = context.scale;
+
     drawPanel(
         context.renderer,
         panel,
@@ -797,6 +888,7 @@ bool drawRoundReport(
         ui::Theme::surface,
         ui::Theme::borderSoft,
         scale);
+
     if (!drawSectionHeader(
             context,
             "ROUND REPORT",
@@ -807,15 +899,41 @@ bool drawRoundReport(
 
     const std::vector<std::string> report = roundReportText(snapshot);
     const std::size_t visible = std::min<std::size_t>(3, report.size());
+
+    float rowY = panel.y + 40.0F * scale;
+
     for (std::size_t index = 0; index < visible; ++index) {
+        const float rowWidth = panel.w - 26.0F * scale;
+        const float textWidth = rowWidth - 25.0F * scale;
+
+        const auto lines = wrapTextLines(
+            context,
+            report[index],
+            FontWeight::Regular,
+            ui::Typography::reportBody,
+            textWidth);
+
+        if (!lines.has_value()) {
+            return false;
+        }
+
+        const float rowHeight = std::max(
+            25.0F * scale,
+            (10.0F + static_cast<float>(lines->size()) * 14.0F) * scale);
+
         const SDL_FRect row{
             panel.x + 13.0F * scale,
-            panel.y + (40.0F + static_cast<float>(index) * 29.0F) * scale,
-            panel.w - 26.0F * scale,
-            25.0F * scale,
+            rowY,
+            rowWidth,
+            rowHeight,
         };
+
         fillRoundedRect(
-            context.renderer, row, 5.0F * scale, ui::Theme::surfaceRaised);
+            context.renderer,
+            row,
+            5.0F * scale,
+            ui::Theme::surfaceRaised);
+
         fillRoundedRect(
             context.renderer,
             SDL_FRect{
@@ -825,16 +943,23 @@ bool drawRoundReport(
                 4.0F * scale},
             2.0F * scale,
             ui::Theme::gold);
-        if (!context.label(
-                report[index],
-                FontWeight::Regular,
-                ui::Typography::reportBody,
-                ui::Theme::mutedBright,
-                row.x + 17.0F * scale,
-                row.y + 5.0F * scale)) {
-            return false;
+
+        for (std::size_t line = 0; line < lines->size(); ++line) {
+            if (!context.label(
+                    (*lines)[line],
+                    FontWeight::Regular,
+                    ui::Typography::reportBody,
+                    ui::Theme::mutedBright,
+                    row.x + 17.0F * scale,
+                    row.y +
+                        (5.0F + static_cast<float>(line) * 14.0F) * scale)) {
+                return false;
+            }
         }
+
+        rowY += rowHeight + 4.0F * scale;
     }
+
     return true;
 }
 
@@ -1123,9 +1248,25 @@ bool drawSidebar(
         y += 146.0F * scale;
     }
 
-    const SDL_FRect report{x, y, width, 130.0F * scale};
-    if (!drawRoundReport(context, snapshot, report)) return false;
-    y += 142.0F * scale;
+    const auto requiredReportHeight =
+        roundReportHeight(context, snapshot, width);
+
+    if (!requiredReportHeight.has_value()) {
+        return false;
+    }
+
+    const SDL_FRect report{
+        x,
+        y,
+        width,
+        *requiredReportHeight
+    };
+
+    if (!drawRoundReport(context, snapshot, report)) {
+        return false;
+    }
+
+    y += report.h + 12.0F * scale;
 
     const SDL_FRect inventory{x, y, width, 134.0F * scale};
     if (!drawInventory(context, snapshot, inventory)) return false;
