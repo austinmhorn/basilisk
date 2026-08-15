@@ -76,6 +76,12 @@ struct MapPresentationState {
     client_navigation::KnownRoutePlan route;
 };
 
+enum class DestinationControl {
+    None,
+    Mark,
+    Clear
+};
+
 [[nodiscard]] MapPresentationGeometry buildMapPresentationGeometry(
     const PlayerMapView& map,
     const PlayerMapLayout& layout,
@@ -105,6 +111,20 @@ void updateMapHover(MapPresentationState& state, const MapHitTarget& hit);
     MapPresentationState& state,
     const PlayerMapView& map,
     const MapHitTarget& hit);
+
+// Mirrors the web-debug GPS rule: only known routes at least two hops long,
+// without an immediate legal spatial action, receive a destination control.
+[[nodiscard]] DestinationControl destinationControlForCave(
+    const PlayerMapView& map,
+    CaveId cave,
+    std::optional<CaveId> markedDestination,
+    bool hasMatchingLegalAction);
+
+[[nodiscard]] bool applyDestinationControl(
+    MapPresentationState& state,
+    const PlayerMapView& map,
+    CaveId cave,
+    DestinationControl control);
 
 void refreshSelectedRoute(
     MapPresentationState& state,

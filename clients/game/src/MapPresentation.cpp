@@ -196,6 +196,43 @@ bool selectRouteFromHit(
         selectRouteDestination(state, map, *hit.cave);
 }
 
+DestinationControl destinationControlForCave(
+    const PlayerMapView& map,
+    CaveId cave,
+    std::optional<CaveId> markedDestination,
+    bool hasMatchingLegalAction) {
+
+    if (hasMatchingLegalAction || cave == map.currentCave) {
+        return DestinationControl::None;
+    }
+    const client_navigation::KnownRoutePlan route =
+        client_navigation::planKnownRoute(map, cave);
+    if (route.status != client_navigation::KnownRouteStatus::Reachable ||
+        route.caves.size() <= 2) {
+        return DestinationControl::None;
+    }
+    return markedDestination == cave
+        ? DestinationControl::Clear
+        : DestinationControl::Mark;
+}
+
+bool applyDestinationControl(
+    MapPresentationState& state,
+    const PlayerMapView& map,
+    CaveId cave,
+    DestinationControl control) {
+
+    if (control == DestinationControl::Mark) {
+        return selectRouteDestination(state, map, cave);
+    }
+    if (control == DestinationControl::Clear && state.routeDestination == cave) {
+        state.routeDestination.reset();
+        state.route = {};
+        return true;
+    }
+    return false;
+}
+
 void refreshSelectedRoute(
     MapPresentationState& state,
     const PlayerMapView& map) {

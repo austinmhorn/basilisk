@@ -3,24 +3,45 @@
 #include <SDL3/SDL.h>
 
 #include <array>
+#include <cstddef>
+#include <optional>
 #include <string>
-#include <string_view>
 #include <vector>
 
+#include "ActionSelection.hpp"
+#include "MapActionMenu.hpp"
 #include "MapLayout.hpp"
 #include "MapPresentation.hpp"
 #include "SvgTextureManager.hpp"
 #include "TextRenderer.hpp"
 #include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/PublicMatchMetadata.hpp"
+#include "basilisk/client/ClientViewContext.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
 
 namespace basilisk::game {
 
-struct ActionRowView {
-    std::string key;
-    std::string label;
-    std::string detail;
+struct ActionRowGeometry {
+    std::size_t actionIndex{};
+    PresentationRect bounds;
+};
+
+struct ActionPanelGeometry {
+    PresentationRect panel;
+    PresentationRect viewport;
+    PresentationRect lockButton;
+    std::vector<ActionRowGeometry> rows;
+    std::size_t visibleCapacity{};
+};
+
+struct MapActionMenuGeometry {
+    struct Row {
+        MapActionMenuChoice choice;
+        PresentationRect bounds;
+    };
+
+    PresentationRect panel;
+    std::vector<Row> rows;
 };
 
 // Public/demo-safe screen inputs that are intentionally outside gameplay
@@ -28,9 +49,24 @@ struct ActionRowView {
 struct ScreenShellData {
     PublicMatchMetadata matchMetadata;
     std::array<client::PublicPlayerProfile, 2> profiles;
-    PlayerId localPlayer{};
-    std::vector<ActionRowView> actionRows;
+    client::ClientViewContext viewContext;
 };
+
+[[nodiscard]] std::optional<std::size_t> hitTestActionRow(
+    const ActionPanelGeometry& geometry,
+    PresentationPoint point) noexcept;
+[[nodiscard]] bool hitTestActionLockButton(
+    const ActionPanelGeometry& geometry,
+    PresentationPoint point) noexcept;
+[[nodiscard]] bool hitTestActionPanel(
+    const ActionPanelGeometry& geometry,
+    PresentationPoint point) noexcept;
+[[nodiscard]] std::optional<MapActionMenuChoice> hitTestMapActionRow(
+    const MapActionMenuGeometry& geometry,
+    PresentationPoint point) noexcept;
+[[nodiscard]] bool hitTestMapActionMenu(
+    const MapActionMenuGeometry& geometry,
+    PresentationPoint point) noexcept;
 
 [[nodiscard]] bool renderScreenShell(
     SDL_Renderer* renderer,
@@ -40,6 +76,10 @@ struct ScreenShellData {
     PlayerMapLayout& mapLayout,
     MapPresentationState& mapPresentation,
     MapPresentationGeometry& mapGeometry,
+    const ActionSelectionState& actionSelection,
+    ActionPanelGeometry& actionGeometry,
+    const MapActionMenuState& mapActionMenu,
+    MapActionMenuGeometry& mapActionMenuGeometry,
     const ScreenShellData& data,
     int outputWidth,
     int outputHeight,

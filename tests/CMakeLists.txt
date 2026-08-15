@@ -86,6 +86,14 @@ if(TARGET BasiliskGameAssets)
     add_test(NAME BasiliskGameAssetCatalogTests COMMAND BasiliskGameAssetCatalogTests)
 endif()
 
+if(TARGET BasiliskGameActions)
+    add_executable(BasiliskGameActionTests
+        game_action_tests.cpp
+    )
+    target_link_libraries(BasiliskGameActionTests PRIVATE Basilisk::GameActions)
+    add_test(NAME BasiliskGameActionTests COMMAND BasiliskGameActionTests)
+endif()
+
 add_executable(BasiliskSnapshotTests
     snapshot_tests.cpp
 )

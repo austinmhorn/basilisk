@@ -33,6 +33,28 @@ target_include_directories(BasiliskGameAssets
 target_link_libraries(BasiliskGameAssets PUBLIC Basilisk::ClientMetadata)
 target_compile_features(BasiliskGameAssets PUBLIC cxx_std_20)
 
+add_library(BasiliskGameActions STATIC
+    src/ActionCommands.cpp
+    src/ActionPresentation.cpp
+    src/ActionSelection.cpp
+    src/MapActionMenu.cpp
+)
+
+add_library(Basilisk::GameActions ALIAS BasiliskGameActions)
+
+target_include_directories(BasiliskGameActions
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(
+    BasiliskGameActions
+    PUBLIC
+        Basilisk::ClientMetadata
+        Basilisk::ClientNavigation
+        Basilisk::ClientPresentation
+)
+target_compile_features(BasiliskGameActions PUBLIC cxx_std_20)
+
 # SDL is implemented in C, while Basilisk Core itself only requires C++.
 enable_language(C)
 
@@ -148,6 +170,7 @@ configure_file(
 unset(_font_name)
 
 add_executable(BasiliskGame
+    src/DemoActionCommandSink.cpp
     src/DemoMap.cpp
     src/DemoUi.cpp
     src/main.cpp
@@ -161,6 +184,7 @@ target_link_libraries(BasiliskGame
     PRIVATE
         Basilisk::GameMapLayout
         Basilisk::GameAssets
+        Basilisk::GameActions
         Basilisk::ClientPresentation
         SDL3::SDL3
         SDL3_image::SDL3_image

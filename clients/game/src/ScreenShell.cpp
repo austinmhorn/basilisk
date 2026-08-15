@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 
+#include "ActionPresentation.hpp"
 #include "MapRenderer.hpp"
 #include "UITheme.hpp"
 #include "basilisk/client/Presentation.hpp"
@@ -371,7 +372,7 @@ bool drawHeaderHud(
             "P1",
             p1 == nullptr ? "Player One" : p1->displayName,
             p1 == nullptr ? nullptr : &p1->emblemId,
-            p1Slot != nullptr && p1Slot->player == data.localPlayer,
+            p1Slot != nullptr && p1Slot->player == data.viewContext.localPlayer,
             true) ||
         !context.centeredLabel(
             "VS", FontWeight::Bold, ui::Typography::versus, ui::Theme::muted, versus) ||
@@ -381,7 +382,7 @@ bool drawHeaderHud(
             "P2",
             p2 == nullptr ? "Player Two" : p2->displayName,
             p2 == nullptr ? nullptr : &p2->emblemId,
-            p2Slot != nullptr && p2Slot->player == data.localPlayer,
+            p2Slot != nullptr && p2Slot->player == data.viewContext.localPlayer,
             false)) {
         return false;
     }
@@ -877,10 +878,15 @@ bool drawInventory(
 
 bool drawAvailableActions(
     const DrawingContext& context,
+    const PlayerRoundSnapshot& snapshot,
+    const ActionSelectionState& selection,
+    ActionPanelGeometry& geometry,
     const ScreenShellData& data,
     SDL_FRect panel) {
 
     const float scale = context.scale;
+    geometry = {};
+    geometry.panel = PresentationRect{panel.x, panel.y, panel.w, panel.h};
     drawPanel(
         context.renderer,
         panel,
@@ -891,26 +897,77 @@ bool drawAvailableActions(
     if (!drawSectionHeader(
             context,
             "AVAILABLE ACTIONS",
-            std::to_string(data.actionRows.size()),
+            std::to_string(snapshot.availableActions.size()),
             panel)) {
         return false;
     }
 
-    const std::size_t visible = std::min<std::size_t>(5, data.actionRows.size());
-    for (std::size_t index = 0; index < visible; ++index) {
-        const ActionRowView& action = data.actionRows[index];
+    const float rowStride = 37.0F * scale;
+    const SDL_FRect lockButton{
+        panel.x + 13.0F * scale,
+        panel.y + panel.h - 39.0F * scale,
+        panel.w - 26.0F * scale,
+        28.0F * scale,
+    };
+    const SDL_FRect viewport{
+        panel.x + 13.0F * scale,
+        panel.y + 40.0F * scale,
+        panel.w - 26.0F * scale,
+        std::max(0.0F, lockButton.y - panel.y - 47.0F * scale),
+    };
+    geometry.viewport = PresentationRect{
+        viewport.x, viewport.y, viewport.w, viewport.h};
+    geometry.lockButton = PresentationRect{
+        lockButton.x, lockButton.y, lockButton.w, lockButton.h};
+    geometry.visibleCapacity = std::max<std::size_t>(
+        1,
+        static_cast<std::size_t>(std::floor(viewport.h / rowStride)));
+
+    const std::vector<PresentedAction> rows =
+        presentAvailableActions(snapshot.availableActions);
+    const std::size_t first = std::min(selection.scrollOffset(), rows.size());
+    const std::size_t last = std::min(rows.size(), first + geometry.visibleCapacity);
+
+    if (rows.size() > geometry.visibleCapacity) {
+        const std::string range = std::to_string(first + 1) + "-" +
+            std::to_string(last) + " OF " + std::to_string(rows.size());
+        if (!context.label(
+                range,
+                FontWeight::Medium,
+                ui::Typography::actionDetail,
+                ui::Theme::muted,
+                panel.x + panel.w - 122.0F * scale,
+                panel.y + 14.0F * scale)) {
+            return false;
+        }
+    }
+
+    const SDL_Rect clip{
+        static_cast<int>(viewport.x),
+        static_cast<int>(viewport.y),
+        std::max(0, static_cast<int>(viewport.w)),
+        std::max(0, static_cast<int>(viewport.h)),
+    };
+    SDL_SetRenderClipRect(context.renderer, &clip);
+    for (std::size_t index = first; index < last; ++index) {
+        const PresentedAction& action = rows[index];
         const SDL_FRect row{
-            panel.x + 13.0F * scale,
-            panel.y + (40.0F + static_cast<float>(index) * 37.0F) * scale,
-            panel.w - 26.0F * scale,
+            viewport.x,
+            viewport.y + static_cast<float>(index - first) * rowStride,
+            viewport.w,
             33.0F * scale,
         };
+        geometry.rows.push_back(ActionRowGeometry{
+            index,
+            PresentationRect{row.x, row.y, row.w, row.h},
+        });
+        const bool selected = selection.selectedIndex() == index;
         drawPanel(
             context.renderer,
             row,
             6.0F * scale,
-            ui::Theme::surfaceRaised,
-            SDL_Color{37, 46, 54, SDL_ALPHA_OPAQUE},
+            selected ? SDL_Color{19, 34, 47, SDL_ALPHA_OPAQUE} : ui::Theme::surfaceRaised,
+            selected ? ui::Theme::blue : SDL_Color{37, 46, 54, SDL_ALPHA_OPAQUE},
             scale);
         const SDL_FRect key{
             row.x + 5.0F * scale,
@@ -925,10 +982,15 @@ bool drawAvailableActions(
             ui::Theme::sidebar,
             SDL_Color{59, 70, 80, SDL_ALPHA_OPAQUE},
             scale);
+        const std::string keyText = index < 9 ? std::to_string(index + 1) : "-";
         if (!context.centeredLabel(
-                action.key, FontWeight::Bold, ui::Typography::actionKey, ui::Theme::text, key) ||
+                keyText,
+                FontWeight::Bold,
+                ui::Typography::actionKey,
+                selected ? ui::Theme::blue : ui::Theme::text,
+                key) ||
             !context.label(
-                action.label,
+                action.title,
                 FontWeight::SemiBold,
                 ui::Typography::actionTitle,
                 ui::Theme::text,
@@ -944,12 +1006,43 @@ bool drawAvailableActions(
             return false;
         }
     }
-    return true;
+    SDL_SetRenderClipRect(context.renderer, nullptr);
+
+    const bool canLock = selection.canLock(data.viewContext);
+    const bool locked = selection.locked();
+    const SDL_Color buttonFill = locked
+        ? SDL_Color{35, 31, 19, SDL_ALPHA_OPAQUE}
+        : canLock ? SDL_Color{20, 38, 52, SDL_ALPHA_OPAQUE}
+                  : SDL_Color{18, 23, 28, SDL_ALPHA_OPAQUE};
+    const SDL_Color buttonBorder = locked
+        ? SDL_Color{76, 61, 30, SDL_ALPHA_OPAQUE}
+        : canLock ? ui::Theme::blue : ui::Theme::borderSoft;
+    const SDL_Color buttonText = locked
+        ? ui::Theme::gold
+        : canLock ? ui::Theme::text : ui::Theme::muted;
+    drawPanel(
+        context.renderer,
+        lockButton,
+        6.0F * scale,
+        buttonFill,
+        buttonBorder,
+        scale);
+    const std::string_view buttonLabel = locked
+        ? "LOCKED"
+        : data.viewContext.canSubmitActions() ? "LOCK ACTION" : "VIEW ONLY";
+    return context.centeredLabel(
+        buttonLabel,
+        FontWeight::Bold,
+        ui::Typography::actionTitle,
+        buttonText,
+        lockButton);
 }
 
 bool drawSidebar(
     const DrawingContext& context,
     const PlayerRoundSnapshot& snapshot,
+    const ActionSelectionState& actionSelection,
+    ActionPanelGeometry& actionGeometry,
     const ScreenShellData& data,
     SDL_FRect sidebar) {
 
@@ -975,10 +1068,167 @@ bool drawSidebar(
     y += 146.0F * scale;
 
     const SDL_FRect actions{x, y, width, 228.0F * scale};
-    return drawAvailableActions(context, data, actions);
+    return drawAvailableActions(
+        context, snapshot, actionSelection, actionGeometry, data, actions);
+}
+
+bool drawMapActionMenu(
+    const DrawingContext& context,
+    const PlayerRoundSnapshot& snapshot,
+    const MapActionMenuState& menu,
+    MapActionMenuGeometry& geometry,
+    PresentationRect mapBounds) {
+
+    geometry = {};
+    if (!menu.isOpen() || !menu.target().has_value()) return true;
+
+    const float scale = context.scale;
+    const float width = 238.0F * scale;
+    const float headerHeight = 35.0F * scale;
+    const float rowStride = 39.0F * scale;
+    const float height = headerHeight +
+        rowStride * static_cast<float>(menu.choices().size()) + 9.0F * scale;
+    const float margin = 9.0F * scale;
+    const float anchorGap = 22.0F * scale;
+
+    float x = static_cast<float>(menu.anchorX()) + anchorGap;
+    if (x + width > static_cast<float>(mapBounds.x + mapBounds.width) - margin) {
+        x = static_cast<float>(menu.anchorX()) - width - anchorGap;
+    }
+    float y = static_cast<float>(menu.anchorY()) - height * 0.5F;
+    x = std::clamp(
+        x,
+        static_cast<float>(mapBounds.x) + margin,
+        std::max(
+            static_cast<float>(mapBounds.x) + margin,
+            static_cast<float>(mapBounds.x + mapBounds.width) - width - margin));
+    y = std::clamp(
+        y,
+        static_cast<float>(mapBounds.y) + margin,
+        std::max(
+            static_cast<float>(mapBounds.y) + margin,
+            static_cast<float>(mapBounds.y + mapBounds.height) - height - margin));
+
+    const SDL_FRect panel{x, y, width, height};
+    geometry.panel = PresentationRect{panel.x, panel.y, panel.w, panel.h};
+    drawPanel(
+        context.renderer,
+        panel,
+        9.0F * scale,
+        SDL_Color{13, 18, 23, 246},
+        SDL_Color{55, 69, 81, SDL_ALPHA_OPAQUE},
+        scale);
+
+    const SpatialActionTarget target = *menu.target();
+    const std::string heading = target.kind == SpatialActionTargetKind::Cave
+        ? "CAVE " + std::to_string(target.cave)
+        : "UNKNOWN EXIT";
+    if (!context.label(
+            heading,
+            FontWeight::Bold,
+            ui::Typography::actionDetail,
+            ui::Theme::mutedBright,
+            panel.x + 11.0F * scale,
+            panel.y + 10.0F * scale)) {
+        return false;
+    }
+
+    for (std::size_t rowIndex = 0;
+         rowIndex < menu.choices().size();
+         ++rowIndex) {
+        const MapActionMenuChoice choice = menu.choices()[rowIndex];
+        if (choice.kind == MapActionMenuChoiceKind::GameplayAction &&
+            choice.actionIndex >= snapshot.availableActions.size()) {
+            continue;
+        }
+        const SDL_FRect row{
+            panel.x + 8.0F * scale,
+            panel.y + headerHeight + static_cast<float>(rowIndex) * rowStride,
+            panel.w - 16.0F * scale,
+            34.0F * scale,
+        };
+        geometry.rows.push_back(MapActionMenuGeometry::Row{
+            choice,
+            PresentationRect{row.x, row.y, row.w, row.h},
+        });
+        const bool hovered = menu.hoveredChoice() == choice;
+        drawPanel(
+            context.renderer,
+            row,
+            6.0F * scale,
+            hovered ? SDL_Color{20, 36, 49, SDL_ALPHA_OPAQUE}
+                    : ui::Theme::surfaceRaised,
+            hovered ? ui::Theme::blue : ui::Theme::border,
+            scale);
+        const std::string label = choice.kind == MapActionMenuChoiceKind::MarkDestination
+            ? "MARK DESTINATION"
+            : choice.kind == MapActionMenuChoiceKind::ClearDestination
+                ? "CLEAR DESTINATION"
+                : spatialActionTitle(snapshot.availableActions[choice.actionIndex]);
+        if (!context.label(
+                label,
+                FontWeight::SemiBold,
+                ui::Typography::actionTitle,
+                hovered ? ui::Theme::blue : ui::Theme::text,
+                row.x + 10.0F * scale,
+                row.y + 10.0F * scale)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace
+
+namespace {
+
+bool contains(PresentationRect rectangle, PresentationPoint point) noexcept {
+    return point.x >= rectangle.x && point.x <= rectangle.x + rectangle.width &&
+        point.y >= rectangle.y && point.y <= rectangle.y + rectangle.height;
+}
+
+} // namespace
+
+std::optional<std::size_t> hitTestActionRow(
+    const ActionPanelGeometry& geometry,
+    PresentationPoint point) noexcept {
+
+    for (const ActionRowGeometry& row : geometry.rows) {
+        if (contains(row.bounds, point)) return row.actionIndex;
+    }
+    return std::nullopt;
+}
+
+bool hitTestActionLockButton(
+    const ActionPanelGeometry& geometry,
+    PresentationPoint point) noexcept {
+
+    return contains(geometry.lockButton, point);
+}
+
+bool hitTestActionPanel(
+    const ActionPanelGeometry& geometry,
+    PresentationPoint point) noexcept {
+
+    return contains(geometry.panel, point);
+}
+
+std::optional<MapActionMenuChoice> hitTestMapActionRow(
+    const MapActionMenuGeometry& geometry,
+    PresentationPoint point) noexcept {
+
+    for (const MapActionMenuGeometry::Row& row : geometry.rows) {
+        if (contains(row.bounds, point)) return row.choice;
+    }
+    return std::nullopt;
+}
+
+bool hitTestMapActionMenu(
+    const MapActionMenuGeometry& geometry,
+    PresentationPoint point) noexcept {
+
+    return contains(geometry.panel, point);
+}
 
 bool renderScreenShell(
     SDL_Renderer* renderer,
@@ -988,6 +1238,10 @@ bool renderScreenShell(
     PlayerMapLayout& mapLayout,
     MapPresentationState& mapPresentation,
     MapPresentationGeometry& mapGeometry,
+    const ActionSelectionState& actionSelection,
+    ActionPanelGeometry& actionGeometry,
+    const MapActionMenuState& mapActionMenu,
+    MapActionMenuGeometry& mapActionMenuGeometry,
     const ScreenShellData& data,
     int outputWidth,
     int outputHeight,
@@ -1106,7 +1360,21 @@ bool renderScreenShell(
     SDL_SetRenderClipRect(renderer, nullptr);
 
     if (!drawHeaderHud(context, snapshot, data, headerHeight)) return false;
-    return drawSidebar(context, snapshot, data, sidebar);
+    if (!drawSidebar(
+        context,
+        snapshot,
+        actionSelection,
+        actionGeometry,
+        data,
+        sidebar)) {
+        return false;
+    }
+    return drawMapActionMenu(
+        context,
+        snapshot,
+        mapActionMenu,
+        mapActionMenuGeometry,
+        mapGeometry.transform.bounds);
 }
 
 } // namespace basilisk::game

@@ -356,6 +356,50 @@ void routeEdgesContainOnlyConsecutivePlanCaves() {
     assert(!containsRouteEdge(cave12Edges, CaveId{16}, CaveId{21}));
 }
 
+void destinationControlsMatchWebDebugGpsRules() {
+    const PlayerMapView map{
+        CaveId{1},
+        {
+            cave(1, {
+                {TunnelId{1}, CaveId{2}},
+                {TunnelId{2}, std::nullopt},
+            }),
+            cave(2, {
+                {TunnelId{1}, CaveId{1}},
+                {TunnelId{2}, CaveId{3}},
+            }),
+            cave(3, {{TunnelId{1}, CaveId{2}}}),
+            cave(4, {}),
+            cave(5, {{TunnelId{1}, std::nullopt}}),
+        }};
+
+    assert(destinationControlForCave(
+               map, CaveId{1}, std::nullopt, false) == DestinationControl::None);
+    assert(destinationControlForCave(
+               map, CaveId{2}, std::nullopt, false) == DestinationControl::None);
+    assert(destinationControlForCave(
+               map, CaveId{3}, std::nullopt, false) == DestinationControl::Mark);
+    assert(destinationControlForCave(
+               map, CaveId{3}, std::nullopt, true) == DestinationControl::None);
+    assert(destinationControlForCave(
+               map, CaveId{4}, std::nullopt, false) == DestinationControl::None);
+    assert(destinationControlForCave(
+               map, CaveId{5}, std::nullopt, false) == DestinationControl::None);
+
+    MapPresentationState state;
+    assert(applyDestinationControl(
+        state, map, CaveId{3}, DestinationControl::Mark));
+    assert(state.routeDestination == CaveId{3});
+    assert((state.route.caves == std::vector<CaveId>{1, 2, 3}));
+    assert(destinationControlForCave(
+               map, CaveId{3}, state.routeDestination, false) ==
+        DestinationControl::Clear);
+    assert(applyDestinationControl(
+        state, map, CaveId{3}, DestinationControl::Clear));
+    assert(!state.routeDestination.has_value());
+    assert(state.route.caves.empty());
+}
+
 } // namespace
 
 int main() {
@@ -371,5 +415,6 @@ int main() {
     hitTestingDistinguishesCavesAndUnknownExits();
     routeSelectionUsesOnlyDiscoveredKnownConnections();
     routeEdgesContainOnlyConsecutivePlanCaves();
+    destinationControlsMatchWebDebugGpsRules();
     std::cout << "game map layout tests passed\n";
 }

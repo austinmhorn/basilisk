@@ -108,13 +108,23 @@ PlayerRoundSnapshot makeDemoMapSnapshot() {
 
     AvailableAction shoot;
     shoot.type = ActionType::Shoot;
-    shoot.targetCave = CaveId{16};
+    shoot.targetCave = CaveId{12};
     snapshot.availableActions.push_back(shoot);
 
     AvailableAction useItem;
     useItem.type = ActionType::UseItem;
     useItem.targetItem = ItemType::SurveyFragment;
     snapshot.availableActions.push_back(useItem);
+
+    AvailableAction useHealing;
+    useHealing.type = ActionType::UseItem;
+    useHealing.targetItem = ItemType::HealingDraught;
+    snapshot.availableActions.push_back(useHealing);
+
+    AvailableAction escape;
+    escape.type = ActionType::Contextual;
+    escape.contextualAction = ContextualActionType::Escape;
+    snapshot.availableActions.push_back(escape);
     return snapshot;
 }
 

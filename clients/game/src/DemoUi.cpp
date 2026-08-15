@@ -1,5 +1,7 @@
 #include "DemoUi.hpp"
 
+#include <optional>
+
 namespace basilisk::game::demo {
 
 ScreenShellData makeDemoScreenShellData() {
@@ -21,13 +23,11 @@ ScreenShellData makeDemoScreenShellData() {
             client::CallingCardId{"blue-ward"},
             client::EmblemId{"ward"}},
     };
-    data.localPlayer = PlayerId{1};
-    data.actionRows = {
-        {"1", "Move to Cave 12", "Known tunnel"},
-        {"2", "Enter unknown exit", "Tunnel 6 - destination unknown"},
-        {"3", "Search this cave", "Look for supplies and clues"},
-        {"4", "Fire toward Cave 16", "Uses 1 arrow"},
-        {"5", "Use Survey Fragment", "Reveal one local tunnel"},
+    data.viewContext = client::ClientViewContext{
+        PlayerId{1},
+        PlayerId{1},
+        client::ClientViewMode::Playing,
+        std::nullopt,
     };
     return data;
 }
