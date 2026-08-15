@@ -179,6 +179,25 @@ void updateMapHover(MapPresentationState& state, const MapHitTarget& hit) {
         hit.kind == MapHitKind::UnknownExit ? hit.unknownExit : std::nullopt;
 }
 
+MapHitTarget mapHoverTargetForAction(
+    const AvailableAction& action,
+    CaveId currentCave) {
+
+    if (action.targetCave.has_value()) {
+        return MapHitTarget{
+            MapHitKind::DiscoveredCave,
+            action.targetCave,
+            std::nullopt};
+    }
+    if (action.targetTunnel.has_value()) {
+        return MapHitTarget{
+            MapHitKind::UnknownExit,
+            std::nullopt,
+            UnknownExitKey{currentCave, *action.targetTunnel}};
+    }
+    return {};
+}
+
 bool selectRouteDestination(
     MapPresentationState& state,
     const PlayerMapView& map,

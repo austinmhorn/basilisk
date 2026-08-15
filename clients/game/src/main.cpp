@@ -43,7 +43,9 @@ struct AppState {
     basilisk::game::MapPresentationState mapPresentation;
     basilisk::game::MapPresentationGeometry mapGeometry;
     basilisk::game::ActionSelectionState actionSelection;
+    std::optional<std::size_t> hoveredActionIndex;
     basilisk::game::ActionPanelGeometry actionGeometry;
+    basilisk::game::InventoryPanelGeometry inventoryGeometry;
     basilisk::game::MapActionMenuState mapActionMenu;
     basilisk::game::MapActionMenuGeometry mapActionMenuGeometry;
     basilisk::game::LifecycleModalGeometry lifecycleModalGeometry;
@@ -279,6 +281,14 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             state->session->viewContext(),
             state->session->profiles()).has_value();
 
+    if (state != nullptr && event->type == SDL_EVENT_WINDOW_MOUSE_LEAVE) {
+        state->hoveredActionIndex.reset();
+        basilisk::game::updateMapHover(
+            state->mapPresentation,
+            basilisk::game::MapHitTarget{});
+        return SDL_APP_CONTINUE;
+    }
+
     if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
         !event->key.repeat && event->key.key == SDLK_ESCAPE) {
         if (!lifecycleModalActive) state->mapActionMenu.dismiss();
@@ -324,12 +334,22 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     snapshot->availableActions.size(),
                     state->actionGeometry.visibleCapacity);
             }
+            state->hoveredActionIndex.reset();
+            basilisk::game::updateMapHover(
+                state->mapPresentation,
+                basilisk::game::MapHitTarget{});
             return SDL_APP_CONTINUE;
         } else {
             pointer = {event->button.x, event->button.y};
         }
 
         if (lifecycleModalActive) {
+            if (event->type == SDL_EVENT_MOUSE_MOTION) {
+                state->hoveredActionIndex.reset();
+                basilisk::game::updateMapHover(
+                    state->mapPresentation,
+                    basilisk::game::MapHitTarget{});
+            }
             if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
                 event->button.button == SDL_BUTTON_LEFT) {
                 if (basilisk::game::hitTestLifecycleWatch(
@@ -348,6 +368,27 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 }
             }
             return SDL_APP_CONTINUE;
+        }
+
+        if (event->type == SDL_EVENT_MOUSE_MOTION) {
+            const bool actionWasHovered =
+                state->hoveredActionIndex.has_value();
+            state->hoveredActionIndex = basilisk::game::hitTestActionRow(
+                state->actionGeometry, pointer);
+            if (state->hoveredActionIndex.has_value() &&
+                *state->hoveredActionIndex < snapshot->availableActions.size()) {
+                basilisk::game::updateMapHover(
+                    state->mapPresentation,
+                    basilisk::game::mapHoverTargetForAction(
+                        snapshot->availableActions[*state->hoveredActionIndex],
+                        snapshot->map.currentCave));
+                return SDL_APP_CONTINUE;
+            }
+            if (actionWasHovered) {
+                basilisk::game::updateMapHover(
+                    state->mapPresentation,
+                    basilisk::game::MapHitTarget{});
+            }
         }
 
         if (state->mapActionMenu.isOpen()) {
@@ -397,6 +438,16 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 
         if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
             event->button.button == SDL_BUTTON_LEFT) {
+            if (const auto item = basilisk::game::hitTestInventoryItem(
+                    state->inventoryGeometry, pointer); item.has_value()) {
+                (void)basilisk::game::selectInventoryItemAction(
+                    *item,
+                    snapshot->availableActions,
+                    state->session->viewContext(),
+                    state->actionSelection);
+                state->mapActionMenu.dismiss();
+                return SDL_APP_CONTINUE;
+            }
             if (const auto actionIndex = basilisk::game::hitTestActionRow(
                     state->actionGeometry, pointer); actionIndex.has_value()) {
                 (void)state->actionSelection.select(
@@ -492,6 +543,10 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 if (!state->mapActionMenuRound.has_value() ||
                     *state->mapActionMenuRound != snapshot->round) {
                     state->mapActionMenu.dismiss();
+                    state->hoveredActionIndex.reset();
+                    basilisk::game::updateMapHover(
+                        state->mapPresentation,
+                        basilisk::game::MapHitTarget{});
                     state->mapActionMenuRound = snapshot->round;
                 }
             }
@@ -505,7 +560,9 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     state->mapPresentation,
                     state->mapGeometry,
                     state->actionSelection,
+                    state->hoveredActionIndex,
                     state->actionGeometry,
+                    state->inventoryGeometry,
                     state->mapActionMenu,
                     state->mapActionMenuGeometry,
                     state->lifecycleModalGeometry,

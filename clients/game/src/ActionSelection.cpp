@@ -106,4 +106,19 @@ bool ActionSelectionState::canLock(
     return viewContext.canSubmitActions() && draft_.has_value() && !locked_;
 }
 
+bool selectInventoryItemAction(
+    ItemType item,
+    std::span<const AvailableAction> actions,
+    const client::ClientViewContext& viewContext,
+    ActionSelectionState& selection) {
+
+    for (std::size_t index = 0; index < actions.size(); ++index) {
+        const AvailableAction& action = actions[index];
+        if (action.type == ActionType::UseItem && action.targetItem == item) {
+            return selection.select(index, actions, viewContext);
+        }
+    }
+    return false;
+}
+
 } // namespace basilisk::game

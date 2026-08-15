@@ -32,10 +32,16 @@ std::vector<std::size_t> matchingSpatialActionIndices(
     std::vector<std::size_t> matches;
     for (std::size_t index = 0; index < actions.size(); ++index) {
         const AvailableAction& action = actions[index];
-        const bool matchesTarget = target.kind == SpatialActionTargetKind::Cave
-            ? action.targetCave == target.cave
-            : target.cave == currentCave &&
+        bool matchesTarget = false;
+        if (target.kind == SpatialActionTargetKind::Cave) {
+            matchesTarget = target.cave == currentCave
+                ? action.type == ActionType::Search ||
+                    action.type == ActionType::UseItem
+                : action.targetCave == target.cave;
+        } else {
+            matchesTarget = target.cave == currentCave &&
                 action.targetTunnel == target.tunnel;
+        }
         if (matchesTarget) matches.push_back(index);
     }
     return matches;

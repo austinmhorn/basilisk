@@ -46,4 +46,12 @@ private:
     std::size_t scrollOffset_{0};
 };
 
+// Selects the first literal Core-provided UseItem action for this item.
+// No action is synthesized when the item is not currently usable.
+[[nodiscard]] bool selectInventoryItemAction(
+    ItemType item,
+    std::span<const AvailableAction> actions,
+    const client::ClientViewContext& viewContext,
+    ActionSelectionState& selection);
+
 } // namespace basilisk::game

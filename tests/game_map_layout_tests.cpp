@@ -624,6 +624,53 @@ void hitTestingDistinguishesCavesAndUnknownExits() {
     assert(hover.hoveredUnknownExit == exitHit.unknownExit);
 }
 
+void actionHoverMapsOnlyLiteralSpatialTargets() {
+    AvailableAction moveKnown;
+    moveKnown.type = ActionType::Move;
+    moveKnown.targetCave = CaveId{12};
+    const MapHitTarget moveKnownHit = mapHoverTargetForAction(
+        moveKnown, CaveId{7});
+    assert(moveKnownHit.kind == MapHitKind::DiscoveredCave);
+    assert(moveKnownHit.cave == CaveId{12});
+    assert(!moveKnownHit.unknownExit.has_value());
+
+    AvailableAction shootKnown = moveKnown;
+    shootKnown.type = ActionType::Shoot;
+    assert(mapHoverTargetForAction(shootKnown, CaveId{7}).cave ==
+           CaveId{12});
+
+    AvailableAction enterUnknown;
+    enterUnknown.type = ActionType::Move;
+    enterUnknown.targetTunnel = TunnelId{4};
+    const MapHitTarget enterUnknownHit = mapHoverTargetForAction(
+        enterUnknown, CaveId{7});
+    assert(enterUnknownHit.kind == MapHitKind::UnknownExit);
+    assert((enterUnknownHit.unknownExit ==
+            UnknownExitKey{CaveId{7}, TunnelId{4}}));
+    assert(!enterUnknownHit.cave.has_value());
+
+    AvailableAction shootUnknown = enterUnknown;
+    shootUnknown.type = ActionType::Shoot;
+    assert((mapHoverTargetForAction(shootUnknown, CaveId{9}).unknownExit ==
+            UnknownExitKey{CaveId{9}, TunnelId{4}}));
+
+    AvailableAction survey = enterUnknown;
+    survey.type = ActionType::UseItem;
+    survey.targetItem = ItemType::SurveyFragment;
+    assert((mapHoverTargetForAction(survey, CaveId{7}).unknownExit ==
+            UnknownExitKey{CaveId{7}, TunnelId{4}}));
+
+    AvailableAction search;
+    search.type = ActionType::Search;
+    assert(mapHoverTargetForAction(search, CaveId{7}).kind ==
+           MapHitKind::None);
+    AvailableAction nonSpatialItem;
+    nonSpatialItem.type = ActionType::UseItem;
+    nonSpatialItem.targetItem = ItemType::OldHuntersMap;
+    assert(mapHoverTargetForAction(nonSpatialItem, CaveId{7}).kind ==
+           MapHitKind::None);
+}
+
 void overlappingUnknownExitPrefersCurrentCaveProvenance() {
     PlayerMapLayout layout;
     PlayerFixedMapGeometry fixed;
@@ -930,6 +977,7 @@ int main() {
     fixedPitRevealOverlaysUnknownEndpointThenExpires();
     framingContainsOnlyPlayerKnownPresentationPoints();
     hitTestingDistinguishesCavesAndUnknownExits();
+    actionHoverMapsOnlyLiteralSpatialTargets();
     overlappingUnknownExitPrefersCurrentCaveProvenance();
     routeSelectionUsesOnlyDiscoveredKnownConnections();
     routeEdgesContainOnlyConsecutivePlanCaves();

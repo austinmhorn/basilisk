@@ -966,9 +966,12 @@ bool drawRoundReport(
 bool drawInventory(
     const DrawingContext& context,
     const PlayerRoundSnapshot& snapshot,
+    InventoryPanelGeometry& geometry,
     SDL_FRect panel) {
 
     const float scale = context.scale;
+    geometry = {};
+    geometry.panel = PresentationRect{panel.x, panel.y, panel.w, panel.h};
     drawPanel(
         context.renderer,
         panel,
@@ -997,6 +1000,12 @@ bool drawInventory(
             41.0F * scale,
         };
         const bool occupied = index < snapshot.inventory.items.size();
+        if (occupied) {
+            geometry.items.push_back(InventoryItemGeometry{
+                snapshot.inventory.items[index],
+                PresentationRect{card.x, card.y, card.w, card.h},
+            });
+        }
         drawPanel(
             context.renderer,
             card,
@@ -1050,6 +1059,7 @@ bool drawAvailableActions(
     const DrawingContext& context,
     const PlayerRoundSnapshot& snapshot,
     const ActionSelectionState& selection,
+    std::optional<std::size_t> hoveredActionIndex,
     ActionPanelGeometry& geometry,
     const ClientSessionController& session,
     SDL_FRect panel) {
@@ -1133,12 +1143,18 @@ bool drawAvailableActions(
             PresentationRect{row.x, row.y, row.w, row.h},
         });
         const bool selected = selection.selectedIndex() == index;
+        const bool hovered = hoveredActionIndex == index;
+        const SDL_Color rowBorder = selected
+            ? ui::Theme::blue
+            : (!selection.locked() && hovered)
+                ? ui::Theme::text
+                : SDL_Color{37, 46, 54, SDL_ALPHA_OPAQUE};
         drawPanel(
             context.renderer,
             row,
             6.0F * scale,
             selected ? SDL_Color{19, 34, 47, SDL_ALPHA_OPAQUE} : ui::Theme::surfaceRaised,
-            selected ? ui::Theme::blue : SDL_Color{37, 46, 54, SDL_ALPHA_OPAQUE},
+            rowBorder,
             scale);
         const SDL_FRect key{
             row.x + 5.0F * scale,
@@ -1225,7 +1241,9 @@ bool drawSidebar(
     const DrawingContext& context,
     const PlayerRoundSnapshot& snapshot,
     const ActionSelectionState& actionSelection,
+    std::optional<std::size_t> hoveredActionIndex,
     ActionPanelGeometry& actionGeometry,
+    InventoryPanelGeometry& inventoryGeometry,
     const ClientSessionController& session,
     SDL_FRect sidebar) {
 
@@ -1269,12 +1287,20 @@ bool drawSidebar(
     y += report.h + 12.0F * scale;
 
     const SDL_FRect inventory{x, y, width, 134.0F * scale};
-    if (!drawInventory(context, snapshot, inventory)) return false;
+    if (!drawInventory(context, snapshot, inventoryGeometry, inventory)) {
+        return false;
+    }
     y += 146.0F * scale;
 
     const SDL_FRect actions{x, y, width, 228.0F * scale};
     return drawAvailableActions(
-        context, snapshot, actionSelection, actionGeometry, session, actions);
+        context,
+        snapshot,
+        actionSelection,
+        hoveredActionIndex,
+        actionGeometry,
+        session,
+        actions);
 }
 
 bool drawMapActionMenu(
@@ -1526,6 +1552,16 @@ bool hitTestActionPanel(
     return contains(geometry.panel, point);
 }
 
+std::optional<ItemType> hitTestInventoryItem(
+    const InventoryPanelGeometry& geometry,
+    PresentationPoint point) noexcept {
+
+    for (const InventoryItemGeometry& item : geometry.items) {
+        if (contains(item.bounds, point)) return item.item;
+    }
+    return std::nullopt;
+}
+
 std::optional<MapActionMenuChoice> hitTestMapActionRow(
     const MapActionMenuGeometry& geometry,
     PresentationPoint point) noexcept {
@@ -1567,7 +1603,9 @@ bool renderScreenShell(
     MapPresentationState& mapPresentation,
     MapPresentationGeometry& mapGeometry,
     const ActionSelectionState& actionSelection,
+    std::optional<std::size_t> hoveredActionIndex,
     ActionPanelGeometry& actionGeometry,
+    InventoryPanelGeometry& inventoryGeometry,
     const MapActionMenuState& mapActionMenu,
     MapActionMenuGeometry& mapActionMenuGeometry,
     LifecycleModalGeometry& lifecycleModalGeometry,
@@ -1710,7 +1748,9 @@ bool renderScreenShell(
         context,
         snapshot,
         actionSelection,
+        hoveredActionIndex,
         actionGeometry,
+        inventoryGeometry,
         session,
         sidebar)) {
         return false;

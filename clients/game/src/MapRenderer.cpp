@@ -244,6 +244,11 @@ bool renderPlayerKnownMap(
         if (!source.has_value() || !destination.has_value()) continue;
         const bool planned = containsRouteEdge(
             highlightedRouteEdges, edge.source, edge.destination);
+        const bool hovered = presentation.hoveredCave.has_value() &&
+            ((edge.source == snapshot.map.currentCave &&
+              edge.destination == *presentation.hoveredCave) ||
+             (edge.destination == snapshot.map.currentCave &&
+              edge.source == *presentation.hoveredCave));
         if (planned) {
             drawThickLine(
                 renderer, *source, *destination, 10.0F * uiScale,
@@ -251,6 +256,13 @@ bool renderPlayerKnownMap(
             drawThickLine(
                 renderer, *source, *destination, 5.0F * uiScale,
                 ui::Theme::blue);
+        } else if (hovered) {
+            drawThickLine(
+                renderer, *source, *destination, 9.0F * uiScale,
+                SDL_Color{5, 7, 9, SDL_ALPHA_OPAQUE});
+            drawThickLine(
+                renderer, *source, *destination, 4.0F * uiScale,
+                ui::Theme::text);
         } else {
             drawThickLine(
                 renderer, *source, *destination, 8.0F * uiScale,

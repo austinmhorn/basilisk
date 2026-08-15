@@ -32,6 +32,16 @@ struct ActionPanelGeometry {
     std::size_t visibleCapacity{};
 };
 
+struct InventoryItemGeometry {
+    ItemType item{ItemType::HealingDraught};
+    PresentationRect bounds;
+};
+
+struct InventoryPanelGeometry {
+    PresentationRect panel;
+    std::vector<InventoryItemGeometry> items;
+};
+
 struct MapActionMenuGeometry {
     struct Row {
         MapActionMenuChoice choice;
@@ -58,6 +68,9 @@ struct LifecycleModalGeometry {
 [[nodiscard]] bool hitTestActionPanel(
     const ActionPanelGeometry& geometry,
     PresentationPoint point) noexcept;
+[[nodiscard]] std::optional<ItemType> hitTestInventoryItem(
+    const InventoryPanelGeometry& geometry,
+    PresentationPoint point) noexcept;
 [[nodiscard]] std::optional<MapActionMenuChoice> hitTestMapActionRow(
     const MapActionMenuGeometry& geometry,
     PresentationPoint point) noexcept;
@@ -80,7 +93,9 @@ struct LifecycleModalGeometry {
     MapPresentationState& mapPresentation,
     MapPresentationGeometry& mapGeometry,
     const ActionSelectionState& actionSelection,
+    std::optional<std::size_t> hoveredActionIndex,
     ActionPanelGeometry& actionGeometry,
+    InventoryPanelGeometry& inventoryGeometry,
     const MapActionMenuState& mapActionMenu,
     MapActionMenuGeometry& mapActionMenuGeometry,
     LifecycleModalGeometry& lifecycleModalGeometry,

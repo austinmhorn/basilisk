@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "MapLayout.hpp"
+#include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/client/RoutePlanner.hpp"
 
 namespace basilisk::game {
@@ -94,6 +95,13 @@ enum class DestinationControl {
     PresentationPoint pointer);
 
 void updateMapHover(MapPresentationState& state, const MapHitTarget& hit);
+
+// Converts a literal Core-provided spatial action into the same player-known
+// hover target used by map hit-testing. No target is inferred for actions
+// without a CaveId or local TunnelId.
+[[nodiscard]] MapHitTarget mapHoverTargetForAction(
+    const AvailableAction& action,
+    CaveId currentCave);
 
 [[nodiscard]] bool selectRouteDestination(
     MapPresentationState& state,

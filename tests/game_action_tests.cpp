@@ -566,6 +566,73 @@ void caveMenuUsesOnlyLiteralTargetMatches() {
                actions, caveActionTarget(CaveId{34}), CaveId{7}).empty());
 }
 
+void currentCaveMenuUsesOnlyCurrentLocationActions() {
+    AvailableAction healing = actionWithShape(ActionType::UseItem);
+    healing.targetItem = ItemType::HealingDraught;
+    AvailableAction survey = actionWithShape(ActionType::UseItem);
+    survey.targetItem = ItemType::SurveyFragment;
+    survey.targetTunnel = TunnelId{6};
+    AvailableAction move = actionWithShape(ActionType::Move);
+    move.targetCave = CaveId{12};
+    AvailableAction shoot = actionWithShape(ActionType::Shoot);
+    shoot.targetCave = CaveId{7};
+    const std::array actions{
+        actionWithShape(ActionType::Search),
+        healing,
+        survey,
+        move,
+        shoot,
+        actionWithShape(ActionType::Contextual),
+    };
+
+    const auto matches = matchingSpatialActionIndices(
+        actions, caveActionTarget(CaveId{7}), CaveId{7});
+    assert((matches == std::vector<std::size_t>{0, 1, 2}));
+
+    MapActionMenuState menu;
+    assert(menu.open(
+        caveActionTarget(CaveId{7}),
+        100.0,
+        200.0,
+        actions,
+        CaveId{7},
+        playingView()));
+    assert(menu.choices().size() == 3);
+    assert(menu.choices()[0].actionIndex == 0);
+    assert(menu.choices()[1].actionIndex == 1);
+    assert(menu.choices()[2].actionIndex == 2);
+}
+
+void inventoryItemSelectsOnlyMatchingLegalUseAction() {
+    AvailableAction useMap = actionWithShape(ActionType::UseItem);
+    useMap.targetItem = ItemType::OldMinersMap;
+    AvailableAction useHealing = actionWithShape(ActionType::UseItem);
+    useHealing.targetItem = ItemType::HealingDraught;
+    const std::array actions{
+        actionWithShape(ActionType::Search),
+        useMap,
+        useHealing,
+    };
+
+    ActionSelectionState selection;
+    selection.synchronize(RoundNumber{14}, actions.size(), playingView());
+    assert(selectInventoryItemAction(
+        ItemType::HealingDraught, actions, playingView(), selection));
+    assert(selection.selectedIndex() == 2);
+    assert(selection.draft()->type == actions[2].type);
+    assert(selection.draft()->targetCave == actions[2].targetCave);
+    assert(selection.draft()->targetTunnel == actions[2].targetTunnel);
+    assert(selection.draft()->targetItem == actions[2].targetItem);
+    assert(selection.draft()->contextualAction == actions[2].contextualAction);
+
+    ActionSelectionState unusableSelection;
+    unusableSelection.synchronize(RoundNumber{14}, actions.size(), playingView());
+    assert(!selectInventoryItemAction(
+        ItemType::BloodBait, actions, playingView(), unusableSelection));
+    assert(!unusableSelection.selectedIndex().has_value());
+    assert(!unusableSelection.draft().has_value());
+}
+
 void mapMenuAndSidebarShareOneDraft() {
     AvailableAction move = actionWithShape(ActionType::Move);
     move.targetCave = CaveId{12};
@@ -761,6 +828,8 @@ int main() {
     controllerForwardsCommandsWithAuthorityGating();
     localAdapterPublishesOnlyPlayerSafeSessionState();
     caveMenuUsesOnlyLiteralTargetMatches();
+    currentCaveMenuUsesOnlyCurrentLocationActions();
+    inventoryItemSelectsOnlyMatchingLegalUseAction();
     mapMenuAndSidebarShareOneDraft();
     unknownExitMatchesExactCurrentCaveProvenance();
     spectatorCannotOpenOrChooseMapAction();
