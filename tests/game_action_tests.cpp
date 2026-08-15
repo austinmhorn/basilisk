@@ -1,12 +1,15 @@
 #include <array>
 #include <cassert>
+#include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "ActionCommands.hpp"
 #include "ActionPresentation.hpp"
 #include "ActionSelection.hpp"
 #include "ClientLifecycle.hpp"
+#include "ClientSessionController.hpp"
 #include "MapActionMenu.hpp"
 #include "SnapshotPresentation.hpp"
 
@@ -60,6 +63,29 @@ public:
         return lockSucceeds;
     }
 };
+
+class RecordingSessionSink final : public ClientSessionCommandSink {
+public:
+    int quits{0};
+    std::optional<PlayerId> quitPlayer;
+
+    bool quitGame(PlayerId player) override {
+        ++quits;
+        quitPlayer = player;
+        return true;
+    }
+};
+
+void ingestSnapshotForView(
+    ClientSessionController& session,
+    const client::ClientViewContext& view,
+    RoundNumber round = RoundNumber{1}) {
+    PlayerRoundSnapshot snapshot;
+    snapshot.player = view.viewedPlayer;
+    snapshot.round = round;
+    snapshot.alive = true;
+    assert(session.ingestSnapshot(std::move(snapshot)));
+}
 
 void assertExactCopy(const AvailableAction& available) {
     const PlayerAction action = makePlayerAction(available, PlayerId{42});
@@ -142,10 +168,14 @@ void spectatorCannotSelectOrSubmit() {
     ActionSelectionState selection;
     selection.synchronize(RoundNumber{2}, actions.size(), spectatorView());
     assert(!selection.select(0, actions, spectatorView()));
-    RecordingSink sink;
-    assert(!selection.submitAndLock(spectatorView(), sink));
-    assert(sink.submits == 0);
-    assert(sink.locks == 0);
+    auto commands = std::make_unique<RecordingSink>();
+    RecordingSink* recorded = commands.get();
+    ClientSessionController session(
+        {}, {}, spectatorView(), std::move(commands), nullptr);
+    ingestSnapshotForView(session, spectatorView());
+    assert(!selection.submitAndLock(session));
+    assert(recorded->submits == 0);
+    assert(recorded->locks == 0);
 
     selection.synchronize(RoundNumber{2}, actions.size(), playingView());
     assert(selection.select(0, actions, playingView()));
@@ -162,17 +192,21 @@ void successfulLockPreventsReplacement() {
     ActionSelectionState selection;
     selection.synchronize(RoundNumber{3}, actions.size(), playingView());
     assert(selection.select(0, actions, playingView()));
-    RecordingSink sink;
-    assert(selection.submitAndLock(playingView(), sink));
+    auto commands = std::make_unique<RecordingSink>();
+    RecordingSink* recorded = commands.get();
+    ClientSessionController session(
+        {}, {}, playingView(), std::move(commands), nullptr);
+    ingestSnapshotForView(session, playingView());
+    assert(selection.submitAndLock(session));
     assert(selection.locked());
     assert(selection.waitingForOtherHunter());
-    assert(sink.submits == 1);
-    assert(sink.locks == 1);
-    assert(sink.submitted->type == ActionType::Search);
-    assert(sink.lockedPlayer == PlayerId{1});
+    assert(recorded->submits == 1);
+    assert(recorded->locks == 1);
+    assert(recorded->submitted->type == ActionType::Search);
+    assert(recorded->lockedPlayer == PlayerId{1});
     assert(!selection.select(1, actions, playingView()));
-    assert(!selection.submitAndLock(playingView(), sink));
-    assert(sink.submits == 1);
+    assert(!selection.submitAndLock(session));
+    assert(recorded->submits == 1);
 }
 
 void lockFailureDoesNotShowLocked() {
@@ -180,9 +214,12 @@ void lockFailureDoesNotShowLocked() {
     ActionSelectionState selection;
     selection.synchronize(RoundNumber{7}, actions.size(), playingView());
     assert(selection.select(0, actions, playingView()));
-    RecordingSink sink;
-    sink.lockSucceeds = false;
-    assert(!selection.submitAndLock(playingView(), sink));
+    auto commands = std::make_unique<RecordingSink>();
+    commands->lockSucceeds = false;
+    ClientSessionController session(
+        {}, {}, playingView(), std::move(commands), nullptr);
+    ingestSnapshotForView(session, playingView());
+    assert(!selection.submitAndLock(session));
     assert(!selection.locked());
 }
 
@@ -191,8 +228,11 @@ void newRoundClearsDraftAndLockedState() {
     ActionSelectionState selection;
     selection.synchronize(RoundNumber{8}, actions.size(), playingView());
     assert(selection.select(0, actions, playingView()));
-    RecordingSink sink;
-    assert(selection.submitAndLock(playingView(), sink));
+    auto commands = std::make_unique<RecordingSink>();
+    ClientSessionController session(
+        {}, {}, playingView(), std::move(commands), nullptr);
+    ingestSnapshotForView(session, playingView());
+    assert(selection.submitAndLock(session));
     selection.synchronize(RoundNumber{9}, actions.size(), playingView());
     assert(!selection.selectedIndex().has_value());
     assert(!selection.draft().has_value());
@@ -328,6 +368,121 @@ void spectatorTerminalResultUsesPublicWinnerProfile() {
         "Elias Thorn killed the Basilisk and wins the hunt.");
     assert(!modal->offersWatch);
     assert(!view.canSubmitActions());
+}
+
+void controllerOwnsMetadataAndSelectsNewestLocalSnapshot() {
+    PublicMatchMetadata metadata;
+    metadata.totalCaves = 40;
+    metadata.players = {
+        PublicPlayerSlot{PlayerId{1}, PlayerSlot::P1},
+        PublicPlayerSlot{PlayerId{2}, PlayerSlot::P2},
+    };
+    const auto profileArray = demoProfiles();
+    std::vector<client::PublicPlayerProfile> profiles(
+        profileArray.begin(), profileArray.end());
+    ClientSessionController session(
+        std::move(metadata),
+        std::move(profiles),
+        playingView(),
+        nullptr,
+        nullptr);
+
+    PlayerRoundSnapshot newest;
+    newest.player = PlayerId{1};
+    newest.round = RoundNumber{4};
+    newest.health = 40;
+    assert(session.ingestSnapshot(newest));
+    assert(session.displayedSnapshot() != nullptr);
+    assert(session.displayedSnapshot()->health == 40);
+
+    PlayerRoundSnapshot older = newest;
+    older.round = RoundNumber{3};
+    older.health = 30;
+    assert(!session.ingestSnapshot(older));
+    assert(session.displayedSnapshot()->health == 40);
+
+    PlayerRoundSnapshot sameRoundUpdate = newest;
+    sameRoundUpdate.health = 44;
+    assert(session.ingestSnapshot(sameRoundUpdate));
+    assert(session.displayedSnapshot()->health == 44);
+    assert(session.matchMetadata().totalCaves == 40);
+    assert(session.profiles().size() == 2);
+}
+
+void controllerHandlesMissingSpectatorSnapshotSafely() {
+    ClientSessionController session({}, {}, spectatorView(), nullptr, nullptr);
+    PlayerRoundSnapshot local;
+    local.player = PlayerId{1};
+    local.round = RoundNumber{5};
+    assert(session.ingestSnapshot(local));
+    assert(session.displayedSnapshot() == nullptr);
+    assert(!session.canSubmitActions());
+
+    PlayerRoundSnapshot survivor;
+    survivor.player = PlayerId{2};
+    survivor.round = RoundNumber{6};
+    survivor.health = 63;
+    assert(session.ingestSnapshot(survivor));
+    assert(session.displayedSnapshot() == session.snapshotFor(PlayerId{2}));
+    assert(session.displayedSnapshot()->health == 63);
+    assert(session.viewContext().localPlayer == PlayerId{1});
+    assert(session.viewContext().viewedPlayer == PlayerId{2});
+}
+
+void controllerOwnsWatchTransition() {
+    const client::ClientViewContext defeated{
+        PlayerId{1},
+        PlayerId{1},
+        client::ClientViewMode::Defeated,
+        PlayerId{2},
+    };
+    ClientSessionController session({}, {}, defeated, nullptr, nullptr);
+    PlayerRoundSnapshot local;
+    local.player = PlayerId{1};
+    assert(session.ingestSnapshot(local));
+    PlayerRoundSnapshot survivor;
+    survivor.player = PlayerId{2};
+    assert(session.ingestSnapshot(survivor));
+
+    assert(session.watchRemainingHunter());
+    assert(session.viewContext().mode == client::ClientViewMode::Spectating);
+    assert(session.viewContext().localPlayer == PlayerId{1});
+    assert(session.viewContext().viewedPlayer == PlayerId{2});
+    assert(session.displayedSnapshot()->player == PlayerId{2});
+    assert(!session.canSubmitActions());
+}
+
+void controllerForwardsCommandsWithAuthorityGating() {
+    auto actions = std::make_unique<RecordingSink>();
+    RecordingSink* recordedActions = actions.get();
+    auto sessionCommands = std::make_unique<RecordingSessionSink>();
+    RecordingSessionSink* recordedSession = sessionCommands.get();
+    ClientSessionController session(
+        {},
+        {},
+        playingView(),
+        std::move(actions),
+        std::move(sessionCommands));
+    ingestSnapshotForView(session, playingView());
+
+    AvailableAction search;
+    search.type = ActionType::Search;
+    assert(session.submitAndLock(search));
+    assert(recordedActions->submits == 1);
+    assert(recordedActions->locks == 1);
+    assert(recordedActions->submitted->player == PlayerId{1});
+    assert(recordedActions->submitted->type == ActionType::Search);
+    assert(session.quit());
+    assert(recordedSession->quits == 1);
+    assert(recordedSession->quitPlayer == PlayerId{1});
+
+    session.setViewContext(spectatorView());
+    PlayerRoundSnapshot survivor;
+    survivor.player = PlayerId{2};
+    assert(session.ingestSnapshot(survivor));
+    assert(!session.submitAndLock(search));
+    assert(recordedActions->submits == 1);
+    assert(recordedActions->locks == 1);
 }
 
 void caveMenuUsesOnlyLiteralTargetMatches() {
@@ -505,6 +660,10 @@ int main() {
     firstDeathCanTransitionToViewOnlySpectating();
     finalDeathOffersQuitOnly();
     spectatorTerminalResultUsesPublicWinnerProfile();
+    controllerOwnsMetadataAndSelectsNewestLocalSnapshot();
+    controllerHandlesMissingSpectatorSnapshotSafely();
+    controllerOwnsWatchTransition();
+    controllerForwardsCommandsWithAuthorityGating();
     caveMenuUsesOnlyLiteralTargetMatches();
     mapMenuAndSidebarShareOneDraft();
     unknownExitMatchesTunnelWithoutDestination();

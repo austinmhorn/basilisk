@@ -9,12 +9,12 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "ActionSelection.hpp"
 #include "ClientLifecycle.hpp"
-#include "DemoActionCommandSink.hpp"
+#include "ClientSessionController.hpp"
 #include "DemoMap.hpp"
-#include "DemoSessionCommandSink.hpp"
 #include "DemoUi.hpp"
 #include "MapRenderer.hpp"
 #include "MapActionMenu.hpp"
@@ -36,9 +36,7 @@ struct AppState {
     bool demoMapEnabled{false};
     std::size_t demoSnapshotStage{0};
 
-    // Future gameplay presentation should consume this player-safe view,
-    // rather than exposing the authoritative MatchState to the client.
-    basilisk::PlayerRoundSnapshot snapshot{};
+    std::unique_ptr<basilisk::game::ClientSessionController> session;
     basilisk::game::PlayerMapLayout mapLayout;
     basilisk::game::MapPresentationState mapPresentation;
     basilisk::game::MapPresentationGeometry mapGeometry;
@@ -48,10 +46,6 @@ struct AppState {
     basilisk::game::MapActionMenuGeometry mapActionMenuGeometry;
     basilisk::game::LifecycleModalGeometry lifecycleModalGeometry;
     std::optional<basilisk::RoundNumber> mapActionMenuRound;
-    std::unique_ptr<basilisk::game::ActionCommandSink> actionCommands;
-    std::unique_ptr<basilisk::game::ClientSessionCommandSink> sessionCommands;
-    std::optional<basilisk::PlayerRoundSnapshot> demoSpectatorSnapshot;
-    basilisk::game::ScreenShellData demoScreenData;
 };
 
 std::string bundledFontDirectory() {
@@ -66,6 +60,19 @@ std::string bundledAssetDirectory() {
     return std::string{basePath} + "assets";
 }
 
+void ingestDemoSnapshot(
+    basilisk::game::ClientSessionController& session,
+    basilisk::PlayerRoundSnapshot snapshot,
+    bool advanceRound = false) {
+
+    if (const auto* current = session.snapshotFor(snapshot.player)) {
+        snapshot.round = advanceRound
+            ? static_cast<basilisk::RoundNumber>(current->round + 1)
+            : std::max(snapshot.round, current->round);
+    }
+    (void)session.ingestSnapshot(std::move(snapshot));
+}
+
 } // namespace
 
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
@@ -75,18 +82,19 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         return SDL_APP_FAILURE;
     }
     *appstate = state;
+    state->session =
+        std::make_unique<basilisk::game::ClientSessionController>();
 
     for (int index = 1; index < argc; ++index) {
         if (argv != nullptr && argv[index] != nullptr &&
             std::string_view{argv[index]} == "--demo-map") {
-            state->snapshot = basilisk::game::demo::makeDemoMapSnapshot();
-            state->demoScreenData = basilisk::game::demo::makeDemoScreenShellData();
-            state->actionCommands =
-                std::make_unique<basilisk::game::demo::DemoActionCommandSink>();
-            state->sessionCommands =
-                std::make_unique<basilisk::game::demo::DemoSessionCommandSink>();
+            state->session = basilisk::game::demo::makeDemoSessionController();
+            (void)state->session->ingestSnapshot(
+                basilisk::game::demo::makeDemoMapSnapshot());
             (void)basilisk::game::selectRouteDestination(
-                state->mapPresentation, state->snapshot.map, basilisk::CaveId{34});
+                state->mapPresentation,
+                state->session->displayedSnapshot()->map,
+                basilisk::CaveId{34});
             state->demoMapEnabled = true;
             SDL_Log("Development demo map enabled");
             break;
@@ -175,72 +183,86 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             basilisk::game::demo::DemoSnapshotStage::NextRound,
         };
         state->demoSnapshotStage = (state->demoSnapshotStage + 1) % stages.size();
-        state->snapshot = basilisk::game::demo::makeDemoMapSnapshot(
-            stages[state->demoSnapshotStage]);
-        state->demoScreenData.viewContext = basilisk::client::ClientViewContext{
+        ingestDemoSnapshot(
+            *state->session,
+            basilisk::game::demo::makeDemoMapSnapshot(
+                stages[state->demoSnapshotStage]),
+            stages[state->demoSnapshotStage] ==
+                basilisk::game::demo::DemoSnapshotStage::NextRound);
+        state->session->setViewContext(basilisk::client::ClientViewContext{
             basilisk::PlayerId{1},
             basilisk::PlayerId{1},
             basilisk::client::ClientViewMode::Playing,
             std::nullopt,
-        };
-        state->demoSpectatorSnapshot.reset();
+        });
+        const auto* snapshot = state->session->displayedSnapshot();
         SDL_Log(
             "Development snapshot stage %zu/%zu, round %u",
             state->demoSnapshotStage + 1,
             stages.size(),
-            static_cast<unsigned int>(state->snapshot.round));
+            snapshot == nullptr ? 0U : static_cast<unsigned int>(snapshot->round));
         return SDL_APP_CONTINUE;
     }
 
     if (state != nullptr && state->demoMapEnabled &&
         event->type == SDL_EVENT_KEY_DOWN && !event->key.repeat) {
         if (event->key.key == SDLK_F7) {
-            state->snapshot = basilisk::game::demo::makeDemoDefeatedSnapshot(false);
-            state->demoSpectatorSnapshot =
-                basilisk::game::demo::makeDemoSurvivorSnapshot(false);
-            state->demoScreenData.viewContext = basilisk::client::ClientViewContext{
+            ingestDemoSnapshot(
+                *state->session,
+                basilisk::game::demo::makeDemoDefeatedSnapshot(false),
+                true);
+            ingestDemoSnapshot(
+                *state->session,
+                basilisk::game::demo::makeDemoSurvivorSnapshot(false));
+            state->session->setViewContext(basilisk::client::ClientViewContext{
                 basilisk::PlayerId{1},
                 basilisk::PlayerId{1},
                 basilisk::client::ClientViewMode::Defeated,
                 basilisk::PlayerId{2},
-            };
+            });
             state->mapActionMenu.dismiss();
             SDL_Log("Development first-death snapshot enabled");
             return SDL_APP_CONTINUE;
         }
         if (event->key.key == SDLK_F8) {
-            state->snapshot = basilisk::game::demo::makeDemoDefeatedSnapshot(true);
-            state->demoSpectatorSnapshot.reset();
-            state->demoScreenData.viewContext = basilisk::client::ClientViewContext{
+            ingestDemoSnapshot(
+                *state->session,
+                basilisk::game::demo::makeDemoDefeatedSnapshot(true),
+                true);
+            state->session->setViewContext(basilisk::client::ClientViewContext{
                 basilisk::PlayerId{1},
                 basilisk::PlayerId{1},
                 basilisk::client::ClientViewMode::Defeated,
                 std::nullopt,
-            };
+            });
             state->mapActionMenu.dismiss();
             SDL_Log("Development final-death snapshot enabled");
             return SDL_APP_CONTINUE;
         }
         if (event->key.key == SDLK_F9) {
-            state->snapshot = basilisk::game::demo::makeDemoSurvivorSnapshot(true);
-            state->demoSpectatorSnapshot = state->snapshot;
-            state->demoScreenData.viewContext = basilisk::client::ClientViewContext{
+            ingestDemoSnapshot(
+                *state->session,
+                basilisk::game::demo::makeDemoSurvivorSnapshot(true));
+            state->session->setViewContext(basilisk::client::ClientViewContext{
                 basilisk::PlayerId{1},
                 basilisk::PlayerId{2},
                 basilisk::client::ClientViewMode::Spectating,
                 basilisk::PlayerId{2},
-            };
+            });
             state->mapActionMenu.dismiss();
             SDL_Log("Development spectator match-end snapshot enabled");
             return SDL_APP_CONTINUE;
         }
     }
 
-    const bool lifecycleModalActive = state != nullptr &&
+    const basilisk::PlayerRoundSnapshot* snapshot = state == nullptr
+        ? nullptr
+        : state->session->displayedSnapshot();
+    const bool lifecycleModalActive = snapshot != nullptr &&
         basilisk::game::lifecycleModalPresentation(
-            state->snapshot,
-            state->demoScreenData.viewContext,
-            state->demoScreenData.profiles).has_value();
+            *snapshot,
+            state->session->viewContext(),
+            state->session->profiles()).has_value();
 
     if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
         !event->key.repeat && event->key.key == SDLK_ESCAPE) {
@@ -250,12 +272,12 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 
     if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
         !event->key.repeat && event->key.key >= SDLK_1 && event->key.key <= SDLK_9) {
-        if (lifecycleModalActive) return SDL_APP_CONTINUE;
+        if (lifecycleModalActive || snapshot == nullptr) return SDL_APP_CONTINUE;
         const std::size_t index = static_cast<std::size_t>(event->key.key - SDLK_1);
         if (state->actionSelection.select(
                 index,
-                state->snapshot.availableActions,
-                state->demoScreenData.viewContext)) {
+                snapshot->availableActions,
+                state->session->viewContext())) {
             state->mapActionMenu.dismiss();
             state->actionSelection.ensureVisible(
                 index, state->actionGeometry.visibleCapacity);
@@ -271,6 +293,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             SDL_Log("Unable to convert pointer coordinates: %s", SDL_GetError());
             return SDL_APP_FAILURE;
         }
+        if (snapshot == nullptr) return SDL_APP_CONTINUE;
         basilisk::game::PresentationPoint pointer;
         if (event->type == SDL_EVENT_MOUSE_MOTION) {
             pointer = {event->motion.x, event->motion.y};
@@ -283,7 +306,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     : event->wheel.y < 0.0F ? 1 : 0;
                 state->actionSelection.scrollRows(
                     delta,
-                    state->snapshot.availableActions.size(),
+                    snapshot->availableActions.size(),
                     state->actionGeometry.visibleCapacity);
             }
             return SDL_APP_CONTINUE;
@@ -296,23 +319,16 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 event->button.button == SDL_BUTTON_LEFT) {
                 if (basilisk::game::hitTestLifecycleWatch(
                         state->lifecycleModalGeometry, pointer)) {
-                    if (basilisk::game::beginSpectating(
-                            state->demoScreenData.viewContext) &&
-                        state->demoSpectatorSnapshot.has_value() &&
-                        state->demoSpectatorSnapshot->player ==
-                            state->demoScreenData.viewContext.viewedPlayer) {
-                        state->snapshot = *state->demoSpectatorSnapshot;
+                    if (state->session->watchRemainingHunter()) {
                         state->mapActionMenu.dismiss();
                         SDL_Log(
                             "Now spectating player %llu",
                             static_cast<unsigned long long>(
-                                state->demoScreenData.viewContext.viewedPlayer));
+                                state->session->viewContext().viewedPlayer));
                     }
                 } else if (basilisk::game::hitTestLifecycleQuit(
                                state->lifecycleModalGeometry, pointer) &&
-                           state->sessionCommands != nullptr &&
-                           state->sessionCommands->quitGame(
-                               state->demoScreenData.viewContext.localPlayer)) {
+                           state->session->quit()) {
                     return SDL_APP_SUCCESS;
                 }
             }
@@ -330,8 +346,8 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                         basilisk::game::MapActionMenuChoiceKind::GameplayAction) {
                         if (state->mapActionMenu.chooseGameplayAction(
                                 *menuChoice,
-                                state->snapshot.availableActions,
-                                state->demoScreenData.viewContext,
+                                snapshot->availableActions,
+                                state->session->viewContext(),
                                 state->actionSelection)) {
                             state->actionSelection.ensureVisible(
                                 menuChoice->actionIndex,
@@ -346,7 +362,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                             : basilisk::game::DestinationControl::Clear;
                         (void)basilisk::game::applyDestinationControl(
                             state->mapPresentation,
-                            state->snapshot.map,
+                            snapshot->map,
                             state->mapActionMenu.target()->cave,
                             control);
                         state->mapActionMenu.dismiss();
@@ -370,19 +386,16 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     state->actionGeometry, pointer); actionIndex.has_value()) {
                 (void)state->actionSelection.select(
                     *actionIndex,
-                    state->snapshot.availableActions,
-                    state->demoScreenData.viewContext);
+                    snapshot->availableActions,
+                    state->session->viewContext());
                 state->mapActionMenu.dismiss();
                 return SDL_APP_CONTINUE;
             }
             if (basilisk::game::hitTestActionLockButton(
                     state->actionGeometry, pointer)) {
-                if (state->actionCommands != nullptr &&
-                    state->actionSelection.canLock(
-                        state->demoScreenData.viewContext) &&
-                    !state->actionSelection.submitAndLock(
-                        state->demoScreenData.viewContext,
-                        *state->actionCommands)) {
+                if (state->actionSelection.canLock(
+                        state->session->viewContext()) &&
+                    !state->actionSelection.submitAndLock(*state->session)) {
                     SDL_Log("Action submit/lock command failed");
                 }
                 return SDL_APP_CONTINUE;
@@ -391,7 +404,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 
         const basilisk::game::MapHitTarget hit =
             basilisk::game::hitTestPlayerKnownMap(
-                state->snapshot.map,
+                snapshot->map,
                 state->mapLayout,
                 state->mapGeometry,
                 pointer);
@@ -404,10 +417,10 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     basilisk::game::caveActionTarget(*hit.cave);
                 const bool hasMatchingLegalAction =
                     !basilisk::game::matchingSpatialActionIndices(
-                        state->snapshot.availableActions, target).empty();
+                        snapshot->availableActions, target).empty();
                 const basilisk::game::DestinationControl destinationControl =
                     basilisk::game::destinationControlForCave(
-                        state->snapshot.map,
+                        snapshot->map,
                         *hit.cave,
                         state->mapPresentation.routeDestination,
                         hasMatchingLegalAction);
@@ -415,8 +428,8 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     target,
                     pointer.x,
                     pointer.y,
-                    state->snapshot.availableActions,
-                    state->demoScreenData.viewContext,
+                    snapshot->availableActions,
+                    state->session->viewContext(),
                     destinationControl,
                     !state->actionSelection.locked());
             } else if (hit.kind == basilisk::game::MapHitKind::UnknownExit &&
@@ -426,8 +439,8 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                         hit.unknownExit->tunnel),
                     pointer.x,
                     pointer.y,
-                    state->snapshot.availableActions,
-                    state->demoScreenData.viewContext,
+                    snapshot->availableActions,
+                    state->session->viewContext(),
                     basilisk::game::DestinationControl::None,
                     !state->actionSelection.locked());
             } else {
@@ -448,22 +461,26 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
     int outputWidth = 0;
     int outputHeight = 0;
     if (SDL_GetRenderOutputSize(state->renderer, &outputWidth, &outputHeight)) {
+        const basilisk::PlayerRoundSnapshot* snapshot =
+            state->session->displayedSnapshot();
         if (state->demoMapEnabled) {
-            state->actionSelection.synchronize(
-                state->snapshot.round,
-                state->snapshot.availableActions.size(),
-                state->demoScreenData.viewContext);
-            if (!state->mapActionMenuRound.has_value() ||
-                *state->mapActionMenuRound != state->snapshot.round) {
-                state->mapActionMenu.dismiss();
-                state->mapActionMenuRound = state->snapshot.round;
+            if (snapshot != nullptr) {
+                state->actionSelection.synchronize(
+                    snapshot->round,
+                    snapshot->availableActions.size(),
+                    state->session->viewContext());
+                if (!state->mapActionMenuRound.has_value() ||
+                    *state->mapActionMenuRound != snapshot->round) {
+                    state->mapActionMenu.dismiss();
+                    state->mapActionMenuRound = snapshot->round;
+                }
             }
             std::string screenError;
             if (!basilisk::game::renderScreenShell(
                     state->renderer,
                     *state->textRenderer,
                     *state->svgTextures,
-                    state->snapshot,
+                    *state->session,
                     state->mapLayout,
                     state->mapPresentation,
                     state->mapGeometry,
@@ -472,15 +489,14 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     state->mapActionMenu,
                     state->mapActionMenuGeometry,
                     state->lifecycleModalGeometry,
-                    state->demoScreenData,
                     outputWidth,
                     outputHeight,
                     screenError)) {
                 SDL_Log("Screen shell rendering failed: %s", screenError.c_str());
                 return SDL_APP_FAILURE;
             }
-        } else {
-            state->mapLayout.update(state->snapshot.map);
+        } else if (snapshot != nullptr) {
+            state->mapLayout.update(snapshot->map);
             constexpr float padding = 24.0F;
             const basilisk::game::PresentationRect bounds{
                 padding,
@@ -490,9 +506,9 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             const double pixelDensity = std::max(
                 1.0, static_cast<double>(SDL_GetWindowPixelDensity(state->window)));
             state->mapGeometry = basilisk::game::buildMapPresentationGeometry(
-                state->snapshot.map,
+                snapshot->map,
                 state->mapLayout,
-                state->snapshot.temporarilyRevealedPitCaves,
+                snapshot->temporarilyRevealedPitCaves,
                 bounds,
                 padding,
                 pixelDensity);
@@ -500,7 +516,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             if (!basilisk::game::renderPlayerKnownMap(
                     state->renderer,
                     *state->textRenderer,
-                    state->snapshot,
+                    *snapshot,
                     state->mapLayout,
                     state->mapGeometry,
                     state->mapPresentation,

@@ -160,23 +160,26 @@ struct DrawingContext {
     }
 };
 
-const PublicPlayerSlot* findSlot(const ScreenShellData& data, PlayerSlot slot) {
+const PublicPlayerSlot* findSlot(
+    const ClientSessionController& session, PlayerSlot slot) {
+    const auto& players = session.matchMetadata().players;
     const auto found = std::find_if(
-        data.matchMetadata.players.begin(),
-        data.matchMetadata.players.end(),
+        players.begin(),
+        players.end(),
         [slot](const PublicPlayerSlot& player) { return player.slot == slot; });
-    return found == data.matchMetadata.players.end() ? nullptr : &*found;
+    return found == players.end() ? nullptr : &*found;
 }
 
 const client::PublicPlayerProfile* findProfile(
-    const ScreenShellData& data, PlayerId player) {
+    const ClientSessionController& session, PlayerId player) {
+    const auto& profiles = session.profiles();
     const auto found = std::find_if(
-        data.profiles.begin(),
-        data.profiles.end(),
+        profiles.begin(),
+        profiles.end(),
         [player](const client::PublicPlayerProfile& profile) {
             return profile.player == player;
         });
-    return found == data.profiles.end() ? nullptr : &*found;
+    return found == profiles.end() ? nullptr : &*found;
 }
 
 bool drawBrand(const DrawingContext& context, float x, float y) {
@@ -339,19 +342,19 @@ bool drawPlayerCard(
 bool drawHeaderHud(
     const DrawingContext& context,
     const PlayerRoundSnapshot& snapshot,
-    const ScreenShellData& data,
+    const ClientSessionController& session,
     float headerHeight) {
 
     const float scale = context.scale;
     const float top = (headerHeight - 46.0F * scale) * 0.5F;
     if (!drawBrand(context, 26.0F * scale, top)) return false;
 
-    const PublicPlayerSlot* p1Slot = findSlot(data, PlayerSlot::P1);
-    const PublicPlayerSlot* p2Slot = findSlot(data, PlayerSlot::P2);
+    const PublicPlayerSlot* p1Slot = findSlot(session, PlayerSlot::P1);
+    const PublicPlayerSlot* p2Slot = findSlot(session, PlayerSlot::P2);
     const client::PublicPlayerProfile* p1 =
-        p1Slot == nullptr ? nullptr : findProfile(data, p1Slot->player);
+        p1Slot == nullptr ? nullptr : findProfile(session, p1Slot->player);
     const client::PublicPlayerProfile* p2 =
-        p2Slot == nullptr ? nullptr : findProfile(data, p2Slot->player);
+        p2Slot == nullptr ? nullptr : findProfile(session, p2Slot->player);
 
     const float matchX = 220.0F * scale;
     const SDL_FRect p1Card{matchX, top, 203.0F * scale, 46.0F * scale};
@@ -373,7 +376,8 @@ bool drawHeaderHud(
             "P1",
             p1 == nullptr ? "Player One" : p1->displayName,
             p1 == nullptr ? nullptr : &p1->emblemId,
-            p1Slot != nullptr && p1Slot->player == data.viewContext.localPlayer,
+            p1Slot != nullptr &&
+                p1Slot->player == session.viewContext().localPlayer,
             true) ||
         !context.centeredLabel(
             "VS", FontWeight::Bold, ui::Typography::versus, ui::Theme::muted, versus) ||
@@ -383,7 +387,8 @@ bool drawHeaderHud(
             "P2",
             p2 == nullptr ? "Player Two" : p2->displayName,
             p2 == nullptr ? nullptr : &p2->emblemId,
-            p2Slot != nullptr && p2Slot->player == data.viewContext.localPlayer,
+            p2Slot != nullptr &&
+                p2Slot->player == session.viewContext().localPlayer,
             false)) {
         return false;
     }
@@ -894,7 +899,7 @@ bool drawAvailableActions(
     const PlayerRoundSnapshot& snapshot,
     const ActionSelectionState& selection,
     ActionPanelGeometry& geometry,
-    const ScreenShellData& data,
+    const ClientSessionController& session,
     SDL_FRect panel) {
 
     const float scale = context.scale;
@@ -1022,7 +1027,7 @@ bool drawAvailableActions(
     }
     SDL_SetRenderClipRect(context.renderer, nullptr);
 
-    const bool canLock = selection.canLock(data.viewContext);
+    const bool canLock = selection.canLock(session.viewContext());
     const bool locked = selection.locked();
     const SDL_Color buttonFill = locked
         ? SDL_Color{35, 31, 19, SDL_ALPHA_OPAQUE}
@@ -1043,7 +1048,7 @@ bool drawAvailableActions(
         scale);
     const std::string_view buttonLabel = locked
         ? "LOCKED"
-        : data.viewContext.canSubmitActions() ? "LOCK ACTION" : "VIEW ONLY";
+        : session.canSubmitActions() ? "LOCK ACTION" : "VIEW ONLY";
     if (selection.waitingForOtherHunter() && !context.centeredLabel(
             "WAITING FOR OTHER HUNTER",
             FontWeight::Medium,
@@ -1069,7 +1074,7 @@ bool drawSidebar(
     const PlayerRoundSnapshot& snapshot,
     const ActionSelectionState& actionSelection,
     ActionPanelGeometry& actionGeometry,
-    const ScreenShellData& data,
+    const ClientSessionController& session,
     SDL_FRect sidebar) {
 
     const float scale = context.scale;
@@ -1101,7 +1106,7 @@ bool drawSidebar(
 
     const SDL_FRect actions{x, y, width, 228.0F * scale};
     return drawAvailableActions(
-        context, snapshot, actionSelection, actionGeometry, data, actions);
+        context, snapshot, actionSelection, actionGeometry, session, actions);
 }
 
 bool drawMapActionMenu(
@@ -1213,13 +1218,13 @@ bool drawMapActionMenu(
 bool drawLifecycleModal(
     const DrawingContext& context,
     const PlayerRoundSnapshot& snapshot,
-    const ScreenShellData& data,
+    const ClientSessionController& session,
     LifecycleModalGeometry& geometry,
     SDL_FRect output) {
 
     geometry = {};
     const auto presentation = lifecycleModalPresentation(
-        snapshot, data.viewContext, data.profiles);
+        snapshot, session.viewContext(), session.profiles());
     if (!presentation.has_value()) return true;
 
     geometry.blocking = true;
@@ -1389,7 +1394,7 @@ bool renderScreenShell(
     SDL_Renderer* renderer,
     TextRenderer& textRenderer,
     SvgTextureManager& svgTextures,
-    const PlayerRoundSnapshot& snapshot,
+    const ClientSessionController& session,
     PlayerMapLayout& mapLayout,
     MapPresentationState& mapPresentation,
     MapPresentationGeometry& mapGeometry,
@@ -1398,7 +1403,6 @@ bool renderScreenShell(
     const MapActionMenuState& mapActionMenu,
     MapActionMenuGeometry& mapActionMenuGeometry,
     LifecycleModalGeometry& lifecycleModalGeometry,
-    const ScreenShellData& data,
     int outputWidth,
     int outputHeight,
     std::string& error) {
@@ -1428,6 +1432,20 @@ bool renderScreenShell(
     };
     SDL_RenderFillRect(renderer, &output);
 
+    const PlayerRoundSnapshot* displayedSnapshot = session.displayedSnapshot();
+    if (displayedSnapshot == nullptr) {
+        actionGeometry = {};
+        mapActionMenuGeometry = {};
+        lifecycleModalGeometry = {};
+        return context.centeredLabel(
+            "WAITING FOR PLAYER SNAPSHOT",
+            FontWeight::SemiBold,
+            ui::Typography::sectionHeading,
+            ui::Theme::mutedBright,
+            output);
+    }
+    const PlayerRoundSnapshot& snapshot = *displayedSnapshot;
+
     const float headerHeight = 68.0F * scale;
     const SDL_FRect header{0.0F, 0.0F, output.w, headerHeight};
     setColor(renderer, ui::Theme::header);
@@ -1451,7 +1469,7 @@ bool renderScreenShell(
     if (!drawMapHeader(
             context,
             snapshot,
-            data.matchMetadata.totalCaves,
+            session.matchMetadata().totalCaves,
             mapPadding,
             headerHeight + 22.0F * scale)) {
         return false;
@@ -1515,13 +1533,13 @@ bool renderScreenShell(
     }
     SDL_SetRenderClipRect(renderer, nullptr);
 
-    if (!drawHeaderHud(context, snapshot, data, headerHeight)) return false;
+    if (!drawHeaderHud(context, snapshot, session, headerHeight)) return false;
     if (!drawSidebar(
         context,
         snapshot,
         actionSelection,
         actionGeometry,
-        data,
+        session,
         sidebar)) {
         return false;
     }
@@ -1536,7 +1554,7 @@ bool renderScreenShell(
     return drawLifecycleModal(
         context,
         snapshot,
-        data,
+        session,
         lifecycleModalGeometry,
         output);
 }

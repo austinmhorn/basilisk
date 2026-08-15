@@ -2,7 +2,6 @@
 
 #include <SDL3/SDL.h>
 
-#include <array>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -10,15 +9,13 @@
 
 #include "ActionSelection.hpp"
 #include "ClientLifecycle.hpp"
+#include "ClientSessionController.hpp"
 #include "MapActionMenu.hpp"
 #include "MapLayout.hpp"
 #include "MapPresentation.hpp"
 #include "SvgTextureManager.hpp"
 #include "TextRenderer.hpp"
 #include "basilisk/ClientSnapshot.hpp"
-#include "basilisk/PublicMatchMetadata.hpp"
-#include "basilisk/client/ClientViewContext.hpp"
-#include "basilisk/client/PlayerProfile.hpp"
 
 namespace basilisk::game {
 
@@ -52,14 +49,6 @@ struct LifecycleModalGeometry {
     bool blocking{false};
 };
 
-// Public/demo-safe screen inputs that are intentionally outside gameplay
-// snapshot state: match facts, profiles/cosmetics, and presentation-only rows.
-struct ScreenShellData {
-    PublicMatchMetadata matchMetadata;
-    std::array<client::PublicPlayerProfile, 2> profiles;
-    client::ClientViewContext viewContext;
-};
-
 [[nodiscard]] std::optional<std::size_t> hitTestActionRow(
     const ActionPanelGeometry& geometry,
     PresentationPoint point) noexcept;
@@ -86,7 +75,7 @@ struct ScreenShellData {
     SDL_Renderer* renderer,
     TextRenderer& textRenderer,
     SvgTextureManager& svgTextures,
-    const PlayerRoundSnapshot& snapshot,
+    const ClientSessionController& session,
     PlayerMapLayout& mapLayout,
     MapPresentationState& mapPresentation,
     MapPresentationGeometry& mapGeometry,
@@ -95,7 +84,6 @@ struct ScreenShellData {
     const MapActionMenuState& mapActionMenu,
     MapActionMenuGeometry& mapActionMenuGeometry,
     LifecycleModalGeometry& lifecycleModalGeometry,
-    const ScreenShellData& data,
     int outputWidth,
     int outputHeight,
     std::string& error);

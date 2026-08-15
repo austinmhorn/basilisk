@@ -38,6 +38,7 @@ add_library(BasiliskGameActions STATIC
     src/ActionPresentation.cpp
     src/ActionSelection.cpp
     src/ClientLifecycle.cpp
+    src/ClientSessionController.cpp
     src/MapActionMenu.cpp
     src/SnapshotPresentation.cpp
 )

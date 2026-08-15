@@ -10,6 +10,8 @@
 
 namespace basilisk::game {
 
+class ClientSessionController;
+
 class ActionSelectionState {
 public:
     void synchronize(
@@ -23,8 +25,7 @@ public:
         const client::ClientViewContext& viewContext);
 
     [[nodiscard]] bool submitAndLock(
-        const client::ClientViewContext& viewContext,
-        ActionCommandSink& commands);
+        ClientSessionController& session);
 
     void scrollRows(int delta, std::size_t actionCount, std::size_t visibleCapacity);
     void ensureVisible(std::size_t index, std::size_t visibleCapacity);

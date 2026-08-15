@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "ClientSessionController.hpp"
+
 namespace basilisk::game {
 
 void ActionSelectionState::synchronize(
@@ -44,13 +46,10 @@ bool ActionSelectionState::select(
 }
 
 bool ActionSelectionState::submitAndLock(
-    const client::ClientViewContext& viewContext,
-    ActionCommandSink& commands) {
+    ClientSessionController& session) {
 
-    if (!canLock(viewContext)) return false;
-    const PlayerAction action = makePlayerAction(*draft_, viewContext.localPlayer);
-    if (!commands.submitAction(action)) return false;
-    if (!commands.lockAction(viewContext.localPlayer)) return false;
+    if (!canLock(session.viewContext())) return false;
+    if (!session.submitAndLock(*draft_)) return false;
     locked_ = true;
     return true;
 }
