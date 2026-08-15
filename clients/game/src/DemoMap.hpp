@@ -15,5 +15,7 @@ enum class DemoSnapshotStage {
 // Development-only player-safe data for manually exercising map rendering.
 [[nodiscard]] PlayerRoundSnapshot makeDemoMapSnapshot(
     DemoSnapshotStage stage = DemoSnapshotStage::NormalStart);
+[[nodiscard]] PlayerRoundSnapshot makeDemoDefeatedSnapshot(bool matchCompleted);
+[[nodiscard]] PlayerRoundSnapshot makeDemoSurvivorSnapshot(bool matchCompleted);
 
 } // namespace basilisk::game::demo

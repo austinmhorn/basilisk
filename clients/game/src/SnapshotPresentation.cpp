@@ -1,7 +1,6 @@
 #include "SnapshotPresentation.hpp"
 
 #include <string>
-#include <utility>
 
 #include "basilisk/client/Presentation.hpp"
 
@@ -47,45 +46,6 @@ std::vector<std::string> roundReportText(const PlayerRoundSnapshot& snapshot) {
         result.push_back(presentation::observationText(observation));
     }
     return result;
-}
-
-std::optional<MatchStatePresentation> matchStatePresentation(
-    const PlayerRoundSnapshot& snapshot) {
-
-    if (snapshot.matchStatus == MatchStatus::Completed) {
-        std::string detail;
-        switch (snapshot.matchOutcome) {
-            case MatchOutcome::BasiliskKilled:
-                detail = snapshot.winner.has_value()
-                    ? "Hunter " + std::to_string(*snapshot.winner) +
-                          " killed the Basilisk and wins the hunt."
-                    : "The Basilisk was killed.";
-                break;
-            case MatchOutcome::SimultaneousBasiliskKill:
-                detail = "Both hunters struck the Basilisk down. The hunt ends in a draw.";
-                break;
-            case MatchOutcome::EscapedWithSigil:
-                detail = snapshot.winner.has_value()
-                    ? "Hunter " + std::to_string(*snapshot.winner) +
-                          " escaped with the rival Hunter's Sigil and wins the hunt."
-                    : "A hunter escaped with the rival Hunter's Sigil.";
-                break;
-            case MatchOutcome::Draw:
-                detail = "No hunter survived. The hunt ends in a draw.";
-                break;
-            case MatchOutcome::None:
-                detail = "The hunt ended without a recorded result.";
-                break;
-        }
-        return MatchStatePresentation{"HUNT ENDED", std::move(detail)};
-    }
-    if (!snapshot.alive) {
-        return MatchStatePresentation{
-            "YOU DIED",
-            "The hunt continues without your hunter.",
-        };
-    }
-    return std::nullopt;
 }
 
 } // namespace basilisk::game

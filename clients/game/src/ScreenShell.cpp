@@ -1210,50 +1210,112 @@ bool drawMapActionMenu(
     return true;
 }
 
-bool drawMatchStateOverlay(
+bool drawLifecycleModal(
     const DrawingContext& context,
     const PlayerRoundSnapshot& snapshot,
+    const ScreenShellData& data,
+    LifecycleModalGeometry& geometry,
     SDL_FRect output) {
 
-    const auto presentation = matchStatePresentation(snapshot);
+    geometry = {};
+    const auto presentation = lifecycleModalPresentation(
+        snapshot, data.viewContext, data.profiles);
     if (!presentation.has_value()) return true;
 
+    geometry.blocking = true;
     setColor(context.renderer, SDL_Color{4, 6, 8, 176});
     SDL_RenderFillRect(context.renderer, &output);
     const float scale = context.scale;
+    const float panelHeight = presentation->offersWatch ? 218.0F : 180.0F;
     const SDL_FRect panel{
         output.x + (output.w - 430.0F * scale) * 0.5F,
-        output.y + (output.h - 150.0F * scale) * 0.5F,
+        output.y + (output.h - panelHeight * scale) * 0.5F,
         430.0F * scale,
-        150.0F * scale,
+        panelHeight * scale,
     };
+    geometry.panel = PresentationRect{panel.x, panel.y, panel.w, panel.h};
     drawPanel(
         context.renderer,
         panel,
         12.0F * scale,
         ui::Theme::surface,
-        snapshot.alive ? ui::Theme::gold : ui::Theme::red,
+        presentation->kind == LifecycleModalKind::HuntEnded
+            ? ui::Theme::gold
+            : ui::Theme::red,
+        scale);
+    const SDL_Color titleColor = presentation->kind == LifecycleModalKind::HuntEnded
+        ? ui::Theme::gold
+        : ui::Theme::red;
+    if (!context.centeredLabel(
+            presentation->title,
+            FontWeight::Bold,
+            24.0F,
+            titleColor,
+            SDL_FRect{
+                panel.x + 20.0F * scale,
+                panel.y + 24.0F * scale,
+                panel.w - 40.0F * scale,
+                34.0F * scale}) ||
+        !context.centeredLabel(
+            presentation->detail,
+            FontWeight::Regular,
+            ui::Typography::objectiveBody,
+            ui::Theme::mutedBright,
+            SDL_FRect{
+                panel.x + 20.0F * scale,
+                panel.y + 68.0F * scale,
+                panel.w - 40.0F * scale,
+                34.0F * scale})) {
+        return false;
+    }
+
+    float buttonY = panel.y + 116.0F * scale;
+    if (presentation->offersWatch) {
+        const SDL_FRect watch{
+            panel.x + 42.0F * scale,
+            buttonY,
+            panel.w - 84.0F * scale,
+            36.0F * scale,
+        };
+        geometry.watchButton = PresentationRect{watch.x, watch.y, watch.w, watch.h};
+        drawPanel(
+            context.renderer,
+            watch,
+            7.0F * scale,
+            SDL_Color{20, 38, 52, SDL_ALPHA_OPAQUE},
+            ui::Theme::blue,
+            scale);
+        if (!context.centeredLabel(
+                "WATCH REMAINING HUNTER",
+                FontWeight::Bold,
+                ui::Typography::actionTitle,
+                ui::Theme::text,
+                watch)) {
+            return false;
+        }
+        buttonY += 45.0F * scale;
+    }
+
+    const SDL_FRect quit{
+        panel.x + 42.0F * scale,
+        buttonY,
+        panel.w - 84.0F * scale,
+        36.0F * scale,
+    };
+    geometry.quitButton = PresentationRect{quit.x, quit.y, quit.w, quit.h};
+    drawPanel(
+        context.renderer,
+        quit,
+        7.0F * scale,
+        ui::Theme::surfaceRaised,
+        ui::Theme::border,
         scale);
     return context.centeredLabel(
-               presentation->title,
-               FontWeight::Bold,
-               24.0F,
-               snapshot.alive ? ui::Theme::gold : ui::Theme::red,
-               SDL_FRect{
-                   panel.x + 20.0F * scale,
-                   panel.y + 26.0F * scale,
-                   panel.w - 40.0F * scale,
-                   34.0F * scale}) &&
-        context.centeredLabel(
-               presentation->detail,
-               FontWeight::Regular,
-               ui::Typography::objectiveBody,
-               ui::Theme::mutedBright,
-               SDL_FRect{
-                   panel.x + 20.0F * scale,
-                   panel.y + 76.0F * scale,
-                   panel.w - 40.0F * scale,
-                   42.0F * scale});
+        "QUIT GAME",
+        FontWeight::Bold,
+        ui::Typography::actionTitle,
+        ui::Theme::mutedBright,
+        quit);
 }
 
 } // namespace
@@ -1308,6 +1370,21 @@ bool hitTestMapActionMenu(
     return contains(geometry.panel, point);
 }
 
+bool hitTestLifecycleWatch(
+    const LifecycleModalGeometry& geometry,
+    PresentationPoint point) noexcept {
+
+    return geometry.blocking && geometry.watchButton.has_value() &&
+        contains(*geometry.watchButton, point);
+}
+
+bool hitTestLifecycleQuit(
+    const LifecycleModalGeometry& geometry,
+    PresentationPoint point) noexcept {
+
+    return geometry.blocking && contains(geometry.quitButton, point);
+}
+
 bool renderScreenShell(
     SDL_Renderer* renderer,
     TextRenderer& textRenderer,
@@ -1320,6 +1397,7 @@ bool renderScreenShell(
     ActionPanelGeometry& actionGeometry,
     const MapActionMenuState& mapActionMenu,
     MapActionMenuGeometry& mapActionMenuGeometry,
+    LifecycleModalGeometry& lifecycleModalGeometry,
     const ScreenShellData& data,
     int outputWidth,
     int outputHeight,
@@ -1455,7 +1533,12 @@ bool renderScreenShell(
             mapGeometry.transform.bounds)) {
         return false;
     }
-    return drawMatchStateOverlay(context, snapshot, output);
+    return drawLifecycleModal(
+        context,
+        snapshot,
+        data,
+        lifecycleModalGeometry,
+        output);
 }
 
 } // namespace basilisk::game

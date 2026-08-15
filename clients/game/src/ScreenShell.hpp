@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "ActionSelection.hpp"
+#include "ClientLifecycle.hpp"
 #include "MapActionMenu.hpp"
 #include "MapLayout.hpp"
 #include "MapPresentation.hpp"
@@ -44,6 +45,13 @@ struct MapActionMenuGeometry {
     std::vector<Row> rows;
 };
 
+struct LifecycleModalGeometry {
+    PresentationRect panel;
+    std::optional<PresentationRect> watchButton;
+    PresentationRect quitButton;
+    bool blocking{false};
+};
+
 // Public/demo-safe screen inputs that are intentionally outside gameplay
 // snapshot state: match facts, profiles/cosmetics, and presentation-only rows.
 struct ScreenShellData {
@@ -67,6 +75,12 @@ struct ScreenShellData {
 [[nodiscard]] bool hitTestMapActionMenu(
     const MapActionMenuGeometry& geometry,
     PresentationPoint point) noexcept;
+[[nodiscard]] bool hitTestLifecycleWatch(
+    const LifecycleModalGeometry& geometry,
+    PresentationPoint point) noexcept;
+[[nodiscard]] bool hitTestLifecycleQuit(
+    const LifecycleModalGeometry& geometry,
+    PresentationPoint point) noexcept;
 
 [[nodiscard]] bool renderScreenShell(
     SDL_Renderer* renderer,
@@ -80,6 +94,7 @@ struct ScreenShellData {
     ActionPanelGeometry& actionGeometry,
     const MapActionMenuState& mapActionMenu,
     MapActionMenuGeometry& mapActionMenuGeometry,
+    LifecycleModalGeometry& lifecycleModalGeometry,
     const ScreenShellData& data,
     int outputWidth,
     int outputHeight,

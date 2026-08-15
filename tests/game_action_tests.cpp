@@ -6,6 +6,7 @@
 #include "ActionCommands.hpp"
 #include "ActionPresentation.hpp"
 #include "ActionSelection.hpp"
+#include "ClientLifecycle.hpp"
 #include "MapActionMenu.hpp"
 #include "SnapshotPresentation.hpp"
 
@@ -239,6 +240,96 @@ void emptyAndPopulatedRoundReportsUsePlayerObservations() {
         std::vector<std::string>{"You found 1 arrow(s)."}));
 }
 
+std::array<client::PublicPlayerProfile, 2> demoProfiles() {
+    return {
+        client::PublicPlayerProfile{
+            PlayerId{1},
+            "Mara Voss",
+            client::CallingCardId{"ember"},
+            client::EmblemId{"wayfinder"}},
+        client::PublicPlayerProfile{
+            PlayerId{2},
+            "Elias Thorn",
+            client::CallingCardId{"ward"},
+            client::EmblemId{"sentinel"}},
+    };
+}
+
+void playingLifecycleHasAuthorityAndNoModal() {
+    PlayerRoundSnapshot snapshot;
+    snapshot.player = PlayerId{1};
+    snapshot.alive = true;
+    const auto view = playingView();
+    const auto profiles = demoProfiles();
+    assert(!lifecycleModalPresentation(snapshot, view, profiles).has_value());
+    assert(view.canSubmitActions());
+}
+
+void firstDeathCanTransitionToViewOnlySpectating() {
+    PlayerRoundSnapshot snapshot;
+    snapshot.player = PlayerId{1};
+    snapshot.alive = false;
+    client::ClientViewContext view{
+        PlayerId{1},
+        PlayerId{1},
+        client::ClientViewMode::Defeated,
+        PlayerId{2},
+    };
+    const auto profiles = demoProfiles();
+    const auto modal = lifecycleModalPresentation(snapshot, view, profiles);
+    assert(modal.has_value());
+    assert(modal->kind == LifecycleModalKind::FirstDeath);
+    assert(modal->title == "YOU DIED");
+    assert(modal->offersWatch);
+    assert(!view.canSubmitActions());
+
+    assert(beginSpectating(view));
+    assert(view.localPlayer == PlayerId{1});
+    assert(view.viewedPlayer == PlayerId{2});
+    assert(view.mode == client::ClientViewMode::Spectating);
+    assert(!view.canSubmitActions());
+}
+
+void finalDeathOffersQuitOnly() {
+    PlayerRoundSnapshot snapshot;
+    snapshot.player = PlayerId{1};
+    snapshot.alive = false;
+    snapshot.matchStatus = MatchStatus::Completed;
+    snapshot.matchOutcome = MatchOutcome::Draw;
+    client::ClientViewContext view{
+        PlayerId{1},
+        PlayerId{1},
+        client::ClientViewMode::Defeated,
+        std::nullopt,
+    };
+    const auto profiles = demoProfiles();
+    const auto modal = lifecycleModalPresentation(snapshot, view, profiles);
+    assert(modal.has_value());
+    assert(modal->kind == LifecycleModalKind::FinalDeath);
+    assert(modal->title == "YOU DIED");
+    assert(!modal->offersWatch);
+    assert(!beginSpectating(view));
+}
+
+void spectatorTerminalResultUsesPublicWinnerProfile() {
+    PlayerRoundSnapshot snapshot;
+    snapshot.player = PlayerId{2};
+    snapshot.alive = true;
+    snapshot.matchStatus = MatchStatus::Completed;
+    snapshot.matchOutcome = MatchOutcome::BasiliskKilled;
+    snapshot.winner = PlayerId{2};
+    const auto view = spectatorView();
+    const auto profiles = demoProfiles();
+    const auto modal = lifecycleModalPresentation(snapshot, view, profiles);
+    assert(modal.has_value());
+    assert(modal->kind == LifecycleModalKind::HuntEnded);
+    assert(modal->title == "HUNT ENDED");
+    assert(modal->detail ==
+        "Elias Thorn killed the Basilisk and wins the hunt.");
+    assert(!modal->offersWatch);
+    assert(!view.canSubmitActions());
+}
+
 void caveMenuUsesOnlyLiteralTargetMatches() {
     AvailableAction move12 = actionWithShape(ActionType::Move);
     move12.targetCave = CaveId{12};
@@ -410,6 +501,10 @@ int main() {
     newRoundClearsDraftAndLockedState();
     objectivePresentationFollowsSnapshotOnly();
     emptyAndPopulatedRoundReportsUsePlayerObservations();
+    playingLifecycleHasAuthorityAndNoModal();
+    firstDeathCanTransitionToViewOnlySpectating();
+    finalDeathOffersQuitOnly();
+    spectatorTerminalResultUsesPublicWinnerProfile();
     caveMenuUsesOnlyLiteralTargetMatches();
     mapMenuAndSidebarShareOneDraft();
     unknownExitMatchesTunnelWithoutDestination();

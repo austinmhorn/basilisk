@@ -37,6 +37,7 @@ add_library(BasiliskGameActions STATIC
     src/ActionCommands.cpp
     src/ActionPresentation.cpp
     src/ActionSelection.cpp
+    src/ClientLifecycle.cpp
     src/MapActionMenu.cpp
     src/SnapshotPresentation.cpp
 )
@@ -173,6 +174,7 @@ unset(_font_name)
 add_executable(BasiliskGame
     src/DemoActionCommandSink.cpp
     src/DemoMap.cpp
+    src/DemoSessionCommandSink.cpp
     src/DemoUi.cpp
     src/main.cpp
     src/MapRenderer.cpp

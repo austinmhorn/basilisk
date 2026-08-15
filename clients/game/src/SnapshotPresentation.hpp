@@ -21,18 +21,10 @@ struct SecondaryObjectivePresentation {
     std::optional<std::string> detail;
 };
 
-struct MatchStatePresentation {
-    std::string title;
-    std::string detail;
-};
-
 [[nodiscard]] std::optional<SecondaryObjectivePresentation>
 secondaryObjectivePresentation(const PlayerRoundSnapshot& snapshot);
 
 [[nodiscard]] std::vector<std::string> roundReportText(
-    const PlayerRoundSnapshot& snapshot);
-
-[[nodiscard]] std::optional<MatchStatePresentation> matchStatePresentation(
     const PlayerRoundSnapshot& snapshot);
 
 } // namespace basilisk::game

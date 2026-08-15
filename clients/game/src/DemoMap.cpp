@@ -154,4 +154,44 @@ PlayerRoundSnapshot makeDemoMapSnapshot(DemoSnapshotStage stage) {
     return snapshot;
 }
 
+PlayerRoundSnapshot makeDemoDefeatedSnapshot(bool matchCompleted) {
+    PlayerRoundSnapshot snapshot = makeDemoMapSnapshot();
+    snapshot.health = 0;
+    snapshot.alive = false;
+    snapshot.availableActions.clear();
+    PlayerObservation death;
+    death.type = ObservationType::YouDied;
+    death.viewer = snapshot.player;
+    snapshot.observations = {death};
+    if (matchCompleted) {
+        snapshot.matchStatus = MatchStatus::Completed;
+        snapshot.matchOutcome = MatchOutcome::Draw;
+        snapshot.winner.reset();
+    }
+    return snapshot;
+}
+
+PlayerRoundSnapshot makeDemoSurvivorSnapshot(bool matchCompleted) {
+    PlayerRoundSnapshot snapshot = makeDemoMapSnapshot(DemoSnapshotStage::NextRound);
+    snapshot.player = PlayerId{2};
+    snapshot.health = 55;
+    snapshot.arrows = 2;
+    snapshot.currentCave = CaveId{21};
+    snapshot.map.currentCave = snapshot.currentCave;
+    for (PlayerObservation& observation : snapshot.observations) {
+        observation.viewer = snapshot.player;
+    }
+    if (matchCompleted) {
+        snapshot.matchStatus = MatchStatus::Completed;
+        snapshot.matchOutcome = MatchOutcome::BasiliskKilled;
+        snapshot.winner = snapshot.player;
+        snapshot.availableActions.clear();
+        PlayerObservation victory;
+        victory.type = ObservationType::BasiliskKilled;
+        victory.viewer = snapshot.player;
+        snapshot.observations = {victory};
+    }
+    return snapshot;
+}
+
 } // namespace basilisk::game::demo
