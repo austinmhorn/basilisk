@@ -432,7 +432,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     basilisk::game::caveActionTarget(*hit.cave);
                 const bool hasMatchingLegalAction =
                     !basilisk::game::matchingSpatialActionIndices(
-                        snapshot->availableActions, target).empty();
+                        snapshot->availableActions,
+                        target,
+                        snapshot->map.currentCave).empty();
                 const basilisk::game::DestinationControl destinationControl =
                     basilisk::game::destinationControlForCave(
                         snapshot->map,
@@ -444,6 +446,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     pointer.x,
                     pointer.y,
                     snapshot->availableActions,
+                    snapshot->map.currentCave,
                     state->session->viewContext(),
                     destinationControl,
                     !state->actionSelection.locked());
@@ -451,10 +454,12 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                        hit.unknownExit.has_value()) {
                 (void)state->mapActionMenu.open(
                     basilisk::game::unknownExitActionTarget(
+                        hit.unknownExit->source,
                         hit.unknownExit->tunnel),
                     pointer.x,
                     pointer.y,
                     snapshot->availableActions,
+                    snapshot->map.currentCave,
                     state->session->viewContext(),
                     basilisk::game::DestinationControl::None,
                     !state->actionSelection.locked());

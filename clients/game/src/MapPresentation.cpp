@@ -148,6 +148,7 @@ MapHitTarget hitTestPlayerKnownMap(
     }
 
     const double exitRadius = kUnknownExitHitRadius * geometry.transform.uiScale;
+    std::optional<MapHitTarget> historicalExit;
     for (const DiscoveredCaveView& cave : map.caves) {
         for (const TunnelView& exit : cave.exits) {
             if (exit.destination.has_value()) continue;
@@ -155,14 +156,16 @@ MapHitTarget hitTestPlayerKnownMap(
             if (!position.has_value()) continue;
             if (distanceSquared(projectMapPoint(*position, geometry.transform), pointer) <=
                 exitRadius * exitRadius) {
-                return {
+                MapHitTarget hit{
                     MapHitKind::UnknownExit,
                     std::nullopt,
                     UnknownExitKey{cave.cave, exit.id}};
+                if (cave.cave == map.currentCave) return hit;
+                if (!historicalExit.has_value()) historicalExit = hit;
             }
         }
     }
-    return {};
+    return historicalExit.value_or(MapHitTarget{});
 }
 
 void updateMapHover(MapPresentationState& state, const MapHitTarget& hit) {

@@ -336,6 +336,47 @@ void hitTestingDistinguishesCavesAndUnknownExits() {
     assert(hover.hoveredUnknownExit == exitHit.unknownExit);
 }
 
+void overlappingUnknownExitPrefersCurrentCaveProvenance() {
+    PlayerMapLayout layout;
+    PlayerFixedMapGeometry fixed;
+    fixed.fullBounds = {-20.0, -20.0, 40.0, 20.0, true};
+    fixed.discoveredCaves.emplace(CaveId{18}, LogicalPoint{-10.0, 0.0});
+    fixed.discoveredCaves.emplace(CaveId{19}, LogicalPoint{10.0, 0.0});
+    const LogicalPoint sharedEndpoint{0.0, 10.0};
+    fixed.unknownExitEndpoints.emplace(
+        MapExitKey{CaveId{18}, TunnelId{6}}, sharedEndpoint);
+    fixed.unknownExitEndpoints.emplace(
+        MapExitKey{CaveId{19}, TunnelId{6}}, sharedEndpoint);
+    layout.updateFixed(fixed);
+
+    const auto mapFrom = [](CaveId current) {
+        return PlayerMapView{
+            current,
+            {
+                cave(18, {{TunnelId{6}, std::nullopt}}),
+                cave(19, {{TunnelId{6}, std::nullopt}}),
+            }};
+    };
+    const PlayerMapView fromA = mapFrom(CaveId{18});
+    const MapPresentationGeometry geometry = buildMapPresentationGeometry(
+        fromA, layout, {}, {0.0, 0.0, 800.0, 600.0}, 40.0, 1.0);
+    const PresentationPoint pointer = projectMapPoint(
+        sharedEndpoint, geometry.transform);
+
+    const MapHitTarget hitFromA = hitTestPlayerKnownMap(
+        fromA, layout, geometry, pointer);
+    assert(hitFromA.kind == MapHitKind::UnknownExit);
+    assert((hitFromA.unknownExit ==
+            UnknownExitKey{CaveId{18}, TunnelId{6}}));
+
+    const PlayerMapView fromB = mapFrom(CaveId{19});
+    const MapHitTarget hitFromB = hitTestPlayerKnownMap(
+        fromB, layout, geometry, pointer);
+    assert(hitFromB.kind == MapHitKind::UnknownExit);
+    assert((hitFromB.unknownExit ==
+            UnknownExitKey{CaveId{19}, TunnelId{6}}));
+}
+
 void routeSelectionUsesOnlyDiscoveredKnownConnections() {
     PlayerMapLayout layout;
     const PlayerMapView map = presentationMap();
@@ -523,6 +564,68 @@ void destinationControlsMatchWebDebugGpsRules() {
     assert(selectedRoute(state, map).caves.empty());
 }
 
+void gpsEligibilityRecalculatesAfterRelocation() {
+    const auto relocatedMap = [](CaveId current) {
+        return PlayerMapView{
+            current,
+            {
+                cave(1, {{TunnelId{1}, CaveId{2}}}),
+                cave(2, {
+                    {TunnelId{1}, CaveId{1}},
+                    {TunnelId{2}, CaveId{3}},
+                    {TunnelId{3}, CaveId{5}},
+                }),
+                cave(3, {
+                    {TunnelId{1}, CaveId{2}},
+                    {TunnelId{2}, CaveId{4}},
+                }),
+                cave(4, {{TunnelId{1}, CaveId{3}}}),
+                cave(5, {
+                    {TunnelId{1}, CaveId{2}},
+                    {TunnelId{2}, std::nullopt},
+                }),
+                cave(6, {{TunnelId{1}, std::nullopt}}),
+            }};
+    };
+
+    const PlayerMapView before = relocatedMap(CaveId{1});
+    MapPresentationState state;
+    assert(applyDestinationControl(
+        state, before, CaveId{4}, DestinationControl::Mark));
+    assert((selectedRoute(state, before).caves ==
+            std::vector<CaveId>{1, 2, 3, 4}));
+    assert(destinationControlForCave(
+               before, CaveId{3}, state.routeDestination, false) ==
+        DestinationControl::Mark);
+
+    // A relocation changes only currentCave. GPS eligibility and the active
+    // route must be derived afresh from that latest player-safe map.
+    const PlayerMapView after = relocatedMap(CaveId{5});
+    assert((selectedRoute(state, after).caves ==
+            std::vector<CaveId>{5, 2, 3, 4}));
+    assert(destinationControlForCave(
+               after, CaveId{5}, state.routeDestination, false) ==
+        DestinationControl::None);
+    assert(destinationControlForCave(
+               after, CaveId{2}, state.routeDestination, false) ==
+        DestinationControl::None);
+    assert(destinationControlForCave(
+               after, CaveId{1}, state.routeDestination, false) ==
+        DestinationControl::Mark);
+    assert(destinationControlForCave(
+               after, CaveId{3}, state.routeDestination, false) ==
+        DestinationControl::Mark);
+    assert(destinationControlForCave(
+               after, CaveId{3}, state.routeDestination, true) ==
+        DestinationControl::None);
+    assert(destinationControlForCave(
+               after, CaveId{4}, state.routeDestination, false) ==
+        DestinationControl::Clear);
+    assert(destinationControlForCave(
+               after, CaveId{6}, state.routeDestination, false) ==
+        DestinationControl::None);
+}
+
 } // namespace
 
 int main() {
@@ -537,10 +640,12 @@ int main() {
     fixedGeometryKeepsDiscoveryAndViewportStable();
     framingContainsOnlyPlayerKnownPresentationPoints();
     hitTestingDistinguishesCavesAndUnknownExits();
+    overlappingUnknownExitPrefersCurrentCaveProvenance();
     routeSelectionUsesOnlyDiscoveredKnownConnections();
     routeEdgesContainOnlyConsecutivePlanCaves();
     selectedRouteImmediatelyUsesNewKnownShortcut();
     destinationControlsMatchWebDebugGpsRules();
+    gpsEligibilityRecalculatesAfterRelocation();
     snapshotMapRefreshClearsInvalidDestination();
     std::cout << "game map layout tests passed\n";
 }

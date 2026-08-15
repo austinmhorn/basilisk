@@ -13,23 +13,29 @@ SpatialActionTarget caveActionTarget(CaveId cave) noexcept {
     return target;
 }
 
-SpatialActionTarget unknownExitActionTarget(TunnelId tunnel) noexcept {
+SpatialActionTarget unknownExitActionTarget(
+    CaveId source,
+    TunnelId tunnel) noexcept {
+
     SpatialActionTarget target;
     target.kind = SpatialActionTargetKind::UnknownExit;
+    target.cave = source;
     target.tunnel = tunnel;
     return target;
 }
 
 std::vector<std::size_t> matchingSpatialActionIndices(
     std::span<const AvailableAction> actions,
-    SpatialActionTarget target) {
+    SpatialActionTarget target,
+    CaveId currentCave) {
 
     std::vector<std::size_t> matches;
     for (std::size_t index = 0; index < actions.size(); ++index) {
         const AvailableAction& action = actions[index];
         const bool matchesTarget = target.kind == SpatialActionTargetKind::Cave
             ? action.targetCave == target.cave
-            : action.targetTunnel == target.tunnel;
+            : target.cave == currentCave &&
+                action.targetTunnel == target.tunnel;
         if (matchesTarget) matches.push_back(index);
     }
     return matches;
@@ -53,6 +59,7 @@ bool MapActionMenuState::open(
     double anchorX,
     double anchorY,
     std::span<const AvailableAction> actions,
+    CaveId currentCave,
     const client::ClientViewContext& viewContext,
     DestinationControl destinationControl,
     bool allowGameplayActions) {
@@ -60,7 +67,7 @@ bool MapActionMenuState::open(
     dismiss();
     if (viewContext.canSubmitActions() && allowGameplayActions) {
         for (const std::size_t actionIndex :
-             matchingSpatialActionIndices(actions, target)) {
+             matchingSpatialActionIndices(actions, target, currentCave)) {
             choices_.push_back(MapActionMenuChoice{
                 MapActionMenuChoiceKind::GameplayAction,
                 actionIndex,

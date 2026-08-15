@@ -20,17 +20,22 @@ enum class SpatialActionTargetKind {
 
 struct SpatialActionTarget {
     SpatialActionTargetKind kind{SpatialActionTargetKind::Cave};
+    // For a cave target this is the destination. For an unknown exit this is
+    // its discovered source; TunnelId values are only unique within a cave.
     CaveId cave{};
     TunnelId tunnel{};
 };
 
 [[nodiscard]] SpatialActionTarget caveActionTarget(CaveId cave) noexcept;
-[[nodiscard]] SpatialActionTarget unknownExitActionTarget(TunnelId tunnel) noexcept;
+[[nodiscard]] SpatialActionTarget unknownExitActionTarget(
+    CaveId source,
+    TunnelId tunnel) noexcept;
 
 // Returns original snapshot indices. Matching never generates or infers an action.
 [[nodiscard]] std::vector<std::size_t> matchingSpatialActionIndices(
     std::span<const AvailableAction> actions,
-    SpatialActionTarget target);
+    SpatialActionTarget target,
+    CaveId currentCave);
 
 [[nodiscard]] std::string spatialActionTitle(const AvailableAction& action);
 
@@ -54,6 +59,7 @@ public:
         double anchorX,
         double anchorY,
         std::span<const AvailableAction> actions,
+        CaveId currentCave,
         const client::ClientViewContext& viewContext,
         DestinationControl destinationControl = DestinationControl::None,
         bool allowGameplayActions = true);

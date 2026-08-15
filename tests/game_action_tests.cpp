@@ -558,12 +558,12 @@ void caveMenuUsesOnlyLiteralTargetMatches() {
     };
 
     const auto matches = matchingSpatialActionIndices(
-        actions, caveActionTarget(CaveId{12}));
+        actions, caveActionTarget(CaveId{12}), CaveId{7});
     assert((matches == std::vector<std::size_t>{0, 2}));
     assert(spatialActionTitle(actions[0]) == "MOVE TO CAVE 12");
     assert(spatialActionTitle(actions[2]) == "SHOOT INTO CAVE 12");
     assert(matchingSpatialActionIndices(
-               actions, caveActionTarget(CaveId{34})).empty());
+               actions, caveActionTarget(CaveId{34}), CaveId{7}).empty());
 }
 
 void mapMenuAndSidebarShareOneDraft() {
@@ -577,7 +577,12 @@ void mapMenuAndSidebarShareOneDraft() {
 
     MapActionMenuState menu;
     assert(menu.open(
-        caveActionTarget(CaveId{12}), 100.0, 200.0, actions, playingView()));
+        caveActionTarget(CaveId{12}),
+        100.0,
+        200.0,
+        actions,
+        CaveId{7},
+        playingView()));
     assert(menu.chooseGameplayAction(
         {MapActionMenuChoiceKind::GameplayAction, 0},
         actions,
@@ -588,7 +593,12 @@ void mapMenuAndSidebarShareOneDraft() {
     assert(selection.draft()->targetCave == actions[0].targetCave);
 
     assert(menu.open(
-        caveActionTarget(CaveId{12}), 100.0, 200.0, actions, playingView()));
+        caveActionTarget(CaveId{12}),
+        100.0,
+        200.0,
+        actions,
+        CaveId{7},
+        playingView()));
     assert(menu.chooseGameplayAction(
         {MapActionMenuChoiceKind::GameplayAction, 1},
         actions,
@@ -601,7 +611,12 @@ void mapMenuAndSidebarShareOneDraft() {
     assert(selection.select(0, actions, playingView()));
     assert(selection.selectedIndex() == 0);
     assert(menu.open(
-        caveActionTarget(CaveId{12}), 100.0, 200.0, actions, playingView()));
+        caveActionTarget(CaveId{12}),
+        100.0,
+        200.0,
+        actions,
+        CaveId{7},
+        playingView()));
     assert(menu.chooseGameplayAction(
         {MapActionMenuChoiceKind::GameplayAction, 1},
         actions,
@@ -610,20 +625,33 @@ void mapMenuAndSidebarShareOneDraft() {
     assert(selection.selectedIndex() == 1);
 }
 
-void unknownExitMatchesTunnelWithoutDestination() {
+void unknownExitMatchesExactCurrentCaveProvenance() {
     AvailableAction unknown = actionWithShape(ActionType::Move);
     unknown.targetTunnel = TunnelId{6};
+    AvailableAction shootUnknown = actionWithShape(ActionType::Shoot);
+    shootUnknown.targetTunnel = TunnelId{6};
     AvailableAction other = actionWithShape(ActionType::Move);
     other.targetTunnel = TunnelId{4};
-    const std::array actions{other, unknown};
+    const std::array actions{other, unknown, shootUnknown};
 
-    const SpatialActionTarget target = unknownExitActionTarget(TunnelId{6});
+    const SpatialActionTarget target =
+        unknownExitActionTarget(CaveId{19}, TunnelId{6});
     assert(target.kind == SpatialActionTargetKind::UnknownExit);
+    assert(target.cave == CaveId{19});
     assert(target.tunnel == TunnelId{6});
-    const auto matches = matchingSpatialActionIndices(actions, target);
-    assert((matches == std::vector<std::size_t>{1}));
+    const auto matches = matchingSpatialActionIndices(
+        actions, target, CaveId{19});
+    assert((matches == std::vector<std::size_t>{1, 2}));
+    assert(matchingSpatialActionIndices(
+               actions, target, CaveId{18}).empty());
+
+    const SpatialActionTarget collidingHistoricalExit =
+        unknownExitActionTarget(CaveId{18}, TunnelId{6});
+    assert(matchingSpatialActionIndices(
+               actions, collidingHistoricalExit, CaveId{19}).empty());
     assert(spatialActionTitle(actions[1]) == "ENTER UNKNOWN EXIT");
     assert(!actions[1].targetCave.has_value());
+    assert(!actions[2].targetCave.has_value());
 }
 
 void spectatorCannotOpenOrChooseMapAction() {
@@ -634,7 +662,12 @@ void spectatorCannotOpenOrChooseMapAction() {
     selection.synchronize(RoundNumber{11}, actions.size(), spectatorView());
     MapActionMenuState menu;
     assert(!menu.open(
-        caveActionTarget(CaveId{12}), 100.0, 200.0, actions, spectatorView()));
+        caveActionTarget(CaveId{12}),
+        100.0,
+        200.0,
+        actions,
+        CaveId{7},
+        spectatorView()));
     assert(!menu.chooseGameplayAction(
         {MapActionMenuChoiceKind::GameplayAction, 0},
         actions,
@@ -651,7 +684,12 @@ void mapChoiceStillRequiresExplicitLock() {
     selection.synchronize(RoundNumber{12}, actions.size(), playingView());
     MapActionMenuState menu;
     assert(menu.open(
-        caveActionTarget(CaveId{12}), 100.0, 200.0, actions, playingView()));
+        caveActionTarget(CaveId{12}),
+        100.0,
+        200.0,
+        actions,
+        CaveId{7},
+        playingView()));
     assert(menu.chooseGameplayAction(
         {MapActionMenuChoiceKind::GameplayAction, 0},
         actions,
@@ -675,6 +713,7 @@ void navigationMenuChoiceDoesNotCreateActionDraft() {
         100.0,
         200.0,
         actions,
+        CaveId{7},
         playingView(),
         DestinationControl::Mark));
     assert(menu.choices().size() == 1);
@@ -691,6 +730,7 @@ void navigationMenuChoiceDoesNotCreateActionDraft() {
         100.0,
         200.0,
         actions,
+        CaveId{7},
         spectatorView(),
         DestinationControl::Clear));
     assert(menu.choices().size() == 1);
@@ -722,7 +762,7 @@ int main() {
     localAdapterPublishesOnlyPlayerSafeSessionState();
     caveMenuUsesOnlyLiteralTargetMatches();
     mapMenuAndSidebarShareOneDraft();
-    unknownExitMatchesTunnelWithoutDestination();
+    unknownExitMatchesExactCurrentCaveProvenance();
     spectatorCannotOpenOrChooseMapAction();
     mapChoiceStillRequiresExplicitLock();
     navigationMenuChoiceDoesNotCreateActionDraft();
