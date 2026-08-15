@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <set>
 
 namespace basilisk::game {
@@ -27,21 +26,13 @@ double distanceSquared(PresentationPoint a, PresentationPoint b) {
     return x * x + y * y;
 }
 
-struct LogicalBounds {
-    double minimumX{std::numeric_limits<double>::max()};
-    double minimumY{std::numeric_limits<double>::max()};
-    double maximumX{std::numeric_limits<double>::lowest()};
-    double maximumY{std::numeric_limits<double>::lowest()};
-    bool populated{false};
-
-    void include(LogicalPoint point) {
-        minimumX = std::min(minimumX, point.x);
-        minimumY = std::min(minimumY, point.y);
-        maximumX = std::max(maximumX, point.x);
-        maximumY = std::max(maximumY, point.y);
-        populated = true;
-    }
-};
+void include(LogicalBounds& bounds, LogicalPoint point) {
+    bounds.minimumX = std::min(bounds.minimumX, point.x);
+    bounds.minimumY = std::min(bounds.minimumY, point.y);
+    bounds.maximumX = std::max(bounds.maximumX, point.x);
+    bounds.maximumY = std::max(bounds.maximumY, point.y);
+    bounds.populated = true;
+}
 
 LogicalBounds visibleLogicalBounds(
     const PlayerMapView& map,
@@ -52,13 +43,13 @@ LogicalBounds visibleLogicalBounds(
     for (const DiscoveredCaveView& cave : map.caves) discovered.insert(cave.cave);
 
     for (const DiscoveredCaveView& cave : map.caves) {
-        if (const auto position = layout.cavePosition(cave.cave)) bounds.include(*position);
+        if (const auto position = layout.cavePosition(cave.cave)) include(bounds, *position);
         for (const TunnelView& exit : cave.exits) {
             if (exit.destination.has_value() && discovered.contains(*exit.destination)) {
                 continue;
             }
             if (const auto stub = layout.exitStubPosition(cave.cave, exit.id)) {
-                bounds.include(*stub);
+                include(bounds, *stub);
             }
         }
     }
@@ -79,8 +70,10 @@ MapPresentationGeometry buildMapPresentationGeometry(
     result.transform.bounds = bounds;
     result.transform.uiScale = std::max(0.01, uiScale);
 
-    LogicalBounds logicalBounds = visibleLogicalBounds(map, layout);
-    if (!logicalBounds.populated) logicalBounds.include(LogicalPoint{});
+    const std::optional<LogicalBounds> fixedBounds = layout.fixedBounds();
+    LogicalBounds logicalBounds = fixedBounds.value_or(
+        visibleLogicalBounds(map, layout));
+    if (!logicalBounds.populated) include(logicalBounds, LogicalPoint{});
 
     std::vector<CaveId> disconnectedPits;
     for (CaveId pit : temporarilyRevealedPitCaves) {
@@ -96,13 +89,15 @@ MapPresentationGeometry buildMapPresentationGeometry(
             static_cast<double>(disconnectedPits.size() - 1) * kTemporaryPitSpacing;
         const double startX =
             (logicalBounds.minimumX + logicalBounds.maximumX - totalWidth) * 0.5;
-        const double y = logicalBounds.maximumY + kTemporaryPitOffset;
+        const double y = fixedBounds.has_value()
+            ? logicalBounds.maximumY - kTemporaryPitOffset
+            : logicalBounds.maximumY + kTemporaryPitOffset;
         for (std::size_t index = 0; index < disconnectedPits.size(); ++index) {
             const LogicalPoint position{
                 startX + static_cast<double>(index) * kTemporaryPitSpacing,
                 y};
             result.temporaryPitPositions.emplace(disconnectedPits[index], position);
-            logicalBounds.include(position);
+            if (!fixedBounds.has_value()) include(logicalBounds, position);
         }
     }
 
@@ -227,7 +222,6 @@ bool applyDestinationControl(
     }
     if (control == DestinationControl::Clear && state.routeDestination == cave) {
         state.routeDestination.reset();
-        state.route = {};
         return true;
     }
     return false;
@@ -238,14 +232,20 @@ void refreshSelectedRoute(
     const PlayerMapView& map) {
 
     if (!state.routeDestination.has_value()) {
-        state.route = {};
         return;
     }
-    state.route = client_navigation::planKnownRoute(map, *state.routeDestination);
-    if (state.route.status != client_navigation::KnownRouteStatus::Reachable) {
+    const client_navigation::KnownRoutePlan route = selectedRoute(state, map);
+    if (route.status != client_navigation::KnownRouteStatus::Reachable) {
         state.routeDestination.reset();
-        state.route = {};
     }
+}
+
+client_navigation::KnownRoutePlan selectedRoute(
+    const MapPresentationState& state,
+    const PlayerMapView& map) {
+
+    if (!state.routeDestination.has_value()) return {};
+    return client_navigation::planKnownRoute(map, *state.routeDestination);
 }
 
 RouteEdgeSet routeEdges(const client_navigation::KnownRoutePlan& route) {

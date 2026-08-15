@@ -1526,7 +1526,11 @@ bool renderScreenShell(
         SDL_RenderLine(renderer, mapContent.x, y, mapContent.x + mapContent.w, y);
     }
 
-    mapLayout.update(snapshot.map);
+    if (const PlayerFixedMapGeometry* fixed = session.displayedMapGeometry()) {
+        mapLayout.updateFixed(*fixed);
+    } else {
+        mapLayout.update(snapshot.map);
+    }
     const SDL_Rect clip{
         static_cast<int>(mapContent.x),
         static_cast<int>(mapContent.y),

@@ -72,6 +72,7 @@ target_link_libraries(
     BasiliskGameLocalSession
     PUBLIC
         Basilisk::GameActions
+        Basilisk::GameMapLayout
     PRIVATE
         Basilisk::Core
 )
@@ -205,7 +206,6 @@ add_executable(BasiliskGame
 
 target_link_libraries(BasiliskGame
     PRIVATE
-        Basilisk::GameMapLayout
         Basilisk::GameAssets
         Basilisk::GameLocalSession
         SDL3::SDL3

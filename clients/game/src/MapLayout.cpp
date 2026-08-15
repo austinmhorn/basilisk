@@ -47,6 +47,14 @@ double distanceSquared(LogicalPoint a, LogicalPoint b) {
     return dx * dx + dy * dy;
 }
 
+void include(LogicalBounds& bounds, LogicalPoint point) {
+    bounds.minimumX = std::min(bounds.minimumX, point.x);
+    bounds.minimumY = std::min(bounds.minimumY, point.y);
+    bounds.maximumX = std::max(bounds.maximumX, point.x);
+    bounds.maximumY = std::max(bounds.maximumY, point.y);
+    bounds.populated = true;
+}
+
 using VisibleCaves = std::map<CaveId, std::vector<TunnelView>>;
 
 VisibleCaves normalize(const PlayerMapView& map) {
@@ -70,13 +78,19 @@ VisibleCaves normalize(const PlayerMapView& map) {
 } // namespace
 
 void PlayerMapLayout::update(const PlayerMapView& map) {
+    if (fixedBounds_.has_value()) {
+        cavePositions_.clear();
+        exitDirections_.clear();
+        fixedExitEndpoints_.clear();
+        fixedBounds_.reset();
+    }
     const VisibleCaves caves = normalize(map);
     if (caves.empty()) return;
 
     for (const auto& [source, exits] : caves) {
         for (const auto& exit : exits) {
             exitDirections_.try_emplace(
-                ExitKey{source, exit.id},
+                MapExitKey{source, exit.id},
                 deterministicDirection(source, exit.id));
         }
     }
@@ -121,6 +135,14 @@ void PlayerMapLayout::update(const PlayerMapView& map) {
     }
 }
 
+void PlayerMapLayout::updateFixed(const PlayerFixedMapGeometry& geometry) {
+    cavePositions_ = geometry.discoveredCaves;
+    fixedExitEndpoints_ = geometry.unknownExitEndpoints;
+    fixedBounds_ = geometry.fullBounds.populated
+        ? std::optional<LogicalBounds>{geometry.fullBounds}
+        : std::nullopt;
+}
+
 std::optional<LogicalPoint> PlayerMapLayout::cavePosition(CaveId cave) const {
     const auto found = cavePositions_.find(cave);
     if (found == cavePositions_.end()) return std::nullopt;
@@ -132,7 +154,10 @@ std::optional<LogicalPoint> PlayerMapLayout::exitStubPosition(
     TunnelId tunnel) const {
 
     const auto cave = cavePositions_.find(source);
-    const auto direction = exitDirections_.find(ExitKey{source, tunnel});
+    const auto fixed = fixedExitEndpoints_.find(MapExitKey{source, tunnel});
+    if (fixed != fixedExitEndpoints_.end()) return fixed->second;
+
+    const auto direction = exitDirections_.find(MapExitKey{source, tunnel});
     if (cave == cavePositions_.end() || direction == exitDirections_.end()) {
         return std::nullopt;
     }
@@ -140,6 +165,19 @@ std::optional<LogicalPoint> PlayerMapLayout::exitStubPosition(
     return LogicalPoint{
         cave->second.x + direction->second.x * kStubLength,
         cave->second.y + direction->second.y * kStubLength};
+}
+
+std::optional<LogicalBounds> PlayerMapLayout::fixedBounds() const noexcept {
+    return fixedBounds_;
+}
+
+LogicalBounds PlayerMapLayout::positionedBounds() const noexcept {
+    LogicalBounds bounds;
+    for (const auto& [cave, position] : cavePositions_) {
+        (void)cave;
+        include(bounds, position);
+    }
+    return bounds;
 }
 
 bool PlayerMapLayout::positionIsFree(LogicalPoint candidate) const {
@@ -157,7 +195,7 @@ LogicalPoint PlayerMapLayout::positionAlongExit(
     TunnelId tunnel) const {
 
     const LogicalPoint origin = cavePositions_.at(source);
-    const LogicalPoint direction = exitDirections_.at(ExitKey{source, tunnel});
+    const LogicalPoint direction = exitDirections_.at(MapExitKey{source, tunnel});
     for (std::size_t step = 1;; ++step) {
         const double distance = kCaveSpacing * static_cast<double>(step);
         const LogicalPoint candidate{

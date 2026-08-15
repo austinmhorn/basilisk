@@ -511,7 +511,11 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 return SDL_APP_FAILURE;
             }
         } else if (snapshot != nullptr) {
-            state->mapLayout.update(snapshot->map);
+            if (const auto* fixed = state->session->displayedMapGeometry()) {
+                state->mapLayout.updateFixed(*fixed);
+            } else {
+                state->mapLayout.update(snapshot->map);
+            }
             constexpr float padding = 24.0F;
             const basilisk::game::PresentationRect bounds{
                 padding,

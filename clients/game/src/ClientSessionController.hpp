@@ -6,6 +6,7 @@
 
 #include "ActionCommands.hpp"
 #include "ClientLifecycle.hpp"
+#include "MapLayout.hpp"
 #include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/PublicMatchMetadata.hpp"
 #include "basilisk/client/ClientViewContext.hpp"
@@ -33,8 +34,14 @@ public:
     // Same-round replacements are accepted; only snapshots older than the
     // newest cached round for that player are rejected.
     [[nodiscard]] bool ingestSnapshot(PlayerRoundSnapshot snapshot);
+    [[nodiscard]] bool ingestSnapshot(
+        PlayerRoundSnapshot snapshot,
+        PlayerFixedMapGeometry geometry);
     [[nodiscard]] const PlayerRoundSnapshot* snapshotFor(PlayerId player) const noexcept;
     [[nodiscard]] const PlayerRoundSnapshot* displayedSnapshot() const noexcept;
+    [[nodiscard]] const PlayerFixedMapGeometry* mapGeometryFor(
+        PlayerId player) const noexcept;
+    [[nodiscard]] const PlayerFixedMapGeometry* displayedMapGeometry() const noexcept;
 
     [[nodiscard]] bool canSubmitActions() const noexcept;
     [[nodiscard]] bool submitAndLock(const AvailableAction& action);
@@ -46,6 +53,7 @@ private:
     std::vector<client::PublicPlayerProfile> profiles_;
     client::ClientViewContext viewContext_;
     std::map<PlayerId, PlayerRoundSnapshot> snapshots_;
+    std::map<PlayerId, PlayerFixedMapGeometry> mapGeometries_;
     std::unique_ptr<ActionCommandSink> actionCommands_;
     std::unique_ptr<ClientSessionCommandSink> sessionCommands_;
 };

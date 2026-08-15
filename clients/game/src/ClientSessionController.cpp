@@ -43,6 +43,16 @@ bool ClientSessionController::ingestSnapshot(PlayerRoundSnapshot snapshot) {
     return true;
 }
 
+bool ClientSessionController::ingestSnapshot(
+    PlayerRoundSnapshot snapshot,
+    PlayerFixedMapGeometry geometry) {
+
+    const PlayerId player = snapshot.player;
+    if (!ingestSnapshot(std::move(snapshot))) return false;
+    mapGeometries_.insert_or_assign(player, std::move(geometry));
+    return true;
+}
+
 const PlayerRoundSnapshot* ClientSessionController::snapshotFor(
     PlayerId player) const noexcept {
     const auto found = snapshots_.find(player);
@@ -54,6 +64,19 @@ const PlayerRoundSnapshot* ClientSessionController::displayedSnapshot() const no
         ? viewContext_.viewedPlayer
         : viewContext_.localPlayer;
     return snapshotFor(player);
+}
+
+const PlayerFixedMapGeometry* ClientSessionController::mapGeometryFor(
+    PlayerId player) const noexcept {
+
+    const auto found = mapGeometries_.find(player);
+    return found == mapGeometries_.end() ? nullptr : &found->second;
+}
+
+const PlayerFixedMapGeometry*
+ClientSessionController::displayedMapGeometry() const noexcept {
+    const PlayerRoundSnapshot* snapshot = displayedSnapshot();
+    return snapshot == nullptr ? nullptr : mapGeometryFor(snapshot->player);
 }
 
 bool ClientSessionController::canSubmitActions() const noexcept {

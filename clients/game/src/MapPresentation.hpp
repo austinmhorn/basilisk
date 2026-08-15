@@ -32,12 +32,7 @@ struct MapTransform {
     double uiScale{1.0};
 };
 
-struct UnknownExitKey {
-    CaveId source{};
-    TunnelId tunnel{};
-
-    auto operator<=>(const UnknownExitKey&) const = default;
-};
+using UnknownExitKey = MapExitKey;
 
 struct RouteEdge {
     CaveId low{};
@@ -73,7 +68,6 @@ struct MapPresentationState {
     std::optional<CaveId> hoveredCave;
     std::optional<UnknownExitKey> hoveredUnknownExit;
     std::optional<CaveId> routeDestination;
-    client_navigation::KnownRoutePlan route;
 };
 
 enum class DestinationControl {
@@ -128,6 +122,12 @@ void updateMapHover(MapPresentationState& state, const MapHitTarget& hit);
 
 void refreshSelectedRoute(
     MapPresentationState& state,
+    const PlayerMapView& map);
+
+// The route plan is deliberately not cached in presentation state. Every
+// caller receives a fresh BFS result for the latest PlayerMapView.
+[[nodiscard]] client_navigation::KnownRoutePlan selectedRoute(
+    const MapPresentationState& state,
     const PlayerMapView& map);
 
 // Only adjacent CaveIds in a reachable plan become highlighted edges.

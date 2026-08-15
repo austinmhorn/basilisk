@@ -213,6 +213,47 @@ void repeatedUpdateIsIdentical() {
     assert(requireStub(layout, CaveId{1}, TunnelId{2}) == stub);
 }
 
+void fixedGeometryKeepsDiscoveryAndViewportStable() {
+    const LogicalBounds fullBounds{-8.0, -6.0, 10.0, 7.0, true};
+    PlayerFixedMapGeometry initial;
+    initial.fullBounds = fullBounds;
+    initial.discoveredCaves.emplace(CaveId{1}, LogicalPoint{0.0, 0.0});
+    initial.unknownExitEndpoints.emplace(
+        MapExitKey{CaveId{1}, TunnelId{1}}, LogicalPoint{4.0, 2.0});
+
+    PlayerMapLayout layout;
+    layout.updateFixed(initial);
+    const LogicalPoint caveOneBefore = requireCave(layout, CaveId{1});
+    const LogicalPoint unknownBefore = requireStub(
+        layout, CaveId{1}, TunnelId{1});
+    const PlayerMapView before{
+        CaveId{1},
+        {cave(1, {{TunnelId{1}, std::nullopt}})}};
+    const MapPresentationGeometry frameBefore = buildMapPresentationGeometry(
+        before, layout, {}, {0.0, 0.0, 900.0, 600.0}, 50.0, 1.0);
+
+    PlayerFixedMapGeometry expanded;
+    expanded.fullBounds = fullBounds;
+    expanded.discoveredCaves.emplace(CaveId{1}, LogicalPoint{0.0, 0.0});
+    expanded.discoveredCaves.emplace(CaveId{2}, unknownBefore);
+    layout.updateFixed(expanded);
+    const PlayerMapView after{
+        CaveId{2},
+        {
+            cave(1, {{TunnelId{1}, CaveId{2}}}),
+            cave(2, {{TunnelId{1}, CaveId{1}}}),
+        }};
+    const MapPresentationGeometry frameAfter = buildMapPresentationGeometry(
+        after, layout, {}, {0.0, 0.0, 900.0, 600.0}, 50.0, 1.0);
+
+    assert(requireCave(layout, CaveId{1}) == caveOneBefore);
+    assert(requireCave(layout, CaveId{2}) == unknownBefore);
+    assert(layout.fixedBounds() == fullBounds);
+    assert(frameBefore.transform.logicalCenter == frameAfter.transform.logicalCenter);
+    assert(frameBefore.transform.pixelsPerLogicalUnit ==
+           frameAfter.transform.pixelsPerLogicalUnit);
+}
+
 PlayerMapView presentationMap() {
     return PlayerMapView{
         CaveId{1},
@@ -302,8 +343,9 @@ void routeSelectionUsesOnlyDiscoveredKnownConnections() {
     MapPresentationState state;
 
     assert(selectRouteDestination(state, map, CaveId{3}));
-    assert(state.route.status == client_navigation::KnownRouteStatus::Reachable);
-    assert((state.route.caves == std::vector<CaveId>{1, 2, 3}));
+    const auto route = selectedRoute(state, map);
+    assert(route.status == client_navigation::KnownRouteStatus::Reachable);
+    assert((route.caves == std::vector<CaveId>{1, 2, 3}));
 
     assert(!selectRouteDestination(state, map, CaveId{99}));
     assert(!selectRouteFromHit(
@@ -315,12 +357,11 @@ void routeSelectionUsesOnlyDiscoveredKnownConnections() {
             UnknownExitKey{CaveId{1}, TunnelId{2}}}));
 
     assert(!selectRouteDestination(state, map, CaveId{8}));
-    assert(state.route.status == client_navigation::KnownRouteStatus::Unreachable);
-    assert(state.route.caves.empty());
+    assert(selectedRoute(state, map).caves.empty());
 
     assert(selectRouteDestination(state, map, CaveId{1}));
     assert(!state.routeDestination.has_value());
-    assert(state.route.caves.empty());
+    assert(selectedRoute(state, map).caves.empty());
 }
 
 void snapshotMapRefreshClearsInvalidDestination() {
@@ -345,7 +386,7 @@ void snapshotMapRefreshClearsInvalidDestination() {
         }};
     refreshSelectedRoute(state, destinationNoLongerVisible);
     assert(!state.routeDestination.has_value());
-    assert(state.route.caves.empty());
+    assert(selectedRoute(state, destinationNoLongerVisible).caves.empty());
 }
 
 void routeEdgesContainOnlyConsecutivePlanCaves() {
@@ -366,19 +407,76 @@ void routeEdgesContainOnlyConsecutivePlanCaves() {
     MapPresentationState state;
 
     assert(selectRouteDestination(state, map, CaveId{21}));
-    assert((state.route.caves == std::vector<CaveId>{7, 16, 21}));
-    const RouteEdgeSet cave21Edges = routeEdges(state.route);
+    const auto cave21Route = selectedRoute(state, map);
+    assert((cave21Route.caves == std::vector<CaveId>{7, 16, 21}));
+    const RouteEdgeSet cave21Edges = routeEdges(cave21Route);
     assert(containsRouteEdge(cave21Edges, CaveId{7}, CaveId{16}));
     assert(containsRouteEdge(cave21Edges, CaveId{16}, CaveId{7}));
     assert(containsRouteEdge(cave21Edges, CaveId{16}, CaveId{21}));
     assert(!containsRouteEdge(cave21Edges, CaveId{7}, CaveId{12}));
 
     assert(selectRouteDestination(state, map, CaveId{12}));
-    assert((state.route.caves == std::vector<CaveId>{7, 12}));
-    const RouteEdgeSet cave12Edges = routeEdges(state.route);
+    const auto cave12Route = selectedRoute(state, map);
+    assert((cave12Route.caves == std::vector<CaveId>{7, 12}));
+    const RouteEdgeSet cave12Edges = routeEdges(cave12Route);
     assert(containsRouteEdge(cave12Edges, CaveId{7}, CaveId{12}));
     assert(!containsRouteEdge(cave12Edges, CaveId{7}, CaveId{16}));
     assert(!containsRouteEdge(cave12Edges, CaveId{16}, CaveId{21}));
+}
+
+void selectedRouteImmediatelyUsesNewKnownShortcut() {
+    const PlayerMapView longRoute{
+        CaveId{1},
+        {
+            cave(1, {
+                {TunnelId{1}, CaveId{2}},
+                {TunnelId{2}, std::nullopt},
+            }),
+            cave(2, {
+                {TunnelId{1}, CaveId{1}},
+                {TunnelId{2}, CaveId{3}},
+            }),
+            cave(3, {
+                {TunnelId{1}, CaveId{2}},
+                {TunnelId{2}, CaveId{4}},
+            }),
+            cave(4, {
+                {TunnelId{1}, CaveId{3}},
+                {TunnelId{2}, std::nullopt},
+            }),
+        }};
+    MapPresentationState state;
+    assert(selectRouteDestination(state, longRoute, CaveId{4}));
+    const auto initial = selectedRoute(state, longRoute);
+    assert((initial.caves == std::vector<CaveId>{1, 2, 3, 4}));
+    assert(!containsRouteEdge(routeEdges(initial), CaveId{1}, CaveId{4}));
+
+    const PlayerMapView shortcutKnown{
+        CaveId{1},
+        {
+            cave(1, {
+                {TunnelId{1}, CaveId{2}},
+                {TunnelId{2}, CaveId{4}},
+            }),
+            cave(2, {
+                {TunnelId{1}, CaveId{1}},
+                {TunnelId{2}, CaveId{3}},
+            }),
+            cave(3, {
+                {TunnelId{1}, CaveId{2}},
+                {TunnelId{2}, CaveId{4}},
+            }),
+            cave(4, {
+                {TunnelId{1}, CaveId{3}},
+                {TunnelId{2}, CaveId{1}},
+            }),
+        }};
+    const auto refreshed = selectedRoute(state, shortcutKnown);
+    assert((refreshed.caves == std::vector<CaveId>{1, 4}));
+    const RouteEdgeSet refreshedEdges = routeEdges(refreshed);
+    assert(containsRouteEdge(refreshedEdges, CaveId{1}, CaveId{4}));
+    assert(!containsRouteEdge(refreshedEdges, CaveId{1}, CaveId{2}));
+    assert(!containsRouteEdge(refreshedEdges, CaveId{2}, CaveId{3}));
 }
 
 void destinationControlsMatchWebDebugGpsRules() {
@@ -415,14 +513,14 @@ void destinationControlsMatchWebDebugGpsRules() {
     assert(applyDestinationControl(
         state, map, CaveId{3}, DestinationControl::Mark));
     assert(state.routeDestination == CaveId{3});
-    assert((state.route.caves == std::vector<CaveId>{1, 2, 3}));
+    assert((selectedRoute(state, map).caves == std::vector<CaveId>{1, 2, 3}));
     assert(destinationControlForCave(
                map, CaveId{3}, state.routeDestination, false) ==
         DestinationControl::Clear);
     assert(applyDestinationControl(
         state, map, CaveId{3}, DestinationControl::Clear));
     assert(!state.routeDestination.has_value());
-    assert(state.route.caves.empty());
+    assert(selectedRoute(state, map).caves.empty());
 }
 
 } // namespace
@@ -436,10 +534,12 @@ int main() {
     disconnectedComponentsReceiveDeterministicPositions();
     undiscoveredEndpointIsIgnored();
     repeatedUpdateIsIdentical();
+    fixedGeometryKeepsDiscoveryAndViewportStable();
     framingContainsOnlyPlayerKnownPresentationPoints();
     hitTestingDistinguishesCavesAndUnknownExits();
     routeSelectionUsesOnlyDiscoveredKnownConnections();
     routeEdgesContainOnlyConsecutivePlanCaves();
+    selectedRouteImmediatelyUsesNewKnownShortcut();
     destinationControlsMatchWebDebugGpsRules();
     snapshotMapRefreshClearsInvalidDestination();
     std::cout << "game map layout tests passed\n";

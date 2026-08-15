@@ -236,7 +236,8 @@ bool renderPlayerKnownMap(
         return toSdl(projectMapPoint(*position, geometry.transform));
     };
 
-    const RouteEdgeSet highlightedRouteEdges = routeEdges(presentation.route);
+    const RouteEdgeSet highlightedRouteEdges = routeEdges(
+        selectedRoute(presentation, snapshot.map));
     for (const VisibleEdge& edge : visibleEdges(snapshot.map)) {
         const auto source = projectedCave(edge.source);
         const auto destination = projectedCave(edge.destination);

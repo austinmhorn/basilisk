@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <memory>
@@ -503,9 +504,27 @@ void localAdapterPublishesOnlyPlayerSafeSessionState() {
     assert(initial->player == PlayerId{1});
     assert(!initial->availableActions.empty());
     assert(initial->currentCave == initial->map.currentCave);
+    const PlayerFixedMapGeometry* initialGeometry =
+        session->displayedMapGeometry();
+    assert(initialGeometry != nullptr);
+    assert(initialGeometry->fullBounds.populated);
+    const LogicalBounds initialFullBounds = initialGeometry->fullBounds;
 
     const RoundNumber initialRound = initial->round;
-    const AvailableAction selected = initial->availableActions.front();
+    const auto unknownMove = std::find_if(
+        initial->availableActions.begin(), initial->availableActions.end(),
+        [](const AvailableAction& action) {
+            return action.type == ActionType::Move &&
+                action.targetTunnel.has_value() &&
+                !action.targetCave.has_value();
+        });
+    assert(unknownMove != initial->availableActions.end());
+    const AvailableAction selected = *unknownMove;
+    const MapExitKey selectedExit{initial->currentCave, *selected.targetTunnel};
+    const auto hiddenEndpoint =
+        initialGeometry->unknownExitEndpoints.find(selectedExit);
+    assert(hiddenEndpoint != initialGeometry->unknownExitEndpoints.end());
+    const LogicalPoint endpointBeforeDiscovery = hiddenEndpoint->second;
     assert(session->submitAndLock(selected));
 
     const PlayerRoundSnapshot* resolved = session->displayedSnapshot();
@@ -513,6 +532,12 @@ void localAdapterPublishesOnlyPlayerSafeSessionState() {
     assert(resolved->player == PlayerId{1});
     assert(resolved->round == initialRound + 1);
     assert(resolved->currentCave == resolved->map.currentCave);
+    const PlayerFixedMapGeometry* resolvedGeometry =
+        session->displayedMapGeometry();
+    assert(resolvedGeometry != nullptr);
+    assert(resolvedGeometry->fullBounds == initialFullBounds);
+    assert(resolvedGeometry->discoveredCaves.at(resolved->currentCave) ==
+           endpointBeforeDiscovery);
 }
 
 void caveMenuUsesOnlyLiteralTargetMatches() {
