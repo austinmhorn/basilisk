@@ -52,6 +52,18 @@ add_executable(BasiliskClientPresentationTests
 target_link_libraries(BasiliskClientPresentationTests PRIVATE Basilisk::ClientPresentation)
 add_test(NAME BasiliskClientPresentationTests COMMAND BasiliskClientPresentationTests)
 
+add_executable(BasiliskClientProfileMetadataTests
+    client_profile_metadata_tests.cpp
+)
+target_link_libraries(BasiliskClientProfileMetadataTests PRIVATE Basilisk::ClientMetadata)
+add_test(NAME BasiliskClientProfileMetadataTests COMMAND BasiliskClientProfileMetadataTests)
+
+add_executable(BasiliskClientViewContextTests
+    client_view_context_tests.cpp
+)
+target_link_libraries(BasiliskClientViewContextTests PRIVATE Basilisk::ClientMetadata)
+add_test(NAME BasiliskClientViewContextTests COMMAND BasiliskClientViewContextTests)
+
 add_executable(BasiliskClientRoutePlannerTests
     client_route_planner_tests.cpp
 )
@@ -71,6 +83,12 @@ add_executable(BasiliskSnapshotTests
 )
 target_link_libraries(BasiliskSnapshotTests PRIVATE Basilisk::Core)
 add_test(NAME BasiliskSnapshotTests COMMAND BasiliskSnapshotTests)
+
+add_executable(BasiliskPublicMatchMetadataTests
+    public_match_metadata_tests.cpp
+)
+target_link_libraries(BasiliskPublicMatchMetadataTests PRIVATE Basilisk::Core)
+add_test(NAME BasiliskPublicMatchMetadataTests COMMAND BasiliskPublicMatchMetadataTests)
 
 add_executable(BasiliskMatchCoordinatorTests
     match_coordinator_tests.cpp

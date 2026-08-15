@@ -1,3 +1,15 @@
+add_library(BasiliskClientMetadata INTERFACE)
+
+add_library(Basilisk::ClientMetadata ALIAS BasiliskClientMetadata)
+
+target_include_directories(BasiliskClientMetadata
+    INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(BasiliskClientMetadata INTERFACE Basilisk::Core)
+target_compile_features(BasiliskClientMetadata INTERFACE cxx_std_20)
+
 add_library(BasiliskClientPresentation STATIC
     src/Presentation.cpp
 )

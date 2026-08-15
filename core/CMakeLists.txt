@@ -10,6 +10,7 @@ add_library(BasiliskCore STATIC
     src/systems/MatchCoordinator.cpp
     src/systems/ObservationSystem.cpp
     src/systems/PitInvestigationSystem.cpp
+    src/systems/PublicMatchMetadataSystem.cpp
     src/systems/RoundController.cpp
     src/systems/SearchSystem.cpp
     src/systems/SnapshotSystem.cpp

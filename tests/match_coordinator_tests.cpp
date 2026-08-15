@@ -136,6 +136,26 @@ void reserveExpirationKillsWaitingHunterAndResolvesLockedSurvivor() {
     assert(state.round == 3); // Only the surviving hunter is required now.
 }
 
+void deadPlayerDisconnectDoesNotBlockLivingHunter() {
+    auto state = MapGenerator::generate(1010, 2020);
+    state.rules.disconnectGraceMs = 1;
+    MatchCoordinator coordinator(state);
+
+    coordinator.disconnect(PlayerId{2});
+    coordinator.advanceTime(1);
+    assert(!playerById(state, PlayerId{2}).alive);
+    assert(playerById(state, PlayerId{1}).alive);
+    assert(state.result.status == MatchStatus::Active);
+
+    // A dead player's later session departure is intentionally irrelevant to
+    // the living-player action barrier.
+    coordinator.disconnect(PlayerId{2});
+    const RoundNumber priorRound = state.round;
+    assert(coordinator.submitAction(search(PlayerId{1})));
+    assert(coordinator.lockAction(PlayerId{1}));
+    assert(state.round == priorRound + 1);
+}
+
 void bothDisconnectingCanEndInDraw() {
     auto state = MapGenerator::generate(1111, 1212);
     state.rules.disconnectGraceMs = 100;
@@ -161,6 +181,7 @@ int main() {
     reconnectWithinGracePreservesHunterAndActionState();
     disconnectTimeoutKillsHunterAndLeavesRecoverableBody();
     reserveExpirationKillsWaitingHunterAndResolvesLockedSurvivor();
+    deadPlayerDisconnectDoesNotBlockLivingHunter();
     bothDisconnectingCanEndInDraw();
 
     std::cout << "Basilisk match coordinator tests passed.\n";
