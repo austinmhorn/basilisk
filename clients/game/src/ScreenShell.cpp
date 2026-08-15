@@ -93,6 +93,7 @@ void drawPanel(
 struct DrawingContext {
     SDL_Renderer* renderer{};
     TextRenderer* text{};
+    SvgTextureManager* svg{};
     float scale{1.0F};
     std::string* error{};
 
@@ -133,6 +134,28 @@ struct DrawingContext {
                 bounds.y + (bounds.h - static_cast<float>(measured->height)) * 0.5F},
             *error);
     }
+
+    bool asset(
+        SvgAssetId id,
+        const SDL_FRect& destination,
+        float opacity = 1.0F,
+        SDL_Color tint = SDL_Color{255, 255, 255, SDL_ALPHA_OPAQUE}) const {
+        std::string assetError;
+        if (svg->draw(id, destination, opacity, tint, assetError)) return true;
+        SDL_Log("SVG asset fallback: %s", assetError.c_str());
+        return false;
+    }
+
+    bool aspectFitAsset(
+        SvgAssetId id,
+        const SDL_FRect& destination,
+        float opacity,
+        SDL_Color tint) const {
+        std::string assetError;
+        if (svg->drawAspectFit(id, destination, opacity, tint, assetError)) return true;
+        SDL_Log("SVG aspect-fit fallback: %s", assetError.c_str());
+        return false;
+    }
 };
 
 const PublicPlayerSlot* findSlot(const ScreenShellData& data, PlayerSlot slot) {
@@ -157,26 +180,28 @@ const client::PublicPlayerProfile* findProfile(
 bool drawBrand(const DrawingContext& context, float x, float y) {
     const float scale = context.scale;
     const SDL_FRect mark{x, y + 7.0F * scale, 28.0F * scale, 32.0F * scale};
-    drawPanel(
-        context.renderer,
-        mark,
-        7.0F * scale,
-        SDL_Color{23, 27, 29, SDL_ALPHA_OPAQUE},
-        SDL_Color{114, 97, 61, SDL_ALPHA_OPAQUE},
-        scale);
-    setColor(context.renderer, ui::Theme::gold);
-    SDL_RenderLine(
-        context.renderer,
-        mark.x + 7.0F * scale,
-        mark.y + 23.0F * scale,
-        mark.x + 21.0F * scale,
-        mark.y + 9.0F * scale);
-    SDL_RenderLine(
-        context.renderer,
-        mark.x + 8.0F * scale,
-        mark.y + 10.0F * scale,
-        mark.x + 20.0F * scale,
-        mark.y + 22.0F * scale);
+    if (!context.asset(SvgAssetId::BasiliskLogo, mark)) {
+        drawPanel(
+            context.renderer,
+            mark,
+            7.0F * scale,
+            SDL_Color{23, 27, 29, SDL_ALPHA_OPAQUE},
+            SDL_Color{114, 97, 61, SDL_ALPHA_OPAQUE},
+            scale);
+        setColor(context.renderer, ui::Theme::gold);
+        SDL_RenderLine(
+            context.renderer,
+            mark.x + 7.0F * scale,
+            mark.y + 23.0F * scale,
+            mark.x + 21.0F * scale,
+            mark.y + 9.0F * scale);
+        SDL_RenderLine(
+            context.renderer,
+            mark.x + 8.0F * scale,
+            mark.y + 10.0F * scale,
+            mark.x + 20.0F * scale,
+            mark.y + 22.0F * scale);
+    }
 
     return context.label(
                "BASILISK",
@@ -199,6 +224,7 @@ bool drawPlayerCard(
     SDL_FRect card,
     std::string_view designation,
     std::string_view displayName,
+    const client::EmblemId* emblemId,
     bool local,
     bool firstPlayer) {
 
@@ -237,8 +263,14 @@ bool drawPlayerCard(
         ui::Theme::surface,
         accent,
         scale);
-    setColor(context.renderer, accent);
-    if (firstPlayer) {
+    const std::optional<SvgAssetId> mappedEmblem =
+        emblemId == nullptr ? std::nullopt : emblemAsset(*emblemId);
+    const SDL_FRect emblemArt = inset(emblem, 5.0F * scale);
+    // The opaque profile ID is resolved only by the game-owned catalog.
+    const bool emblemDrawn =
+        mappedEmblem.has_value() && context.asset(*mappedEmblem, emblemArt);
+    if (!emblemDrawn && firstPlayer) {
+        setColor(context.renderer, accent);
         const SDL_FPoint diamond[] = {
             {emblem.x + emblem.w * 0.5F, emblem.y + 6.0F * scale},
             {emblem.x + emblem.w - 6.0F * scale, emblem.y + emblem.h * 0.5F},
@@ -247,7 +279,8 @@ bool drawPlayerCard(
             {emblem.x + emblem.w * 0.5F, emblem.y + 6.0F * scale},
         };
         SDL_RenderLines(context.renderer, diamond, 5);
-    } else {
+    } else if (!emblemDrawn) {
+        setColor(context.renderer, accent);
         const SDL_FRect ward = inset(emblem, 8.0F * scale);
         SDL_RenderRect(context.renderer, &ward);
         SDL_RenderLine(
@@ -337,6 +370,7 @@ bool drawHeaderHud(
             p1Card,
             "P1",
             p1 == nullptr ? "Player One" : p1->displayName,
+            p1 == nullptr ? nullptr : &p1->emblemId,
             p1Slot != nullptr && p1Slot->player == data.localPlayer,
             true) ||
         !context.centeredLabel(
@@ -346,6 +380,7 @@ bool drawHeaderHud(
             p2Card,
             "P2",
             p2 == nullptr ? "Player Two" : p2->displayName,
+            p2 == nullptr ? nullptr : &p2->emblemId,
             p2Slot != nullptr && p2Slot->player == data.localPlayer,
             false)) {
         return false;
@@ -443,7 +478,14 @@ bool drawHeaderHud(
     }
     for (int index = 0; index < 5; ++index) {
         const float slotX = hudX + static_cast<float>(index) * 13.0F * scale;
-        if (index < snapshot.arrows) {
+        const SDL_FRect arrow{
+            slotX,
+            top + 19.0F * scale,
+            10.0F * scale,
+            20.0F * scale,
+        };
+        const float opacity = index < snapshot.arrows ? 1.0F : 0.22F;
+        if (!context.asset(SvgAssetId::Arrow, arrow, opacity, ui::Theme::mutedBright)) {
             setColor(context.renderer, ui::Theme::mutedBright);
             SDL_RenderLine(
                 context.renderer,
@@ -463,16 +505,6 @@ bool drawHeaderHud(
                 top + 23.0F * scale,
                 slotX + 5.0F * scale,
                 top + 20.0F * scale);
-        } else {
-            fillRoundedRect(
-                context.renderer,
-                SDL_FRect{
-                    slotX + 3.0F * scale,
-                    top + 28.0F * scale,
-                    4.0F * scale,
-                    4.0F * scale},
-                2.0F * scale,
-                SDL_Color{65, 76, 85, SDL_ALPHA_OPAQUE});
         }
     }
 
@@ -510,31 +542,15 @@ bool drawHeaderHud(
                 ui::Theme::surfaceSoft,
                 SDL_Color{90, 102, 112, SDL_ALPHA_OPAQUE},
                 scale);
-            setColor(context.renderer, ui::Theme::mutedBright);
-            SDL_RenderLine(
-                context.renderer,
-                slot.x + 4.0F * scale,
-                slot.y + 8.0F * scale,
-                slot.x + 8.0F * scale,
-                slot.y + 4.0F * scale);
-            SDL_RenderLine(
-                context.renderer,
-                slot.x + 8.0F * scale,
-                slot.y + 4.0F * scale,
-                slot.x + 12.0F * scale,
-                slot.y + 8.0F * scale);
-            SDL_RenderLine(
-                context.renderer,
-                slot.x + 12.0F * scale,
-                slot.y + 8.0F * scale,
-                slot.x + 8.0F * scale,
-                slot.y + 12.0F * scale);
-            SDL_RenderLine(
-                context.renderer,
-                slot.x + 8.0F * scale,
-                slot.y + 12.0F * scale,
-                slot.x + 4.0F * scale,
-                slot.y + 8.0F * scale);
+            const SDL_FRect art = inset(slot, 2.0F * scale);
+            if (!context.asset(
+                    itemAsset(snapshot.inventory.items[index]),
+                    art,
+                    1.0F,
+                    ui::Theme::mutedBright)) {
+                setColor(context.renderer, ui::Theme::mutedBright);
+                SDL_RenderRect(context.renderer, &art);
+            }
         } else {
             fillRoundedRect(
                 context.renderer,
@@ -669,15 +685,21 @@ bool drawObjectiveCard(
         40.0F * scale,
     };
     drawPanel(context.renderer, emblem, 8.0F * scale, fill, border, scale);
-    setColor(context.renderer, accent);
-    const SDL_FRect symbol = inset(emblem, 9.0F * scale);
-    SDL_RenderRect(context.renderer, &symbol);
-    SDL_RenderLine(
-        context.renderer,
-        symbol.x,
-        symbol.y,
-        symbol.x + symbol.w,
-        symbol.y + symbol.h);
+    const SDL_FRect symbol = inset(emblem, 4.0F * scale);
+    const bool objectiveIconDrawn = primary
+        ? context.asset(SvgAssetId::ObjectiveBasilisk, symbol, 1.0F, accent)
+        : context.aspectFitAsset(SvgAssetId::HuntersSigil, symbol, 1.0F, accent);
+    if (!objectiveIconDrawn) {
+        setColor(context.renderer, accent);
+        const SDL_FRect fallback = inset(emblem, 9.0F * scale);
+        SDL_RenderRect(context.renderer, &fallback);
+        SDL_RenderLine(
+            context.renderer,
+            fallback.x,
+            fallback.y,
+            fallback.x + fallback.w,
+            fallback.y + fallback.h);
+    }
 
     if (!context.label(
             primary ? "Find the Basilisk and end its reign." :
@@ -825,19 +847,20 @@ bool drawInventory(
             occupied ? SDL_Color{72, 83, 93, SDL_ALPHA_OPAQUE} : ui::Theme::borderSoft,
             scale);
         if (occupied) {
-            setColor(context.renderer, ui::Theme::muted);
-            SDL_RenderLine(
-                context.renderer,
-                icon.x + 6.0F * scale,
-                icon.y + 12.0F * scale,
-                icon.x + 12.0F * scale,
-                icon.y + 6.0F * scale);
-            SDL_RenderLine(
-                context.renderer,
-                icon.x + 12.0F * scale,
-                icon.y + 6.0F * scale,
-                icon.x + 18.0F * scale,
-                icon.y + 12.0F * scale);
+            const SDL_FRect art = inset(icon, 2.0F * scale);
+            if (!context.asset(
+                    itemAsset(snapshot.inventory.items[index]),
+                    art,
+                    1.0F,
+                    ui::Theme::mutedBright)) {
+                setColor(context.renderer, ui::Theme::muted);
+                SDL_RenderLine(
+                    context.renderer,
+                    art.x,
+                    art.y + art.h,
+                    art.x + art.w,
+                    art.y);
+            }
         }
         if (!context.label(
                 occupied ? presentation::itemName(snapshot.inventory.items[index]) : "Empty",
@@ -960,6 +983,7 @@ bool drawSidebar(
 bool renderScreenShell(
     SDL_Renderer* renderer,
     TextRenderer& textRenderer,
+    SvgTextureManager& svgTextures,
     const PlayerRoundSnapshot& snapshot,
     PlayerMapLayout& mapLayout,
     MapPresentationState& mapPresentation,
@@ -982,7 +1006,7 @@ bool renderScreenShell(
         error = "Screen shell scale must be positive";
         return false;
     }
-    const DrawingContext context{renderer, &textRenderer, scale, &error};
+    const DrawingContext context{renderer, &textRenderer, &svgTextures, scale, &error};
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
     setColor(renderer, ui::Theme::background);

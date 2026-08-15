@@ -20,6 +20,19 @@ target_link_libraries(
 )
 target_compile_features(BasiliskGameMapLayout PUBLIC cxx_std_20)
 
+add_library(BasiliskGameAssets STATIC
+    src/AssetCatalog.cpp
+)
+
+add_library(Basilisk::GameAssets ALIAS BasiliskGameAssets)
+
+target_include_directories(BasiliskGameAssets
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(BasiliskGameAssets PUBLIC Basilisk::ClientMetadata)
+target_compile_features(BasiliskGameAssets PUBLIC cxx_std_20)
+
 # SDL is implemented in C, while Basilisk Core itself only requires C++.
 enable_language(C)
 
@@ -37,6 +50,46 @@ FetchContent_Declare(
     DOWNLOAD_EXTRACT_TIMESTAMP OFF
 )
 FetchContent_MakeAvailable(SDL3)
+
+# SDL3_image is built statically with only its self-contained SVG decoder.
+set(SDLIMAGE_INSTALL OFF CACHE BOOL "" FORCE)
+set(SDLIMAGE_SAMPLES OFF CACHE BOOL "" FORCE)
+set(SDLIMAGE_TESTS OFF CACHE BOOL "" FORCE)
+set(SDLIMAGE_VENDORED ON CACHE BOOL "" FORCE)
+set(SDLIMAGE_BACKEND_STB OFF CACHE BOOL "" FORCE)
+set(SDLIMAGE_BACKEND_IMAGEIO OFF CACHE BOOL "" FORCE)
+set(SDLIMAGE_BACKEND_WIC OFF CACHE BOOL "" FORCE)
+foreach(_image_format IN ITEMS
+        ANI APNG AVIF BMP GIF JPG JXL LBM PCX PNG PNM QOI TGA TIF WEBP XCF XPM XV)
+    set("SDLIMAGE_${_image_format}" OFF CACHE BOOL "" FORCE)
+endforeach()
+set(SDLIMAGE_SVG ON CACHE BOOL "" FORCE)
+# SDL_image 3.4.4 does not initialize this status variable when PNG is off.
+set(SDLIMAGE_APNG_ENABLED OFF)
+
+set(_basilisk_build_shared_libs_was_defined FALSE)
+if(DEFINED BUILD_SHARED_LIBS)
+    set(_basilisk_build_shared_libs_was_defined TRUE)
+    set(_basilisk_saved_build_shared_libs "${BUILD_SHARED_LIBS}")
+endif()
+set(BUILD_SHARED_LIBS OFF)
+
+FetchContent_Declare(
+    SDL3_image
+    URL https://github.com/libsdl-org/SDL_image/releases/download/release-3.4.4/SDL3_image-3.4.4.tar.gz
+    URL_HASH SHA256=29751304a13d25ac513f24305fa25b06a6edd9607718c90129b8350d35fc5573
+    DOWNLOAD_EXTRACT_TIMESTAMP OFF
+)
+FetchContent_MakeAvailable(SDL3_image)
+
+if(_basilisk_build_shared_libs_was_defined)
+    set(BUILD_SHARED_LIBS "${_basilisk_saved_build_shared_libs}")
+else()
+    unset(BUILD_SHARED_LIBS)
+endif()
+unset(_basilisk_build_shared_libs_was_defined)
+unset(_basilisk_saved_build_shared_libs)
+unset(_image_format)
 
 # SDL3_ttf is built statically with its own pinned dependencies so the game
 # does not depend on platform font libraries being installed separately.
@@ -100,14 +153,17 @@ add_executable(BasiliskGame
     src/main.cpp
     src/MapRenderer.cpp
     src/ScreenShell.cpp
+    src/SvgTextureManager.cpp
     src/TextRenderer.cpp
 )
 
 target_link_libraries(BasiliskGame
     PRIVATE
         Basilisk::GameMapLayout
+        Basilisk::GameAssets
         Basilisk::ClientPresentation
         SDL3::SDL3
+        SDL3_image::SDL3_image
         SDL3_ttf::SDL3_ttf
 )
 target_compile_features(BasiliskGame PRIVATE cxx_std_20)
@@ -123,11 +179,29 @@ add_custom_command(
     COMMENT "Packaging Inter font assets"
 )
 
+add_custom_command(
+    TARGET BasiliskGame
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/ui"
+        "$<TARGET_FILE_DIR:BasiliskGame>/assets/ui"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/items"
+        "$<TARGET_FILE_DIR:BasiliskGame>/assets/items"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/emblems"
+        "$<TARGET_FILE_DIR:BasiliskGame>/assets/emblems"
+    COMMENT "Packaging SVG UI assets"
+)
+
 if(EMSCRIPTEN)
     set_target_properties(BasiliskGame PROPERTIES SUFFIX ".html")
     target_link_options(
         BasiliskGame
         PRIVATE
             "SHELL:--preload-file ${BASILISK_GAME_FONT_ASSET_DIR}@/assets/fonts"
+            "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets/ui@/assets/ui"
+            "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets/items@/assets/items"
+            "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets/emblems@/assets/emblems"
     )
 endif()

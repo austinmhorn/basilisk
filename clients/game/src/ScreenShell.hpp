@@ -9,6 +9,7 @@
 
 #include "MapLayout.hpp"
 #include "MapPresentation.hpp"
+#include "SvgTextureManager.hpp"
 #include "TextRenderer.hpp"
 #include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/PublicMatchMetadata.hpp"
@@ -34,6 +35,7 @@ struct ScreenShellData {
 [[nodiscard]] bool renderScreenShell(
     SDL_Renderer* renderer,
     TextRenderer& textRenderer,
+    SvgTextureManager& svgTextures,
     const PlayerRoundSnapshot& snapshot,
     PlayerMapLayout& mapLayout,
     MapPresentationState& mapPresentation,

@@ -13,6 +13,7 @@
 #include "MapRenderer.hpp"
 #include "MapPresentation.hpp"
 #include "ScreenShell.hpp"
+#include "SvgTextureManager.hpp"
 #include "TextRenderer.hpp"
 #include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/Random.hpp"
@@ -23,6 +24,7 @@ struct AppState {
     SDL_Window* window{nullptr};
     SDL_Renderer* renderer{nullptr};
     std::unique_ptr<basilisk::game::TextRenderer> textRenderer;
+    std::unique_ptr<basilisk::game::SvgTextureManager> svgTextures;
     Uint8 backgroundBlue{24};
     bool demoMapEnabled{false};
 
@@ -39,6 +41,12 @@ std::string bundledFontDirectory() {
     const char* basePath = SDL_GetBasePath();
     if (basePath == nullptr) return {};
     return std::string{basePath} + "assets/fonts";
+}
+
+std::string bundledAssetDirectory() {
+    const char* basePath = SDL_GetBasePath();
+    if (basePath == nullptr) return {};
+    return std::string{basePath} + "assets";
 }
 
 } // namespace
@@ -114,6 +122,14 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         return SDL_APP_FAILURE;
     }
 
+    state->svgTextures = std::make_unique<basilisk::game::SvgTextureManager>();
+    std::string assetError;
+    if (!state->svgTextures->initialize(
+            state->renderer, bundledAssetDirectory(), assetError)) {
+        SDL_Log("SVG asset initialization failed: %s", assetError.c_str());
+        return SDL_APP_FAILURE;
+    }
+
     // A linked, deterministic Core call proves this client is not SDL-only.
     basilisk::RandomGenerator coreRandom{0xB451115ULL};
     state->backgroundBlue = static_cast<Uint8>(coreRandom.range(24, 24));
@@ -169,6 +185,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             if (!basilisk::game::renderScreenShell(
                     state->renderer,
                     *state->textRenderer,
+                    *state->svgTextures,
                     state->snapshot,
                     state->mapLayout,
                     state->mapPresentation,
@@ -220,6 +237,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 void SDL_AppQuit(void* appstate, SDL_AppResult) {
     auto* state = static_cast<AppState*>(appstate);
     if (state != nullptr) {
+        state->svgTextures.reset();
         state->textRenderer.reset();
         SDL_DestroyRenderer(state->renderer);
         SDL_DestroyWindow(state->window);
