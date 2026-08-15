@@ -90,7 +90,11 @@ if(TARGET BasiliskGameActions)
     add_executable(BasiliskGameActionTests
         game_action_tests.cpp
     )
-    target_link_libraries(BasiliskGameActionTests PRIVATE Basilisk::GameActions)
+    target_link_libraries(
+        BasiliskGameActionTests
+        PRIVATE
+            Basilisk::GameLocalSession
+    )
     add_test(NAME BasiliskGameActionTests COMMAND BasiliskGameActionTests)
 endif()
 

@@ -349,65 +349,92 @@ bool drawHeaderHud(
     const float top = (headerHeight - 46.0F * scale) * 0.5F;
     if (!drawBrand(context, 26.0F * scale, top)) return false;
 
-    const PublicPlayerSlot* p1Slot = findSlot(session, PlayerSlot::P1);
-    const PublicPlayerSlot* p2Slot = findSlot(session, PlayerSlot::P2);
-    const client::PublicPlayerProfile* p1 =
-        p1Slot == nullptr ? nullptr : findProfile(session, p1Slot->player);
-    const client::PublicPlayerProfile* p2 =
-        p2Slot == nullptr ? nullptr : findProfile(session, p2Slot->player);
-
     const float matchX = 220.0F * scale;
-    const SDL_FRect p1Card{matchX, top, 203.0F * scale, 46.0F * scale};
-    const SDL_FRect versus{
-        p1Card.x + p1Card.w + 8.0F * scale,
-        top + 9.0F * scale,
-        28.0F * scale,
-        28.0F * scale,
-    };
-    const SDL_FRect p2Card{
-        versus.x + versus.w + 8.0F * scale,
-        top,
-        203.0F * scale,
-        46.0F * scale,
-    };
-    if (!drawPlayerCard(
-            context,
-            p1Card,
-            "P1",
-            p1 == nullptr ? "Player One" : p1->displayName,
-            p1 == nullptr ? nullptr : &p1->emblemId,
-            p1Slot != nullptr &&
-                p1Slot->player == session.viewContext().localPlayer,
-            true) ||
-        !context.centeredLabel(
-            "VS", FontWeight::Bold, ui::Typography::versus, ui::Theme::muted, versus) ||
-        !drawPlayerCard(
-            context,
-            p2Card,
-            "P2",
-            p2 == nullptr ? "Player Two" : p2->displayName,
-            p2 == nullptr ? nullptr : &p2->emblemId,
-            p2Slot != nullptr &&
-                p2Slot->player == session.viewContext().localPlayer,
-            false)) {
-        return false;
+    float hudX = matchX;
+    const auto& matchPlayers = session.matchMetadata().players;
+    if (matchPlayers.size() == 1) {
+        const PublicPlayerSlot& onlySlot = matchPlayers.front();
+        const client::PublicPlayerProfile* profile =
+            findProfile(session, onlySlot.player);
+        const SDL_FRect playerCard{
+            matchX,
+            top,
+            250.0F * scale,
+            46.0F * scale,
+        };
+        const std::string_view designation = onlySlot.slot == PlayerSlot::P1
+            ? "P1 \xC2\xB7 SOLO"
+            : "P2 \xC2\xB7 SOLO";
+        if (!drawPlayerCard(
+                context,
+                playerCard,
+                designation,
+                profile == nullptr ? "Player" : profile->displayName,
+                profile == nullptr ? nullptr : &profile->emblemId,
+                onlySlot.player == session.viewContext().localPlayer,
+                onlySlot.slot == PlayerSlot::P1)) {
+            return false;
+        }
+        hudX = playerCard.x + playerCard.w + 36.0F * scale;
+    } else {
+        const PublicPlayerSlot* p1Slot = findSlot(session, PlayerSlot::P1);
+        const PublicPlayerSlot* p2Slot = findSlot(session, PlayerSlot::P2);
+        const client::PublicPlayerProfile* p1 =
+            p1Slot == nullptr ? nullptr : findProfile(session, p1Slot->player);
+        const client::PublicPlayerProfile* p2 =
+            p2Slot == nullptr ? nullptr : findProfile(session, p2Slot->player);
+        const SDL_FRect p1Card{matchX, top, 203.0F * scale, 46.0F * scale};
+        const SDL_FRect versus{
+            p1Card.x + p1Card.w + 8.0F * scale,
+            top + 9.0F * scale,
+            28.0F * scale,
+            28.0F * scale,
+        };
+        const SDL_FRect p2Card{
+            versus.x + versus.w + 8.0F * scale,
+            top,
+            203.0F * scale,
+            46.0F * scale,
+        };
+        if (!drawPlayerCard(
+                context,
+                p1Card,
+                "P1",
+                p1 == nullptr ? "Player One" : p1->displayName,
+                p1 == nullptr ? nullptr : &p1->emblemId,
+                p1Slot != nullptr &&
+                    p1Slot->player == session.viewContext().localPlayer,
+                true) ||
+            !context.centeredLabel(
+                "VS", FontWeight::Bold, ui::Typography::versus, ui::Theme::muted, versus) ||
+            !drawPlayerCard(
+                context,
+                p2Card,
+                "P2",
+                p2 == nullptr ? "Player Two" : p2->displayName,
+                p2 == nullptr ? nullptr : &p2->emblemId,
+                p2Slot != nullptr &&
+                    p2Slot->player == session.viewContext().localPlayer,
+                false)) {
+            return false;
+        }
+
+        setColor(context.renderer, ui::Theme::border);
+        SDL_RenderLine(
+            context.renderer,
+            versus.x,
+            versus.y + versus.h * 0.5F,
+            versus.x + 6.0F * scale,
+            versus.y + versus.h * 0.5F);
+        SDL_RenderLine(
+            context.renderer,
+            versus.x + versus.w - 6.0F * scale,
+            versus.y + versus.h * 0.5F,
+            versus.x + versus.w,
+            versus.y + versus.h * 0.5F);
+        hudX = p2Card.x + p2Card.w + 24.0F * scale;
     }
 
-    setColor(context.renderer, ui::Theme::border);
-    SDL_RenderLine(
-        context.renderer,
-        versus.x,
-        versus.y + versus.h * 0.5F,
-        versus.x + 6.0F * scale,
-        versus.y + versus.h * 0.5F);
-    SDL_RenderLine(
-        context.renderer,
-        versus.x + versus.w - 6.0F * scale,
-        versus.y + versus.h * 0.5F,
-        versus.x + versus.w,
-        versus.y + versus.h * 0.5F);
-
-    float hudX = p2Card.x + p2Card.w + 24.0F * scale;
     const SDL_FRect roundBadge{hudX, top + 3.0F * scale, 54.0F * scale, 40.0F * scale};
     drawPanel(
         context.renderer,

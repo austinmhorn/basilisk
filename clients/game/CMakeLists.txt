@@ -58,6 +58,25 @@ target_link_libraries(
 )
 target_compile_features(BasiliskGameActions PUBLIC cxx_std_20)
 
+add_library(BasiliskGameLocalSession STATIC
+    src/LocalGameSessionAdapter.cpp
+)
+
+add_library(Basilisk::GameLocalSession ALIAS BasiliskGameLocalSession)
+
+target_include_directories(BasiliskGameLocalSession
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(
+    BasiliskGameLocalSession
+    PUBLIC
+        Basilisk::GameActions
+    PRIVATE
+        Basilisk::Core
+)
+target_compile_features(BasiliskGameLocalSession PUBLIC cxx_std_20)
+
 # SDL is implemented in C, while Basilisk Core itself only requires C++.
 enable_language(C)
 
@@ -188,8 +207,7 @@ target_link_libraries(BasiliskGame
     PRIVATE
         Basilisk::GameMapLayout
         Basilisk::GameAssets
-        Basilisk::GameActions
-        Basilisk::ClientPresentation
+        Basilisk::GameLocalSession
         SDL3::SDL3
         SDL3_image::SDL3_image
         SDL3_ttf::SDL3_ttf

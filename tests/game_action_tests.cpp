@@ -10,6 +10,7 @@
 #include "ActionSelection.hpp"
 #include "ClientLifecycle.hpp"
 #include "ClientSessionController.hpp"
+#include "LocalGameSessionAdapter.hpp"
 #include "MapActionMenu.hpp"
 #include "SnapshotPresentation.hpp"
 
@@ -485,6 +486,35 @@ void controllerForwardsCommandsWithAuthorityGating() {
     assert(recordedActions->locks == 1);
 }
 
+void localAdapterPublishesOnlyPlayerSafeSessionState() {
+    auto session = LocalGameSessionAdapter::create(
+        MapSeed{20260812}, MatchSeed{424242});
+    assert(session != nullptr);
+    assert(session->matchMetadata().totalCaves > 0);
+    assert(session->matchMetadata().players.size() == 1);
+    assert(session->matchMetadata().players.front().player == PlayerId{1});
+    assert(session->matchMetadata().players.front().slot == PlayerSlot::P1);
+    assert(session->profiles().size() == 1);
+    assert(session->viewContext().mode == client::ClientViewMode::Playing);
+    assert(session->canSubmitActions());
+
+    const PlayerRoundSnapshot* initial = session->displayedSnapshot();
+    assert(initial != nullptr);
+    assert(initial->player == PlayerId{1});
+    assert(!initial->availableActions.empty());
+    assert(initial->currentCave == initial->map.currentCave);
+
+    const RoundNumber initialRound = initial->round;
+    const AvailableAction selected = initial->availableActions.front();
+    assert(session->submitAndLock(selected));
+
+    const PlayerRoundSnapshot* resolved = session->displayedSnapshot();
+    assert(resolved != nullptr);
+    assert(resolved->player == PlayerId{1});
+    assert(resolved->round == initialRound + 1);
+    assert(resolved->currentCave == resolved->map.currentCave);
+}
+
 void caveMenuUsesOnlyLiteralTargetMatches() {
     AvailableAction move12 = actionWithShape(ActionType::Move);
     move12.targetCave = CaveId{12};
@@ -664,6 +694,7 @@ int main() {
     controllerHandlesMissingSpectatorSnapshotSafely();
     controllerOwnsWatchTransition();
     controllerForwardsCommandsWithAuthorityGating();
+    localAdapterPublishesOnlyPlayerSafeSessionState();
     caveMenuUsesOnlyLiteralTargetMatches();
     mapMenuAndSidebarShareOneDraft();
     unknownExitMatchesTunnelWithoutDestination();

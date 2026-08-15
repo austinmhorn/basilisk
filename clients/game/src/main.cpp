@@ -16,6 +16,7 @@
 #include "ClientSessionController.hpp"
 #include "DemoMap.hpp"
 #include "DemoUi.hpp"
+#include "LocalGameSessionAdapter.hpp"
 #include "MapRenderer.hpp"
 #include "MapActionMenu.hpp"
 #include "MapPresentation.hpp"
@@ -34,6 +35,7 @@ struct AppState {
     std::unique_ptr<basilisk::game::SvgTextureManager> svgTextures;
     Uint8 backgroundBlue{24};
     bool demoMapEnabled{false};
+    bool screenShellEnabled{false};
     std::size_t demoSnapshotStage{0};
 
     std::unique_ptr<basilisk::game::ClientSessionController> session;
@@ -96,7 +98,20 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
                 state->session->displayedSnapshot()->map,
                 basilisk::CaveId{34});
             state->demoMapEnabled = true;
+            state->screenShellEnabled = true;
             SDL_Log("Development demo map enabled");
+            break;
+        } else if (argv != nullptr && argv[index] != nullptr &&
+                   std::string_view{argv[index]} == "--local-game") {
+            state->session = basilisk::game::LocalGameSessionAdapter::create(
+                basilisk::MapSeed{20260812},
+                basilisk::MatchSeed{424242});
+            if (state->session == nullptr) {
+                SDL_Log("Unable to create local Core session");
+                return SDL_APP_FAILURE;
+            }
+            state->screenShellEnabled = true;
+            SDL_Log("Trusted local Core session enabled");
             break;
         }
     }
@@ -463,7 +478,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
     if (SDL_GetRenderOutputSize(state->renderer, &outputWidth, &outputHeight)) {
         const basilisk::PlayerRoundSnapshot* snapshot =
             state->session->displayedSnapshot();
-        if (state->demoMapEnabled) {
+        if (state->screenShellEnabled) {
             if (snapshot != nullptr) {
                 state->actionSelection.synchronize(
                     snapshot->round,
