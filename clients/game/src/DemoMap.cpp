@@ -15,7 +15,7 @@ TunnelView unknownExit(TunnelId tunnel, bool strongColdDraft = false) {
 
 } // namespace
 
-PlayerRoundSnapshot makeDemoMapSnapshot() {
+PlayerRoundSnapshot makeDemoMapSnapshot(DemoSnapshotStage stage) {
     // This intentionally constructs only the public player-facing DTO. It is
     // not a generated match, simulation, or authoritative world definition.
     PlayerRoundSnapshot snapshot;
@@ -28,8 +28,6 @@ PlayerRoundSnapshot makeDemoMapSnapshot() {
     snapshot.alive = true;
     snapshot.inventory.items = {ItemType::HealingDraught, ItemType::SurveyFragment};
     snapshot.inventory.capacity = 3;
-    snapshot.hasHunterSigil = true;
-    snapshot.extractionCave = CaveId{34};
     snapshot.temporarilyRevealedPitCaves = {CaveId{39}};
     snapshot.currentCave = CaveId{7};
     snapshot.map.currentCave = snapshot.currentCave;
@@ -77,22 +75,50 @@ PlayerRoundSnapshot makeDemoMapSnapshot() {
             }},
     };
 
-    PlayerObservation basiliskNearby;
-    basiliskNearby.type = ObservationType::BasiliskNearby;
-    basiliskNearby.viewer = snapshot.player;
-    snapshot.observations.push_back(basiliskNearby);
-
-    PlayerObservation pitDraft;
-    pitDraft.type = ObservationType::PitInvestigationSucceeded;
-    pitDraft.viewer = snapshot.player;
-    pitDraft.tunnel = TunnelId{4};
-    snapshot.observations.push_back(pitDraft);
-
-    PlayerObservation itemFound;
-    itemFound.type = ObservationType::ItemFound;
-    itemFound.viewer = snapshot.player;
-    itemFound.itemType = ItemType::SurveyFragment;
-    snapshot.observations.push_back(itemFound);
+    switch (stage) {
+        case DemoSnapshotStage::NormalStart:
+            break;
+        case DemoSnapshotStage::RecoverableSigil: {
+            snapshot.recoverableRivalSigilAvailable = true;
+            PlayerObservation observation;
+            observation.type = ObservationType::RivalDied;
+            observation.viewer = snapshot.player;
+            snapshot.observations.push_back(observation);
+            break;
+        }
+        case DemoSnapshotStage::SecuredSigilHiddenExtraction: {
+            snapshot.hasHunterSigil = true;
+            PlayerObservation observation;
+            observation.type = ObservationType::SigilAcquired;
+            observation.viewer = snapshot.player;
+            snapshot.observations.push_back(observation);
+            break;
+        }
+        case DemoSnapshotStage::SecuredSigilVisibleExtraction: {
+            snapshot.hasHunterSigil = true;
+            snapshot.extractionCave = CaveId{34};
+            PlayerObservation observation;
+            observation.type = ObservationType::ExtractionRevealed;
+            observation.viewer = snapshot.player;
+            observation.cave = snapshot.extractionCave;
+            snapshot.observations.push_back(observation);
+            break;
+        }
+        case DemoSnapshotStage::NextRound: {
+            snapshot.round = RoundNumber{13};
+            snapshot.hasHunterSigil = true;
+            snapshot.extractionCave = CaveId{34};
+            PlayerObservation nearby;
+            nearby.type = ObservationType::BasiliskNearby;
+            nearby.viewer = snapshot.player;
+            snapshot.observations.push_back(nearby);
+            PlayerObservation arrow;
+            arrow.type = ObservationType::ArrowFound;
+            arrow.viewer = snapshot.player;
+            snapshot.observations.push_back(arrow);
+            break;
+        }
+    }
 
     AvailableAction moveKnown;
     moveKnown.type = ActionType::Move;

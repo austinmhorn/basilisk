@@ -32,6 +32,7 @@ public:
     [[nodiscard]] std::optional<std::size_t> selectedIndex() const noexcept;
     [[nodiscard]] const std::optional<AvailableAction>& draft() const noexcept;
     [[nodiscard]] bool locked() const noexcept;
+    [[nodiscard]] bool waitingForOtherHunter() const noexcept;
     [[nodiscard]] std::size_t scrollOffset() const noexcept;
     [[nodiscard]] bool canLock(const client::ClientViewContext& viewContext) const noexcept;
 

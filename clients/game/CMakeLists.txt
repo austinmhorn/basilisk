@@ -38,6 +38,7 @@ add_library(BasiliskGameActions STATIC
     src/ActionPresentation.cpp
     src/ActionSelection.cpp
     src/MapActionMenu.cpp
+    src/SnapshotPresentation.cpp
 )
 
 add_library(Basilisk::GameActions ALIAS BasiliskGameActions)

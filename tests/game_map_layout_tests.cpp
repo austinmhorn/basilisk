@@ -314,11 +314,36 @@ void routeSelectionUsesOnlyDiscoveredKnownConnections() {
             std::nullopt,
             UnknownExitKey{CaveId{1}, TunnelId{2}}}));
 
-    assert(selectRouteDestination(state, map, CaveId{8}));
+    assert(!selectRouteDestination(state, map, CaveId{8}));
     assert(state.route.status == client_navigation::KnownRouteStatus::Unreachable);
     assert(state.route.caves.empty());
 
     assert(selectRouteDestination(state, map, CaveId{1}));
+    assert(!state.routeDestination.has_value());
+    assert(state.route.caves.empty());
+}
+
+void snapshotMapRefreshClearsInvalidDestination() {
+    const PlayerMapView connected{
+        CaveId{1},
+        {
+            cave(1, {{TunnelId{1}, CaveId{2}}}),
+            cave(2, {
+                {TunnelId{1}, CaveId{1}},
+                {TunnelId{2}, CaveId{3}},
+            }),
+            cave(3, {{TunnelId{1}, CaveId{2}}}),
+        }};
+    MapPresentationState state;
+    assert(selectRouteDestination(state, connected, CaveId{3}));
+
+    const PlayerMapView destinationNoLongerVisible{
+        CaveId{2},
+        {
+            cave(1, {{TunnelId{1}, CaveId{2}}}),
+            cave(2, {{TunnelId{1}, CaveId{1}}}),
+        }};
+    refreshSelectedRoute(state, destinationNoLongerVisible);
     assert(!state.routeDestination.has_value());
     assert(state.route.caves.empty());
 }
@@ -416,5 +441,6 @@ int main() {
     routeSelectionUsesOnlyDiscoveredKnownConnections();
     routeEdgesContainOnlyConsecutivePlanCaves();
     destinationControlsMatchWebDebugGpsRules();
+    snapshotMapRefreshClearsInvalidDestination();
     std::cout << "game map layout tests passed\n";
 }

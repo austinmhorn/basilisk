@@ -7,6 +7,7 @@
 #include "ActionPresentation.hpp"
 #include "ActionSelection.hpp"
 #include "MapActionMenu.hpp"
+#include "SnapshotPresentation.hpp"
 
 using namespace basilisk;
 using namespace basilisk::game;
@@ -163,6 +164,7 @@ void successfulLockPreventsReplacement() {
     RecordingSink sink;
     assert(selection.submitAndLock(playingView(), sink));
     assert(selection.locked());
+    assert(selection.waitingForOtherHunter());
     assert(sink.submits == 1);
     assert(sink.locks == 1);
     assert(sink.submitted->type == ActionType::Search);
@@ -194,7 +196,47 @@ void newRoundClearsDraftAndLockedState() {
     assert(!selection.selectedIndex().has_value());
     assert(!selection.draft().has_value());
     assert(!selection.locked());
+    assert(!selection.waitingForOtherHunter());
     assert(selection.scrollOffset() == 0);
+}
+
+void objectivePresentationFollowsSnapshotOnly() {
+    PlayerRoundSnapshot snapshot;
+    assert(!secondaryObjectivePresentation(snapshot).has_value());
+
+    snapshot.recoverableRivalSigilAvailable = true;
+    auto objective = secondaryObjectivePresentation(snapshot);
+    assert(objective.has_value());
+    assert(objective->kind == SecondaryObjectiveKind::Recoverable);
+    assert(objective->title == "RECOVER HUNTER'S SIGIL");
+    assert(objective->status == "AVAILABLE");
+    assert(!objective->detail.has_value());
+
+    snapshot.hasHunterSigil = true;
+    objective = secondaryObjectivePresentation(snapshot);
+    assert(objective->kind == SecondaryObjectiveKind::Secured);
+    assert(objective->title == "HUNTER'S SIGIL");
+    assert(objective->status == "SECURED");
+    assert(objective->detail ==
+        "Extraction is active \xC2\xB7 location unavailable");
+
+    snapshot.extractionCave = CaveId{34};
+    objective = secondaryObjectivePresentation(snapshot);
+    assert(objective->detail == "Extraction at Cave 34");
+}
+
+void emptyAndPopulatedRoundReportsUsePlayerObservations() {
+    PlayerRoundSnapshot snapshot;
+    assert((roundReportText(snapshot) ==
+        std::vector<std::string>{"No new observations."}));
+
+    PlayerObservation observation;
+    observation.type = ObservationType::ArrowFound;
+    observation.viewer = PlayerId{1};
+    observation.amount = 1;
+    snapshot.observations.push_back(observation);
+    assert((roundReportText(snapshot) ==
+        std::vector<std::string>{"You found 1 arrow(s)."}));
 }
 
 void caveMenuUsesOnlyLiteralTargetMatches() {
@@ -366,6 +408,8 @@ int main() {
     successfulLockPreventsReplacement();
     lockFailureDoesNotShowLocked();
     newRoundClearsDraftAndLockedState();
+    objectivePresentationFollowsSnapshotOnly();
+    emptyAndPopulatedRoundReportsUsePlayerObservations();
     caveMenuUsesOnlyLiteralTargetMatches();
     mapMenuAndSidebarShareOneDraft();
     unknownExitMatchesTunnelWithoutDestination();

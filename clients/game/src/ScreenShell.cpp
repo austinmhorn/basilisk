@@ -7,6 +7,7 @@
 
 #include "ActionPresentation.hpp"
 #include "MapRenderer.hpp"
+#include "SnapshotPresentation.hpp"
 #include "UITheme.hpp"
 #include "basilisk/client/Presentation.hpp"
 
@@ -477,7 +478,7 @@ bool drawHeaderHud(
             "ARROWS", FontWeight::Bold, ui::Typography::hudLabel, ui::Theme::muted, hudX, top + 3.0F * scale)) {
         return false;
     }
-    for (int index = 0; index < 5; ++index) {
+    for (int index = 0; index < std::max(0, snapshot.maxArrows); ++index) {
         const float slotX = hudX + static_cast<float>(index) * 13.0F * scale;
         const SDL_FRect arrow{
             slotX,
@@ -528,14 +529,14 @@ bool drawHeaderHud(
         SDL_Color{52, 62, 71, SDL_ALPHA_OPAQUE},
         scale);
     const int occupied = static_cast<int>(snapshot.inventory.items.size());
-    for (int index = 0; index < 3; ++index) {
+    for (std::size_t index = 0; index < snapshot.inventory.capacity; ++index) {
         const SDL_FRect slot{
             packPill.x + (8.0F + static_cast<float>(index) * 23.0F) * scale,
             packPill.y + 6.0F * scale,
             16.0F * scale,
             16.0F * scale,
         };
-        if (index < occupied) {
+        if (index < static_cast<std::size_t>(occupied)) {
             drawPanel(
                 context.renderer,
                 slot,
@@ -634,7 +635,7 @@ bool drawObjectiveCard(
     const DrawingContext& context,
     SDL_FRect panel,
     bool primary,
-    std::optional<CaveId> extractionCave) {
+    const SecondaryObjectivePresentation* secondary) {
 
     const float scale = context.scale;
     const SDL_Color accent = primary ? ui::Theme::red : ui::Theme::gold;
@@ -654,7 +655,7 @@ bool drawObjectiveCard(
             panel.x + 14.0F * scale,
             panel.y + 13.0F * scale) ||
         !context.label(
-            primary ? "SLAY THE BASILISK" : "HUNTER'S SIGIL",
+            primary ? "SLAY THE BASILISK" : secondary->title,
             FontWeight::Bold,
             ui::Typography::objectiveTitle,
             ui::Theme::text,
@@ -671,7 +672,7 @@ bool drawObjectiveCard(
     };
     drawPanel(context.renderer, badge, 11.0F * scale, fill, border, scale);
     if (!context.centeredLabel(
-            primary ? "ACTIVE" : "SECURED",
+            primary ? "ACTIVE" : secondary->status,
             FontWeight::Bold,
             ui::Typography::objectiveStatus,
             accent,
@@ -702,17 +703,31 @@ bool drawObjectiveCard(
             fallback.y + fallback.h);
     }
 
-    if (!context.label(
-            primary ? "Find the Basilisk and end its reign." :
-                      "Carry the fallen hunter's Sigil to safety.",
-            FontWeight::Regular,
-            ui::Typography::objectiveBody,
-            ui::Theme::mutedBright,
-            panel.x + 61.0F * scale,
-            panel.y + 65.0F * scale)) {
-        return false;
+    if (primary) {
+        if (!context.label(
+                "Find the Basilisk and end its reign.",
+                FontWeight::Regular,
+                ui::Typography::objectiveBody,
+                ui::Theme::mutedBright,
+                panel.x + 61.0F * scale,
+                panel.y + 65.0F * scale)) {
+            return false;
+        }
+    } else {
+        for (std::size_t index = 0; index < secondary->bodyLines.size(); ++index) {
+            if (!context.label(
+                    secondary->bodyLines[index],
+                    FontWeight::Regular,
+                    ui::Typography::objectiveBody,
+                    ui::Theme::mutedBright,
+                    panel.x + 61.0F * scale,
+                    panel.y + (65.0F + static_cast<float>(index) * 15.0F) * scale)) {
+                return false;
+            }
+        }
     }
     if (!primary) {
+        if (!secondary->detail.has_value()) return true;
         const SDL_FRect extractionPanel{
             panel.x + 61.0F * scale,
             panel.y + 97.0F * scale,
@@ -726,11 +741,8 @@ bool drawObjectiveCard(
             SDL_Color{35, 31, 19, SDL_ALPHA_OPAQUE},
             SDL_Color{76, 61, 30, SDL_ALPHA_OPAQUE},
             scale);
-        const std::string extractionText = extractionCave.has_value()
-            ? "Extraction at Cave " + std::to_string(*extractionCave)
-            : "Extraction location unavailable";
         return context.label(
-            extractionText,
+            *secondary->detail,
             FontWeight::Medium,
             ui::Typography::objectiveState,
             SDL_Color{230, 216, 180, SDL_ALPHA_OPAQUE},
@@ -761,7 +773,8 @@ bool drawRoundReport(
         return false;
     }
 
-    const std::size_t visible = std::min<std::size_t>(3, snapshot.observations.size());
+    const std::vector<std::string> report = roundReportText(snapshot);
+    const std::size_t visible = std::min<std::size_t>(3, report.size());
     for (std::size_t index = 0; index < visible; ++index) {
         const SDL_FRect row{
             panel.x + 13.0F * scale,
@@ -781,7 +794,7 @@ bool drawRoundReport(
             2.0F * scale,
             ui::Theme::gold);
         if (!context.label(
-                presentation::observationText(snapshot.observations[index]),
+                report[index],
                 FontWeight::Regular,
                 ui::Typography::reportBody,
                 ui::Theme::mutedBright,
@@ -817,7 +830,7 @@ bool drawInventory(
 
     const float gap = 7.0F * scale;
     const float cardWidth = (panel.w - 33.0F * scale) * 0.5F;
-    for (std::size_t index = 0; index < 3; ++index) {
+    for (std::size_t index = 0; index < snapshot.inventory.capacity; ++index) {
         const float column = static_cast<float>(index % 2);
         const float row = static_cast<float>(index / 2);
         const SDL_FRect card{
@@ -909,11 +922,12 @@ bool drawAvailableActions(
         panel.w - 26.0F * scale,
         28.0F * scale,
     };
+    const float waitingSpace = selection.waitingForOtherHunter() ? 13.0F * scale : 0.0F;
     const SDL_FRect viewport{
         panel.x + 13.0F * scale,
         panel.y + 40.0F * scale,
         panel.w - 26.0F * scale,
-        std::max(0.0F, lockButton.y - panel.y - 47.0F * scale),
+        std::max(0.0F, lockButton.y - panel.y - 47.0F * scale - waitingSpace),
     };
     geometry.viewport = PresentationRect{
         viewport.x, viewport.y, viewport.w, viewport.h};
@@ -1030,6 +1044,18 @@ bool drawAvailableActions(
     const std::string_view buttonLabel = locked
         ? "LOCKED"
         : data.viewContext.canSubmitActions() ? "LOCK ACTION" : "VIEW ONLY";
+    if (selection.waitingForOtherHunter() && !context.centeredLabel(
+            "WAITING FOR OTHER HUNTER",
+            FontWeight::Medium,
+            ui::Typography::actionDetail,
+            ui::Theme::muted,
+            SDL_FRect{
+                lockButton.x,
+                lockButton.y - 14.0F * scale,
+                lockButton.w,
+                11.0F * scale})) {
+        return false;
+    }
     return context.centeredLabel(
         buttonLabel,
         FontWeight::Bold,
@@ -1052,12 +1078,18 @@ bool drawSidebar(
     float y = sidebar.y + 18.0F * scale;
 
     const SDL_FRect primary{x, y, width, 126.0F * scale};
-    if (!drawObjectiveCard(context, primary, true, std::nullopt)) return false;
+    if (!drawObjectiveCard(context, primary, true, nullptr)) return false;
     y += 136.0F * scale;
 
-    const SDL_FRect secondary{x, y, width, 134.0F * scale};
-    if (!drawObjectiveCard(context, secondary, false, snapshot.extractionCave)) return false;
-    y += 146.0F * scale;
+    const auto secondaryPresentation = secondaryObjectivePresentation(snapshot);
+    if (secondaryPresentation.has_value()) {
+        const SDL_FRect secondary{x, y, width, 134.0F * scale};
+        if (!drawObjectiveCard(
+                context, secondary, false, &*secondaryPresentation)) {
+            return false;
+        }
+        y += 146.0F * scale;
+    }
 
     const SDL_FRect report{x, y, width, 130.0F * scale};
     if (!drawRoundReport(context, snapshot, report)) return false;
@@ -1176,6 +1208,52 @@ bool drawMapActionMenu(
         }
     }
     return true;
+}
+
+bool drawMatchStateOverlay(
+    const DrawingContext& context,
+    const PlayerRoundSnapshot& snapshot,
+    SDL_FRect output) {
+
+    const auto presentation = matchStatePresentation(snapshot);
+    if (!presentation.has_value()) return true;
+
+    setColor(context.renderer, SDL_Color{4, 6, 8, 176});
+    SDL_RenderFillRect(context.renderer, &output);
+    const float scale = context.scale;
+    const SDL_FRect panel{
+        output.x + (output.w - 430.0F * scale) * 0.5F,
+        output.y + (output.h - 150.0F * scale) * 0.5F,
+        430.0F * scale,
+        150.0F * scale,
+    };
+    drawPanel(
+        context.renderer,
+        panel,
+        12.0F * scale,
+        ui::Theme::surface,
+        snapshot.alive ? ui::Theme::gold : ui::Theme::red,
+        scale);
+    return context.centeredLabel(
+               presentation->title,
+               FontWeight::Bold,
+               24.0F,
+               snapshot.alive ? ui::Theme::gold : ui::Theme::red,
+               SDL_FRect{
+                   panel.x + 20.0F * scale,
+                   panel.y + 26.0F * scale,
+                   panel.w - 40.0F * scale,
+                   34.0F * scale}) &&
+        context.centeredLabel(
+               presentation->detail,
+               FontWeight::Regular,
+               ui::Typography::objectiveBody,
+               ui::Theme::mutedBright,
+               SDL_FRect{
+                   panel.x + 20.0F * scale,
+                   panel.y + 76.0F * scale,
+                   panel.w - 40.0F * scale,
+                   42.0F * scale});
 }
 
 } // namespace
@@ -1369,12 +1447,15 @@ bool renderScreenShell(
         sidebar)) {
         return false;
     }
-    return drawMapActionMenu(
-        context,
-        snapshot,
-        mapActionMenu,
-        mapActionMenuGeometry,
-        mapGeometry.transform.bounds);
+    if (!drawMapActionMenu(
+            context,
+            snapshot,
+            mapActionMenu,
+            mapActionMenuGeometry,
+            mapGeometry.transform.bounds)) {
+        return false;
+    }
+    return drawMatchStateOverlay(context, snapshot, output);
 }
 
 } // namespace basilisk::game

@@ -93,6 +93,10 @@ bool ActionSelectionState::locked() const noexcept {
     return locked_;
 }
 
+bool ActionSelectionState::waitingForOtherHunter() const noexcept {
+    return locked_;
+}
+
 std::size_t ActionSelectionState::scrollOffset() const noexcept {
     return scrollOffset_;
 }

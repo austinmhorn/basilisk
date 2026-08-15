@@ -184,7 +184,7 @@ bool selectRouteDestination(
     if (!isDiscovered(map, destination)) return false;
     state.routeDestination = destination;
     refreshSelectedRoute(state, map);
-    return true;
+    return state.routeDestination == destination || destination == map.currentCave;
 }
 
 bool selectRouteFromHit(
@@ -242,7 +242,7 @@ void refreshSelectedRoute(
         return;
     }
     state.route = client_navigation::planKnownRoute(map, *state.routeDestination);
-    if (state.route.arrived()) {
+    if (state.route.status != client_navigation::KnownRouteStatus::Reachable) {
         state.routeDestination.reset();
         state.route = {};
     }

@@ -3,6 +3,7 @@
 #include <SDL3/SDL_main.h>
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <new>
 #include <optional>
@@ -31,6 +32,7 @@ struct AppState {
     std::unique_ptr<basilisk::game::SvgTextureManager> svgTextures;
     Uint8 backgroundBlue{24};
     bool demoMapEnabled{false};
+    std::size_t demoSnapshotStage{0};
 
     // Future gameplay presentation should consume this player-safe view,
     // rather than exposing the authoritative MatchState to the client.
@@ -158,6 +160,27 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
         !event->key.repeat && event->key.key == SDLK_ESCAPE) {
         state->mapActionMenu.dismiss();
+        return SDL_APP_CONTINUE;
+    }
+
+    if (state != nullptr && state->demoMapEnabled &&
+        event->type == SDL_EVENT_KEY_DOWN && !event->key.repeat &&
+        event->key.key == SDLK_F6) {
+        constexpr std::array stages{
+            basilisk::game::demo::DemoSnapshotStage::NormalStart,
+            basilisk::game::demo::DemoSnapshotStage::RecoverableSigil,
+            basilisk::game::demo::DemoSnapshotStage::SecuredSigilHiddenExtraction,
+            basilisk::game::demo::DemoSnapshotStage::SecuredSigilVisibleExtraction,
+            basilisk::game::demo::DemoSnapshotStage::NextRound,
+        };
+        state->demoSnapshotStage = (state->demoSnapshotStage + 1) % stages.size();
+        state->snapshot = basilisk::game::demo::makeDemoMapSnapshot(
+            stages[state->demoSnapshotStage]);
+        SDL_Log(
+            "Development snapshot stage %zu/%zu, round %u",
+            state->demoSnapshotStage + 1,
+            stages.size(),
+            static_cast<unsigned int>(state->snapshot.round));
         return SDL_APP_CONTINUE;
     }
 
