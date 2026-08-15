@@ -84,20 +84,25 @@ MapPresentationGeometry buildMapPresentationGeometry(
         std::unique(disconnectedPits.begin(), disconnectedPits.end()),
         disconnectedPits.end());
 
-    if (!disconnectedPits.empty()) {
+    if (fixedBounds.has_value()) {
+        for (const CaveId pit : disconnectedPits) {
+            if (const auto position =
+                    layout.temporarilyRevealedCavePosition(pit)) {
+                result.temporaryPitPositions.emplace(pit, *position);
+            }
+        }
+    } else if (!disconnectedPits.empty()) {
         const double totalWidth =
             static_cast<double>(disconnectedPits.size() - 1) * kTemporaryPitSpacing;
         const double startX =
             (logicalBounds.minimumX + logicalBounds.maximumX - totalWidth) * 0.5;
-        const double y = fixedBounds.has_value()
-            ? logicalBounds.maximumY - kTemporaryPitOffset
-            : logicalBounds.maximumY + kTemporaryPitOffset;
+        const double y = logicalBounds.maximumY + kTemporaryPitOffset;
         for (std::size_t index = 0; index < disconnectedPits.size(); ++index) {
             const LogicalPoint position{
                 startX + static_cast<double>(index) * kTemporaryPitSpacing,
                 y};
             result.temporaryPitPositions.emplace(disconnectedPits[index], position);
-            if (!fixedBounds.has_value()) include(logicalBounds, position);
+            include(logicalBounds, position);
         }
     }
 

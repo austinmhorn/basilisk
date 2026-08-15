@@ -19,6 +19,8 @@ namespace basilisk::game {
 namespace {
 
 constexpr PlayerId kLocalPlayer{1};
+constexpr double kWideMapTargetAspect = 1.4;
+constexpr double kMaximumHorizontalLayoutScale = 2.5;
 
 PlayerMapView fullPhysicalMap(const MatchState& state) {
     PlayerMapView map;
@@ -45,7 +47,12 @@ class LocalActionCommandSink final : public ActionCommandSink {
 public:
     explicit LocalActionCommandSink(MatchState state)
         : state_(std::move(state)), coordinator_(state_) {
-        fullLayout_.update(fullPhysicalMap(state_));
+        const PlayerMapView physicalMap = fullPhysicalMap(state_);
+        fullLayout_.update(physicalMap);
+        fullLayout_.finalizeFullLayout(
+            physicalMap,
+            kWideMapTargetAspect,
+            kMaximumHorizontalLayoutScale);
     }
 
     void attach(ClientSessionController& session) noexcept {
@@ -101,6 +108,11 @@ private:
                     geometry.unknownExitEndpoints.emplace(
                         MapExitKey{cave.cave, exit.id}, *endpoint);
                 }
+            }
+        }
+        for (const CaveId cave : snapshot.temporarilyRevealedPitCaves) {
+            if (const auto position = fullLayout_.cavePosition(cave)) {
+                geometry.temporarilyRevealedCaves.emplace(cave, *position);
             }
         }
         return session_->ingestSnapshot(

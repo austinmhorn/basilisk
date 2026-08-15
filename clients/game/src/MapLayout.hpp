@@ -34,23 +34,37 @@ struct MapExitKey {
 };
 
 // Player-safe projection of an immutable host-generated physical layout.
-// Only discovered CaveIds and exits already present in PlayerMapView receive
-// positions; fullBounds reveals presentation extent, not hidden topology.
+// Only discovered CaveIds, exits already present in PlayerMapView, and CaveIds
+// separately exposed by a temporary player-safe reveal receive positions;
+// fullBounds reveals presentation extent, not hidden topology.
 struct PlayerFixedMapGeometry {
     LogicalBounds fullBounds;
     std::map<CaveId, LogicalPoint> discoveredCaves;
     std::map<MapExitKey, LogicalPoint> unknownExitEndpoints;
+    // Only CaveIds already disclosed by a temporary player-safe reveal may
+    // appear here. They remain separate from permanent map discovery.
+    std::map<CaveId, LogicalPoint> temporarilyRevealedCaves;
 };
 
 class PlayerMapLayout {
 public:
     void update(const PlayerMapView& map);
+
+    // Host-side deterministic finalization for a complete physical layout.
+    // The topology is used only while generating fixed presentation geometry.
+    void finalizeFullLayout(
+        const PlayerMapView& fullMap,
+        double targetAspect,
+        double maximumHorizontalScale);
+
     void updateFixed(const PlayerFixedMapGeometry& geometry);
 
     [[nodiscard]] std::optional<LogicalPoint> cavePosition(CaveId cave) const;
     [[nodiscard]] std::optional<LogicalPoint> exitStubPosition(
         CaveId source,
         TunnelId tunnel) const;
+    [[nodiscard]] std::optional<LogicalPoint> temporarilyRevealedCavePosition(
+        CaveId cave) const;
     [[nodiscard]] std::optional<LogicalBounds> fixedBounds() const noexcept;
     [[nodiscard]] LogicalBounds positionedBounds() const noexcept;
 
@@ -64,6 +78,7 @@ private:
     std::map<CaveId, LogicalPoint> cavePositions_;
     std::map<MapExitKey, LogicalPoint> exitDirections_;
     std::map<MapExitKey, LogicalPoint> fixedExitEndpoints_;
+    std::map<CaveId, LogicalPoint> temporarilyRevealedCavePositions_;
     std::optional<LogicalBounds> fixedBounds_;
 };
 

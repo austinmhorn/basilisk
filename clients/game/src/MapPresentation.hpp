@@ -58,9 +58,8 @@ struct MapHitTarget {
 struct MapPresentationGeometry {
     MapTransform transform;
 
-    // An undiscovered temporary Pit has an exact player-safe CaveId but no
-    // player-safe geometry. These disconnected positions are presentation
-    // slots only: they never become map edges, discovery, or route nodes.
+    // Temporary Pit positions remain presentation overlays. They never become
+    // map edges, discovery, or route nodes.
     std::map<CaveId, LogicalPoint> temporaryPitPositions;
 };
 

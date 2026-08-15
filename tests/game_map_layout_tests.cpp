@@ -1,11 +1,15 @@
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <initializer_list>
 #include <iostream>
+#include <limits>
 #include <optional>
+#include <utility>
 
 #include "MapLayout.hpp"
 #include "MapPresentation.hpp"
+#include "basilisk/world/MapGenerator.hpp"
 
 using namespace basilisk;
 using namespace basilisk::game;
@@ -60,6 +64,168 @@ double dot(LogicalPoint a, LogicalPoint b) {
 
 LogicalPoint subtract(LogicalPoint a, LogicalPoint b) {
     return {a.x - b.x, a.y - b.y};
+}
+
+PlayerMapView fullPhysicalMap(const MatchState& state) {
+    PlayerMapView map;
+    map.currentCave = state.world.caveIds().front();
+    for (const CaveId caveId : state.world.caveIds()) {
+        DiscoveredCaveView view;
+        view.cave = caveId;
+        const auto& connections = state.world.cave(caveId).connections;
+        for (std::size_t index = 0; index < connections.size(); ++index) {
+            view.exits.push_back(TunnelView{
+                static_cast<TunnelId>(index + 1),
+                connections[index],
+            });
+        }
+        map.caves.push_back(std::move(view));
+    }
+    return map;
+}
+
+double minimumCaveSeparation(
+    const PlayerMapLayout& layout,
+    const PlayerMapView& map) {
+
+    double minimum = std::numeric_limits<double>::max();
+    for (std::size_t first = 0; first < map.caves.size(); ++first) {
+        for (std::size_t second = first + 1; second < map.caves.size(); ++second) {
+            minimum = std::min(
+                minimum,
+                std::sqrt(distanceSquared(
+                    requireCave(layout, map.caves[first].cave),
+                    requireCave(layout, map.caves[second].cave))));
+        }
+    }
+    return minimum;
+}
+
+std::pair<double, double> connectedEdgeLengths(
+    const PlayerMapLayout& layout,
+    const PlayerMapView& map) {
+
+    double total = 0.0;
+    double maximum = 0.0;
+    std::size_t count = 0;
+    for (const DiscoveredCaveView& caveView : map.caves) {
+        for (const TunnelView& exit : caveView.exits) {
+            if (!exit.destination.has_value() ||
+                caveView.cave >= *exit.destination) {
+                continue;
+            }
+            const double length = std::sqrt(distanceSquared(
+                requireCave(layout, caveView.cave),
+                requireCave(layout, *exit.destination)));
+            total += length;
+            maximum = std::max(maximum, length);
+            ++count;
+        }
+    }
+    return {total / static_cast<double>(count), maximum};
+}
+
+using CaveEdge = std::pair<CaveId, CaveId>;
+
+std::vector<CaveEdge> knownEdges(const PlayerMapView& map) {
+    std::vector<CaveEdge> edges;
+    for (const DiscoveredCaveView& caveView : map.caves) {
+        for (const TunnelView& exit : caveView.exits) {
+            if (exit.destination.has_value() &&
+                caveView.cave < *exit.destination) {
+                edges.emplace_back(caveView.cave, *exit.destination);
+            }
+        }
+    }
+    return edges;
+}
+
+double pointSegmentDistance(
+    LogicalPoint point,
+    LogicalPoint start,
+    LogicalPoint end) {
+
+    const LogicalPoint segment = subtract(end, start);
+    const double lengthSquared = distanceSquared(start, end);
+    if (lengthSquared <= kTolerance) {
+        return std::sqrt(distanceSquared(point, start));
+    }
+    const double projection = std::clamp(
+        dot(subtract(point, start), segment) / lengthSquared,
+        0.0,
+        1.0);
+    const LogicalPoint closest{
+        start.x + segment.x * projection,
+        start.y + segment.y * projection,
+    };
+    return std::sqrt(distanceSquared(point, closest));
+}
+
+double minimumNonIncidentNodeEdgeDistance(
+    const PlayerMapLayout& layout,
+    const PlayerMapView& map) {
+
+    double minimum = std::numeric_limits<double>::max();
+    for (const CaveEdge& edge : knownEdges(map)) {
+        const LogicalPoint start = requireCave(layout, edge.first);
+        const LogicalPoint end = requireCave(layout, edge.second);
+        for (const DiscoveredCaveView& caveView : map.caves) {
+            if (caveView.cave == edge.first || caveView.cave == edge.second) {
+                continue;
+            }
+            minimum = std::min(
+                minimum,
+                pointSegmentDistance(
+                    requireCave(layout, caveView.cave), start, end));
+        }
+    }
+    return minimum;
+}
+
+int orientation(LogicalPoint a, LogicalPoint b, LogicalPoint c) {
+    const double value = cross(subtract(b, a), subtract(c, a));
+    if (value > kTolerance) return 1;
+    if (value < -kTolerance) return -1;
+    return 0;
+}
+
+bool edgesCross(
+    LogicalPoint firstStart,
+    LogicalPoint firstEnd,
+    LogicalPoint secondStart,
+    LogicalPoint secondEnd) {
+
+    const int a = orientation(firstStart, firstEnd, secondStart);
+    const int b = orientation(firstStart, firstEnd, secondEnd);
+    const int c = orientation(secondStart, secondEnd, firstStart);
+    const int d = orientation(secondStart, secondEnd, firstEnd);
+    return a * b < 0 && c * d < 0;
+}
+
+std::size_t edgeCrossingCount(
+    const PlayerMapLayout& layout,
+    const PlayerMapView& map) {
+
+    const std::vector<CaveEdge> edges = knownEdges(map);
+    std::size_t crossings = 0;
+    for (std::size_t first = 0; first < edges.size(); ++first) {
+        for (std::size_t second = first + 1; second < edges.size(); ++second) {
+            const CaveEdge& a = edges[first];
+            const CaveEdge& b = edges[second];
+            if (a.first == b.first || a.first == b.second ||
+                a.second == b.first || a.second == b.second) {
+                continue;
+            }
+            if (edgesCross(
+                    requireCave(layout, a.first),
+                    requireCave(layout, a.second),
+                    requireCave(layout, b.first),
+                    requireCave(layout, b.second))) {
+                ++crossings;
+            }
+        }
+    }
+    return crossings;
 }
 
 void initialPlacementUsesCurrentCaveAsOrigin() {
@@ -213,6 +379,51 @@ void repeatedUpdateIsIdentical() {
     assert(requireStub(layout, CaveId{1}, TunnelId{2}) == stub);
 }
 
+void denseFullMapLayoutIsDeterministicAndSeparated() {
+    const MatchState state = MapGenerator::generate(
+        MapSeed{20260812}, MatchSeed{424242});
+    const PlayerMapView map = fullPhysicalMap(state);
+    PlayerMapLayout raw;
+    PlayerMapLayout first;
+    PlayerMapLayout second;
+    raw.update(map);
+    first.update(map);
+    first.finalizeFullLayout(map, 1.4, 2.5);
+    second.update(map);
+    second.finalizeFullLayout(map, 1.4, 2.5);
+
+    for (const DiscoveredCaveView& caveView : map.caves) {
+        assert(requireCave(first, caveView.cave) ==
+               requireCave(second, caveView.cave));
+    }
+    const MapPresentationGeometry geometry = buildMapPresentationGeometry(
+        map, first, {}, {0.0, 0.0, 1000.0, 700.0}, 50.0, 1.0);
+    const auto [averageEdge, maximumEdge] = connectedEdgeLengths(first, map);
+    const double minimum = minimumCaveSeparation(first, map);
+    const double minimumNodeEdge =
+        minimumNonIncidentNodeEdgeDistance(first, map);
+    const std::size_t crossings = edgeCrossingCount(first, map);
+    const std::size_t unrelaxedCrossings = edgeCrossingCount(raw, map);
+    const LogicalBounds rawBounds = raw.positionedBounds();
+    const LogicalBounds balancedBounds = first.positionedBounds();
+    const double rawAspect =
+        (rawBounds.maximumX - rawBounds.minimumX) /
+        (rawBounds.maximumY - rawBounds.minimumY);
+    const double balancedAspect =
+        (balancedBounds.maximumX - balancedBounds.minimumX) /
+        (balancedBounds.maximumY - balancedBounds.minimumY);
+    assert(rawAspect < 1.0);
+    assert(std::abs(balancedAspect - 1.4) <= kTolerance);
+    assert(minimum >= 4.0);
+    assert(minimum * geometry.transform.pixelsPerLogicalUnit >= 35.0);
+    assert(minimumNodeEdge >= 2.0);
+    assert(crossings < unrelaxedCrossings);
+    assert(crossings <= 30);
+    assert(averageEdge <= 12.0);
+    assert(maximumEdge <= 25.0);
+
+}
+
 void fixedGeometryKeepsDiscoveryAndViewportStable() {
     const LogicalBounds fullBounds{-8.0, -6.0, 10.0, 7.0, true};
     PlayerFixedMapGeometry initial;
@@ -252,6 +463,83 @@ void fixedGeometryKeepsDiscoveryAndViewportStable() {
     assert(frameBefore.transform.logicalCenter == frameAfter.transform.logicalCenter);
     assert(frameBefore.transform.pixelsPerLogicalUnit ==
            frameAfter.transform.pixelsPerLogicalUnit);
+}
+
+void fixedPitRevealOverlaysUnknownEndpointThenExpires() {
+    const LogicalPoint caveSixPosition{-4.0, 1.0};
+    const LogicalPoint hiddenCaveSevenPosition{5.0, -2.0};
+    PlayerFixedMapGeometry fixed;
+    fixed.fullBounds = {-12.0, -8.0, 12.0, 8.0, true};
+    fixed.discoveredCaves.emplace(CaveId{6}, caveSixPosition);
+    fixed.unknownExitEndpoints.emplace(
+        MapExitKey{CaveId{6}, TunnelId{2}}, hiddenCaveSevenPosition);
+
+    PlayerMapLayout layout;
+    layout.updateFixed(fixed);
+    const PlayerMapView playerMap{
+        CaveId{6},
+        {DiscoveredCaveView{
+            CaveId{6},
+            {TunnelView{TunnelId{2}, std::nullopt, true}},
+        }},
+    };
+    const MapPresentationGeometry hidden = buildMapPresentationGeometry(
+        playerMap,
+        layout,
+        {},
+        {0.0, 0.0, 900.0, 600.0},
+        40.0,
+        1.0);
+
+    assert(!layout.cavePosition(CaveId{7}).has_value());
+    assert(requireStub(layout, CaveId{6}, TunnelId{2}) ==
+           hiddenCaveSevenPosition);
+    assert(playerMap.caves.front().exits.front().strongColdDraft);
+    assert(hidden.temporaryPitPositions.empty());
+    const MapHitTarget hit = hitTestPlayerKnownMap(
+        playerMap,
+        layout,
+        hidden,
+        projectMapPoint(hiddenCaveSevenPosition, hidden.transform));
+    assert(hit.kind == MapHitKind::UnknownExit);
+    assert((hit.unknownExit ==
+            UnknownExitKey{CaveId{6}, TunnelId{2}}));
+    assert(!hit.cave.has_value());
+
+    PlayerFixedMapGeometry revealed = fixed;
+    revealed.temporarilyRevealedCaves.emplace(
+        CaveId{7}, hiddenCaveSevenPosition);
+    layout.updateFixed(revealed);
+    const MapPresentationGeometry visible = buildMapPresentationGeometry(
+        playerMap,
+        layout,
+        {CaveId{7}},
+        {0.0, 0.0, 900.0, 600.0},
+        40.0,
+        1.0);
+    assert(!layout.cavePosition(CaveId{7}).has_value());
+    assert(visible.temporaryPitPositions.at(CaveId{7}) ==
+           hiddenCaveSevenPosition);
+    assert(visible.transform.logicalCenter == hidden.transform.logicalCenter);
+    assert(visible.transform.pixelsPerLogicalUnit ==
+           hidden.transform.pixelsPerLogicalUnit);
+
+    layout.updateFixed(fixed);
+    const MapPresentationGeometry expired = buildMapPresentationGeometry(
+        playerMap,
+        layout,
+        {},
+        {0.0, 0.0, 900.0, 600.0},
+        40.0,
+        1.0);
+    assert(expired.temporaryPitPositions.empty());
+    assert(!layout.temporarilyRevealedCavePosition(CaveId{7}).has_value());
+    assert(!layout.cavePosition(CaveId{7}).has_value());
+    assert(requireStub(layout, CaveId{6}, TunnelId{2}) ==
+           hiddenCaveSevenPosition);
+    assert(expired.transform.logicalCenter == hidden.transform.logicalCenter);
+    assert(expired.transform.pixelsPerLogicalUnit ==
+           hidden.transform.pixelsPerLogicalUnit);
 }
 
 PlayerMapView presentationMap() {
@@ -637,7 +925,9 @@ int main() {
     disconnectedComponentsReceiveDeterministicPositions();
     undiscoveredEndpointIsIgnored();
     repeatedUpdateIsIdentical();
+    denseFullMapLayoutIsDeterministicAndSeparated();
     fixedGeometryKeepsDiscoveryAndViewportStable();
+    fixedPitRevealOverlaysUnknownEndpointThenExpires();
     framingContainsOnlyPlayerKnownPresentationPoints();
     hitTestingDistinguishesCavesAndUnknownExits();
     overlappingUnknownExitPrefersCurrentCaveProvenance();
