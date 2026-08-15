@@ -30,6 +30,7 @@ PlayerRoundSnapshot makeDemoMapSnapshot() {
     snapshot.inventory.capacity = 3;
     snapshot.hasHunterSigil = true;
     snapshot.extractionCave = CaveId{34};
+    snapshot.temporarilyRevealedPitCaves = {CaveId{39}};
     snapshot.currentCave = CaveId{7};
     snapshot.map.currentCave = snapshot.currentCave;
     snapshot.map.caves = {
@@ -45,7 +46,6 @@ PlayerRoundSnapshot makeDemoMapSnapshot() {
             {
                 knownExit(TunnelId{1}, CaveId{7}),
                 unknownExit(TunnelId{4}, true),
-                knownExit(TunnelId{7}, CaveId{21}),
             }},
         DiscoveredCaveView{
             CaveId{16},
@@ -53,11 +53,12 @@ PlayerRoundSnapshot makeDemoMapSnapshot() {
                 knownExit(TunnelId{1}, CaveId{7}),
                 knownExit(TunnelId{8}, CaveId{28}),
                 unknownExit(TunnelId{11}),
+                knownExit(TunnelId{12}, CaveId{21}),
             }},
         DiscoveredCaveView{
             CaveId{21},
             {
-                knownExit(TunnelId{1}, CaveId{12}),
+                knownExit(TunnelId{1}, CaveId{16}),
                 knownExit(TunnelId{5}, CaveId{28}),
                 unknownExit(TunnelId{9}),
             }},

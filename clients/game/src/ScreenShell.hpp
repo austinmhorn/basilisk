@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "MapLayout.hpp"
+#include "MapPresentation.hpp"
 #include "TextRenderer.hpp"
 #include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/PublicMatchMetadata.hpp"
@@ -35,6 +36,8 @@ struct ScreenShellData {
     TextRenderer& textRenderer,
     const PlayerRoundSnapshot& snapshot,
     PlayerMapLayout& mapLayout,
+    MapPresentationState& mapPresentation,
+    MapPresentationGeometry& mapGeometry,
     const ScreenShellData& data,
     int outputWidth,
     int outputHeight,

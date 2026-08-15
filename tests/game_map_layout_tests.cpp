@@ -5,6 +5,7 @@
 #include <optional>
 
 #include "MapLayout.hpp"
+#include "MapPresentation.hpp"
 
 using namespace basilisk;
 using namespace basilisk::game;
@@ -212,6 +213,149 @@ void repeatedUpdateIsIdentical() {
     assert(requireStub(layout, CaveId{1}, TunnelId{2}) == stub);
 }
 
+PlayerMapView presentationMap() {
+    return PlayerMapView{
+        CaveId{1},
+        {
+            cave(1, {
+                {TunnelId{1}, CaveId{2}},
+                {TunnelId{2}, std::nullopt},
+            }),
+            cave(2, {
+                {TunnelId{1}, CaveId{1}},
+                {TunnelId{2}, CaveId{3}},
+            }),
+            cave(3, {{TunnelId{1}, CaveId{2}}}),
+            cave(8, {}),
+        }};
+}
+
+void framingContainsOnlyPlayerKnownPresentationPoints() {
+    PlayerMapLayout layout;
+    const PlayerMapView map = presentationMap();
+    layout.update(map);
+    const PresentationRect bounds{20.0, 30.0, 900.0, 600.0};
+    const MapPresentationGeometry geometry = buildMapPresentationGeometry(
+        map, layout, {CaveId{99}}, bounds, 50.0, 1.0);
+
+    assert(geometry.transform.pixelsPerLogicalUnit > 1.0);
+    for (const DiscoveredCaveView& view : map.caves) {
+        const PresentationPoint point = projectMapPoint(
+            requireCave(layout, view.cave), geometry.transform);
+        assert(point.x >= bounds.x + 50.0 - kTolerance &&
+               point.x <= bounds.x + bounds.width - 50.0 + kTolerance);
+        assert(point.y >= bounds.y + 50.0 - kTolerance &&
+               point.y <= bounds.y + bounds.height - 50.0 + kTolerance);
+    }
+    assert(geometry.temporaryPitPositions.contains(CaveId{99}));
+    assert(!layout.cavePosition(CaveId{99}).has_value());
+
+    const PresentationPoint pitPoint = projectMapPoint(
+        geometry.temporaryPitPositions.at(CaveId{99}), geometry.transform);
+    assert(hitTestPlayerKnownMap(map, layout, geometry, pitPoint).kind ==
+           MapHitKind::None);
+
+    const MapPresentationGeometry resized = buildMapPresentationGeometry(
+        map, layout, {CaveId{99}}, {0.0, 0.0, 600.0, 400.0}, 40.0, 1.0);
+    assert(resized.transform.pixelsPerLogicalUnit <
+           geometry.transform.pixelsPerLogicalUnit);
+}
+
+void hitTestingDistinguishesCavesAndUnknownExits() {
+    PlayerMapLayout layout;
+    const PlayerMapView map = presentationMap();
+    layout.update(map);
+    const MapPresentationGeometry geometry = buildMapPresentationGeometry(
+        map, layout, {}, {0.0, 0.0, 800.0, 600.0}, 40.0, 1.0);
+
+    const MapHitTarget caveHit = hitTestPlayerKnownMap(
+        map,
+        layout,
+        geometry,
+        projectMapPoint(requireCave(layout, CaveId{2}), geometry.transform));
+    assert(caveHit.kind == MapHitKind::DiscoveredCave);
+    assert(caveHit.cave == CaveId{2});
+
+    MapPresentationState hover;
+    updateMapHover(hover, caveHit);
+    assert(hover.hoveredCave == CaveId{2});
+    assert(!hover.hoveredUnknownExit.has_value());
+
+    const MapHitTarget exitHit = hitTestPlayerKnownMap(
+        map,
+        layout,
+        geometry,
+        projectMapPoint(
+            requireStub(layout, CaveId{1}, TunnelId{2}),
+            geometry.transform));
+    assert(exitHit.kind == MapHitKind::UnknownExit);
+    assert((exitHit.unknownExit == UnknownExitKey{CaveId{1}, TunnelId{2}}));
+    updateMapHover(hover, exitHit);
+    assert(!hover.hoveredCave.has_value());
+    assert(hover.hoveredUnknownExit == exitHit.unknownExit);
+}
+
+void routeSelectionUsesOnlyDiscoveredKnownConnections() {
+    PlayerMapLayout layout;
+    const PlayerMapView map = presentationMap();
+    layout.update(map);
+    MapPresentationState state;
+
+    assert(selectRouteDestination(state, map, CaveId{3}));
+    assert(state.route.status == client_navigation::KnownRouteStatus::Reachable);
+    assert((state.route.caves == std::vector<CaveId>{1, 2, 3}));
+
+    assert(!selectRouteDestination(state, map, CaveId{99}));
+    assert(!selectRouteFromHit(
+        state,
+        map,
+        MapHitTarget{
+            MapHitKind::UnknownExit,
+            std::nullopt,
+            UnknownExitKey{CaveId{1}, TunnelId{2}}}));
+
+    assert(selectRouteDestination(state, map, CaveId{8}));
+    assert(state.route.status == client_navigation::KnownRouteStatus::Unreachable);
+    assert(state.route.caves.empty());
+
+    assert(selectRouteDestination(state, map, CaveId{1}));
+    assert(!state.routeDestination.has_value());
+    assert(state.route.caves.empty());
+}
+
+void routeEdgesContainOnlyConsecutivePlanCaves() {
+    const PlayerMapView map{
+        CaveId{7},
+        {
+            cave(7, {
+                {TunnelId{1}, CaveId{12}},
+                {TunnelId{2}, CaveId{16}},
+            }),
+            cave(12, {{TunnelId{1}, CaveId{7}}}),
+            cave(16, {
+                {TunnelId{1}, CaveId{7}},
+                {TunnelId{2}, CaveId{21}},
+            }),
+            cave(21, {{TunnelId{1}, CaveId{16}}}),
+        }};
+    MapPresentationState state;
+
+    assert(selectRouteDestination(state, map, CaveId{21}));
+    assert((state.route.caves == std::vector<CaveId>{7, 16, 21}));
+    const RouteEdgeSet cave21Edges = routeEdges(state.route);
+    assert(containsRouteEdge(cave21Edges, CaveId{7}, CaveId{16}));
+    assert(containsRouteEdge(cave21Edges, CaveId{16}, CaveId{7}));
+    assert(containsRouteEdge(cave21Edges, CaveId{16}, CaveId{21}));
+    assert(!containsRouteEdge(cave21Edges, CaveId{7}, CaveId{12}));
+
+    assert(selectRouteDestination(state, map, CaveId{12}));
+    assert((state.route.caves == std::vector<CaveId>{7, 12}));
+    const RouteEdgeSet cave12Edges = routeEdges(state.route);
+    assert(containsRouteEdge(cave12Edges, CaveId{7}, CaveId{12}));
+    assert(!containsRouteEdge(cave12Edges, CaveId{7}, CaveId{16}));
+    assert(!containsRouteEdge(cave12Edges, CaveId{16}, CaveId{21}));
+}
+
 } // namespace
 
 int main() {
@@ -223,5 +367,9 @@ int main() {
     disconnectedComponentsReceiveDeterministicPositions();
     undiscoveredEndpointIsIgnored();
     repeatedUpdateIsIdentical();
+    framingContainsOnlyPlayerKnownPresentationPoints();
+    hitTestingDistinguishesCavesAndUnknownExits();
+    routeSelectionUsesOnlyDiscoveredKnownConnections();
+    routeEdgesContainOnlyConsecutivePlanCaves();
     std::cout << "game map layout tests passed\n";
 }

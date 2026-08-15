@@ -962,6 +962,8 @@ bool renderScreenShell(
     TextRenderer& textRenderer,
     const PlayerRoundSnapshot& snapshot,
     PlayerMapLayout& mapLayout,
+    MapPresentationState& mapPresentation,
+    MapPresentationGeometry& mapGeometry,
     const ScreenShellData& data,
     int outputWidth,
     int outputHeight,
@@ -1053,13 +1055,30 @@ bool renderScreenShell(
         std::max(0, static_cast<int>(mapContent.h)),
     };
     SDL_SetRenderClipRect(renderer, &clip);
-    const MapViewport viewport{
-        inset(mapContent, 18.0F * scale),
-        LogicalPoint{},
-        42.0F * scale,
-    };
-    renderPlayerKnownMap(
-        renderer, snapshot.map, mapLayout, snapshot.currentCave, viewport);
+    const SDL_FRect mapBounds = inset(mapContent, 18.0F * scale);
+    mapGeometry = buildMapPresentationGeometry(
+        snapshot.map,
+        mapLayout,
+        snapshot.temporarilyRevealedPitCaves,
+        PresentationRect{
+            mapBounds.x,
+            mapBounds.y,
+            mapBounds.w,
+            mapBounds.h},
+        40.0F * scale,
+        scale);
+    refreshSelectedRoute(mapPresentation, snapshot.map);
+    if (!renderPlayerKnownMap(
+            renderer,
+            textRenderer,
+            snapshot,
+            mapLayout,
+            mapGeometry,
+            mapPresentation,
+            error)) {
+        SDL_SetRenderClipRect(renderer, nullptr);
+        return false;
+    }
     SDL_SetRenderClipRect(renderer, nullptr);
 
     if (!drawHeaderHud(context, snapshot, data, headerHeight)) return false;

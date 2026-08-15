@@ -2,21 +2,22 @@
 
 #include <SDL3/SDL.h>
 
+#include <string>
+
 #include "MapLayout.hpp"
+#include "MapPresentation.hpp"
+#include "TextRenderer.hpp"
+#include "basilisk/ClientSnapshot.hpp"
 
 namespace basilisk::game {
 
-struct MapViewport {
-    SDL_FRect bounds{};
-    LogicalPoint logicalCenter{};
-    float scale{1.0F};
-};
-
-void renderPlayerKnownMap(
+[[nodiscard]] bool renderPlayerKnownMap(
     SDL_Renderer* renderer,
-    const PlayerMapView& map,
+    TextRenderer& textRenderer,
+    const PlayerRoundSnapshot& snapshot,
     const PlayerMapLayout& layout,
-    CaveId currentCave,
-    const MapViewport& viewport);
+    const MapPresentationGeometry& geometry,
+    const MapPresentationState& presentation,
+    std::string& error);
 
 } // namespace basilisk::game

@@ -11,6 +11,7 @@
 #include "DemoMap.hpp"
 #include "DemoUi.hpp"
 #include "MapRenderer.hpp"
+#include "MapPresentation.hpp"
 #include "ScreenShell.hpp"
 #include "TextRenderer.hpp"
 #include "basilisk/ClientSnapshot.hpp"
@@ -29,6 +30,8 @@ struct AppState {
     // rather than exposing the authoritative MatchState to the client.
     basilisk::PlayerRoundSnapshot snapshot{};
     basilisk::game::PlayerMapLayout mapLayout;
+    basilisk::game::MapPresentationState mapPresentation;
+    basilisk::game::MapPresentationGeometry mapGeometry;
     basilisk::game::ScreenShellData demoScreenData;
 };
 
@@ -53,6 +56,8 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
             std::string_view{argv[index]} == "--demo-map") {
             state->snapshot = basilisk::game::demo::makeDemoMapSnapshot();
             state->demoScreenData = basilisk::game::demo::makeDemoScreenShellData();
+            (void)basilisk::game::selectRouteDestination(
+                state->mapPresentation, state->snapshot.map, basilisk::CaveId{34});
             state->demoMapEnabled = true;
             SDL_Log("Development demo map enabled");
             break;
@@ -116,9 +121,35 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
     return SDL_APP_CONTINUE;
 }
 
-SDL_AppResult SDL_AppEvent(void*, SDL_Event* event) {
+SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
+    auto* state = static_cast<AppState*>(appstate);
     if (event->type == SDL_EVENT_QUIT) {
         return SDL_APP_SUCCESS;
+    }
+
+    if (state != nullptr &&
+        (event->type == SDL_EVENT_MOUSE_MOTION ||
+         event->type == SDL_EVENT_MOUSE_BUTTON_DOWN)) {
+        if (!SDL_ConvertEventToRenderCoordinates(state->renderer, event)) {
+            SDL_Log("Unable to convert pointer coordinates: %s", SDL_GetError());
+            return SDL_APP_FAILURE;
+        }
+        const basilisk::game::PresentationPoint pointer =
+            event->type == SDL_EVENT_MOUSE_MOTION
+            ? basilisk::game::PresentationPoint{event->motion.x, event->motion.y}
+            : basilisk::game::PresentationPoint{event->button.x, event->button.y};
+        const basilisk::game::MapHitTarget hit =
+            basilisk::game::hitTestPlayerKnownMap(
+                state->snapshot.map,
+                state->mapLayout,
+                state->mapGeometry,
+                pointer);
+        basilisk::game::updateMapHover(state->mapPresentation, hit);
+        if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+            event->button.button == SDL_BUTTON_LEFT) {
+            (void)basilisk::game::selectRouteFromHit(
+                state->mapPresentation, state->snapshot.map, hit);
+        }
     }
     return SDL_APP_CONTINUE;
 }
@@ -140,6 +171,8 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     *state->textRenderer,
                     state->snapshot,
                     state->mapLayout,
+                    state->mapPresentation,
+                    state->mapGeometry,
                     state->demoScreenData,
                     outputWidth,
                     outputHeight,
@@ -150,20 +183,32 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         } else {
             state->mapLayout.update(state->snapshot.map);
             constexpr float padding = 24.0F;
-            const basilisk::game::MapViewport viewport{
-                SDL_FRect{
-                    padding,
-                    padding,
-                    std::max(0.0F, static_cast<float>(outputWidth) - padding * 2.0F),
-                    std::max(0.0F, static_cast<float>(outputHeight) - padding * 2.0F)},
-                basilisk::game::LogicalPoint{},
-                42.0F};
-            basilisk::game::renderPlayerKnownMap(
-                state->renderer,
+            const basilisk::game::PresentationRect bounds{
+                padding,
+                padding,
+                std::max(0.0F, static_cast<float>(outputWidth) - padding * 2.0F),
+                std::max(0.0F, static_cast<float>(outputHeight) - padding * 2.0F)};
+            const double pixelDensity = std::max(
+                1.0, static_cast<double>(SDL_GetWindowPixelDensity(state->window)));
+            state->mapGeometry = basilisk::game::buildMapPresentationGeometry(
                 state->snapshot.map,
                 state->mapLayout,
-                state->snapshot.currentCave,
-                viewport);
+                state->snapshot.temporarilyRevealedPitCaves,
+                bounds,
+                padding,
+                pixelDensity);
+            std::string mapError;
+            if (!basilisk::game::renderPlayerKnownMap(
+                    state->renderer,
+                    *state->textRenderer,
+                    state->snapshot,
+                    state->mapLayout,
+                    state->mapGeometry,
+                    state->mapPresentation,
+                    mapError)) {
+                SDL_Log("Map rendering failed: %s", mapError.c_str());
+                return SDL_APP_FAILURE;
+            }
         }
     }
 

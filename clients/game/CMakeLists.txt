@@ -2,6 +2,7 @@ include(FetchContent)
 
 add_library(BasiliskGameMapLayout STATIC
     src/MapLayout.cpp
+    src/MapPresentation.cpp
 )
 
 add_library(Basilisk::GameMapLayout ALIAS BasiliskGameMapLayout)
@@ -11,7 +12,12 @@ target_include_directories(BasiliskGameMapLayout
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(BasiliskGameMapLayout PUBLIC Basilisk::Core)
+target_link_libraries(
+    BasiliskGameMapLayout
+    PUBLIC
+        Basilisk::Core
+        Basilisk::ClientNavigation
+)
 target_compile_features(BasiliskGameMapLayout PUBLIC cxx_std_20)
 
 # SDL is implemented in C, while Basilisk Core itself only requires C++.
