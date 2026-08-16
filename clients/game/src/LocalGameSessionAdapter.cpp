@@ -101,6 +101,24 @@ public:
         truth.tunnels.assign(tunnels.begin(), tunnels.end());
         return truth;
     }
+
+    [[nodiscard]] debug::DebugGameplayTruth debugGameplayTruth() const {
+        debug::DebugGameplayTruth truth;
+        truth.basiliskCave = state_.basilisk.cave;
+        truth.basiliskBehavior = state_.basilisk.behavior;
+        truth.basiliskLastCave = state_.basilisk.lastCave;
+        truth.basiliskEncounterCount = state_.basilisk.trueEncounters;
+        truth.territorialSearchTarget = state_.mostRecentSearchCave;
+        truth.pitCaves.reserve(state_.pits.size());
+        for (const PitState& pit : state_.pits) {
+            truth.pitCaves.push_back(pit.cave);
+        }
+        truth.jackalCaves.reserve(state_.jackals.size());
+        for (const JackalState& jackal : state_.jackals) {
+            truth.jackalCaves.push_back(jackal.cave);
+        }
+        return truth;
+    }
 #endif
 
 private:
@@ -209,7 +227,10 @@ LocalGameSessionAdapter::DebugSession LocalGameSessionAdapter::createDebug(
     LocalSessionAssembly assembly = createLocalSession(mapSeed, matchSeed);
     if (assembly.session == nullptr || assembly.actions == nullptr) return {};
     auto provider = std::make_unique<debug::DebugMapProvider>(
-        assembly.actions->debugMapTruth());
+        assembly.actions->debugMapTruth(),
+        [actions = assembly.actions] {
+            return actions->debugGameplayTruth();
+        });
     return {std::move(assembly.session), std::move(provider)};
 }
 #endif

@@ -105,7 +105,9 @@ struct LifecycleModalGeometry {
     LifecycleModalGeometry& lifecycleModalGeometry,
 #if defined(BASILISK_GAME_DEBUG)
     const debug::DebugMapTruth* debugMapTruth,
+    const debug::DebugGameplayTruth* debugGameplayTruth,
     bool revealDebugMap,
+    bool revealDebugGameplay,
 #endif
     int outputWidth,
     int outputHeight,

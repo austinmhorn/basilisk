@@ -1,10 +1,12 @@
 #include "DebugMapRenderer.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <numbers>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace basilisk::game::debug {
@@ -126,6 +128,49 @@ void drawHiddenTunnel(
     }
 }
 
+const char* behaviorName(BasiliskBehavior behavior) {
+    switch (behavior) {
+        case BasiliskBehavior::Normal: return "NORMAL";
+        case BasiliskBehavior::Restless: return "RESTLESS";
+        case BasiliskBehavior::Lurker: return "LURKER";
+        case BasiliskBehavior::Skittish: return "SKITTISH";
+        case BasiliskBehavior::Territorial: return "TERRITORIAL";
+        case BasiliskBehavior::Enraged: return "ENRAGED";
+    }
+    return "UNKNOWN";
+}
+
+bool drawTruthMarker(
+    SDL_Renderer* renderer,
+    TextRenderer& textRenderer,
+    const DebugMapTruth& mapTruth,
+    const MapPresentationGeometry& geometry,
+    CaveId cave,
+    std::string_view label,
+    SDL_Color color,
+    float radius,
+    std::string& error) {
+
+    const auto position = mapTruth.cavePositions.find(cave);
+    if (position == mapTruth.cavePositions.end()) return true;
+    const float scale = static_cast<float>(geometry.transform.uiScale);
+    const SDL_FPoint center = project(position->second, geometry.transform);
+    fillCircle(renderer, center, radius * scale, SDL_Color{10, 13, 18, 220});
+    drawCircle(renderer, center, radius * scale, color);
+    const float pointSize = 8.0F * scale;
+    const auto measured = textRenderer.measureText(
+        label, FontWeight::Bold, pointSize, error);
+    return measured.has_value() && textRenderer.drawText(
+        label,
+        FontWeight::Bold,
+        pointSize,
+        color,
+        SDL_FPoint{
+            center.x - static_cast<float>(measured->width) * 0.5F,
+            center.y - static_cast<float>(measured->height) * 0.5F},
+        error);
+}
+
 } // namespace
 
 bool renderRevealedPhysicalMap(
@@ -203,6 +248,125 @@ bool renderRevealedPhysicalMap(
         SDL_Color{139, 171, 196, SDL_ALPHA_OPAQUE},
         indicator,
         error);
+}
+
+bool renderGameplayTruth(
+    SDL_Renderer* renderer,
+    TextRenderer& textRenderer,
+    const DebugMapTruth& mapTruth,
+    const DebugGameplayTruth& gameplayTruth,
+    const MapPresentationGeometry& geometry,
+    std::string& error) {
+
+    error.clear();
+    if (renderer == nullptr) {
+        error = "Debug gameplay truth requires a renderer";
+        return false;
+    }
+
+    for (const CaveId cave : gameplayTruth.pitCaves) {
+        if (!drawTruthMarker(
+                renderer, textRenderer, mapTruth, geometry, cave, "P",
+                SDL_Color{225, 78, 86, SDL_ALPHA_OPAQUE}, 12.0F, error)) {
+            return false;
+        }
+    }
+    for (const CaveId cave : gameplayTruth.jackalCaves) {
+        if (!drawTruthMarker(
+                renderer, textRenderer, mapTruth, geometry, cave, "J",
+                SDL_Color{236, 151, 70, SDL_ALPHA_OPAQUE}, 11.0F, error)) {
+            return false;
+        }
+    }
+    if (gameplayTruth.basiliskLastCave.has_value() &&
+        !drawTruthMarker(
+            renderer,
+            textRenderer,
+            mapTruth,
+            geometry,
+            *gameplayTruth.basiliskLastCave,
+            "L",
+            SDL_Color{77, 190, 220, SDL_ALPHA_OPAQUE},
+            13.0F,
+            error)) {
+        return false;
+    }
+    if (gameplayTruth.territorialSearchTarget.has_value() &&
+        !drawTruthMarker(
+            renderer,
+            textRenderer,
+            mapTruth,
+            geometry,
+            *gameplayTruth.territorialSearchTarget,
+            "T",
+            SDL_Color{83, 211, 145, SDL_ALPHA_OPAQUE},
+            14.0F,
+            error)) {
+        return false;
+    }
+    if (!drawTruthMarker(
+            renderer,
+            textRenderer,
+            mapTruth,
+            geometry,
+            gameplayTruth.basiliskCave,
+            "B",
+            SDL_Color{218, 93, 225, SDL_ALPHA_OPAQUE},
+            15.0F,
+            error)) {
+        return false;
+    }
+
+    const auto basiliskPosition =
+        mapTruth.cavePositions.find(gameplayTruth.basiliskCave);
+    if (basiliskPosition == mapTruth.cavePositions.end()) return true;
+    const float scale = static_cast<float>(geometry.transform.uiScale);
+    const SDL_FPoint center = project(
+        basiliskPosition->second, geometry.transform);
+    std::string detail = std::string{"BASILISK  "} +
+        behaviorName(gameplayTruth.basiliskBehavior) + "  E" +
+        std::to_string(gameplayTruth.basiliskEncounterCount);
+    return textRenderer.drawText(
+        detail,
+        FontWeight::SemiBold,
+        8.0F * scale,
+        SDL_Color{232, 151, 236, SDL_ALPHA_OPAQUE},
+        SDL_FPoint{center.x + 19.0F * scale, center.y - 7.0F * scale},
+        error);
+}
+
+bool renderDebugStatusLegend(
+    TextRenderer& textRenderer,
+    const MapPresentationGeometry& geometry,
+    bool mapRevealed,
+    bool truthRevealed,
+    std::string& error) {
+
+    const float scale = static_cast<float>(geometry.transform.uiScale);
+    const std::array<std::string, 2> lines{
+        std::string{"F1  MAP    "} + (mapRevealed ? "ON" : "OFF"),
+        std::string{"F2  TRUTH  "} + (truthRevealed ? "ON" : "OFF")};
+    float y = static_cast<float>(
+        geometry.transform.bounds.y + 10.0 * scale);
+    for (const std::string& line : lines) {
+        const auto measured = textRenderer.measureText(
+            line, FontWeight::SemiBold, 8.0F * scale, error);
+        if (!measured.has_value()) return false;
+        const float x = static_cast<float>(
+            geometry.transform.bounds.x + geometry.transform.bounds.width -
+            12.0 * scale - static_cast<double>(measured->width));
+        if (!textRenderer.drawText(
+                line,
+                FontWeight::SemiBold,
+                8.0F * scale,
+                SDL_Color{139, 171, 196, SDL_ALPHA_OPAQUE},
+                SDL_FPoint{x, y},
+                error)) {
+            return false;
+        }
+        y += 12.0F * scale;
+    }
+    return true;
 }
 
 } // namespace basilisk::game::debug

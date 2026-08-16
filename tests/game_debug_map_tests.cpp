@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cassert>
 #include <set>
+#include <vector>
 
 #include "DebugMapProvider.hpp"
 #include "LocalGameSessionAdapter.hpp"
@@ -47,7 +48,7 @@ void revealContainsCompletePhysicalTopology() {
     assert(debugSession.session != nullptr);
     assert(debugSession.mapProvider != nullptr);
 
-    const DebugMapTruth& truth = debugSession.mapProvider->truth();
+    const DebugMapTruth& truth = debugSession.mapProvider->mapTruth();
     assert(truth.fullBounds.populated);
     assert(truth.cavePositions.size() == authoritative.world.size());
     assert(std::set<PhysicalTunnel>(
@@ -92,7 +93,7 @@ void fixedHiddenEndpointsMatchDebugDestinationCoordinates() {
     assert(geometry != nullptr);
     assert(!geometry->unknownExitEndpoints.empty());
 
-    const DebugMapTruth& truth = debugSession.mapProvider->truth();
+    const DebugMapTruth& truth = debugSession.mapProvider->mapTruth();
 
     for (const auto& [exit, endpoint] : geometry->unknownExitEndpoints) {
         assert(authoritative.world.contains(exit.source));
@@ -105,11 +106,81 @@ void fixedHiddenEndpointsMatchDebugDestinationCoordinates() {
     }
 }
 
+void gameplayTruthReflectsAuthoritativeState() {
+    constexpr MapSeed mapSeed{1};
+    constexpr MatchSeed matchSeed{424242};
+    const MatchState authoritative = MapGenerator::generate(mapSeed, matchSeed);
+    auto debugSession = LocalGameSessionAdapter::createDebug(mapSeed, matchSeed);
+    assert(debugSession.session != nullptr);
+    assert(debugSession.mapProvider != nullptr);
+
+    const DebugGameplayTruth truth =
+        debugSession.mapProvider->gameplayTruth();
+    assert(truth.basiliskCave == authoritative.basilisk.cave);
+    assert(truth.basiliskBehavior == authoritative.basilisk.behavior);
+    assert(truth.basiliskLastCave == authoritative.basilisk.lastCave);
+    assert(truth.basiliskEncounterCount ==
+           authoritative.basilisk.trueEncounters);
+
+    std::vector<CaveId> expectedPits;
+    for (const PitState& pit : authoritative.pits) {
+        expectedPits.push_back(pit.cave);
+    }
+    std::vector<CaveId> expectedJackals;
+    for (const JackalState& jackal : authoritative.jackals) {
+        expectedJackals.push_back(jackal.cave);
+    }
+    assert(truth.pitCaves == expectedPits);
+    assert(truth.jackalCaves == expectedJackals);
+    assert(truth.territorialSearchTarget ==
+           authoritative.mostRecentSearchCave);
+}
+
+void gameplayTruthTracksTheRunningSession() {
+    auto debugSession = LocalGameSessionAdapter::createDebug(
+        MapSeed{1}, MatchSeed{424242});
+    assert(debugSession.session != nullptr);
+    assert(debugSession.mapProvider != nullptr);
+    const PlayerRoundSnapshot* before =
+        debugSession.session->displayedSnapshot();
+    assert(before != nullptr);
+    const auto search = std::find_if(
+        before->availableActions.begin(),
+        before->availableActions.end(),
+        [](const AvailableAction& action) {
+            return action.type == ActionType::Search;
+        });
+    assert(search != before->availableActions.end());
+    assert(!debugSession.mapProvider->gameplayTruth()
+                .territorialSearchTarget.has_value());
+    const CaveId searchedCave = before->currentCave;
+    assert(debugSession.session->submitAndLock(*search));
+    assert(debugSession.mapProvider->gameplayTruth()
+               .territorialSearchTarget == searchedCave);
+}
+
+void mapAndGameplayRevealStatesAreIndependent() {
+    DebugMapRevealState mapReveal;
+    DebugMapRevealState gameplayReveal;
+    mapReveal.toggle();
+    assert(mapReveal.revealed());
+    assert(!gameplayReveal.revealed());
+    gameplayReveal.toggle();
+    assert(mapReveal.revealed());
+    assert(gameplayReveal.revealed());
+    mapReveal.toggle();
+    assert(!mapReveal.revealed());
+    assert(gameplayReveal.revealed());
+}
+
 } // namespace
 
 int main() {
     revealContainsCompletePhysicalTopology();
     togglingRevealDoesNotMutatePlayerState();
     fixedHiddenEndpointsMatchDebugDestinationCoordinates();
+    gameplayTruthReflectsAuthoritativeState();
+    gameplayTruthTracksTheRunningSession();
+    mapAndGameplayRevealStatesAreIndependent();
     return 0;
 }

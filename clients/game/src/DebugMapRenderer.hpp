@@ -23,4 +23,19 @@ namespace basilisk::game::debug {
     const MapPresentationGeometry& geometry,
     std::string& error);
 
+[[nodiscard]] bool renderGameplayTruth(
+    SDL_Renderer* renderer,
+    TextRenderer& textRenderer,
+    const DebugMapTruth& mapTruth,
+    const DebugGameplayTruth& gameplayTruth,
+    const MapPresentationGeometry& geometry,
+    std::string& error);
+
+[[nodiscard]] bool renderDebugStatusLegend(
+    TextRenderer& textRenderer,
+    const MapPresentationGeometry& geometry,
+    bool mapRevealed,
+    bool truthRevealed,
+    std::string& error);
+
 } // namespace basilisk::game::debug

@@ -59,6 +59,7 @@ struct AppState {
 #if defined(BASILISK_GAME_DEBUG)
     std::unique_ptr<basilisk::game::debug::DebugMapProvider> debugMapProvider;
     basilisk::game::debug::DebugMapRevealState debugMapReveal;
+    basilisk::game::debug::DebugMapRevealState debugGameplayReveal;
 #endif
 };
 
@@ -258,6 +259,20 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             SDL_Log(
                 "Debug map reveal %s",
                 state->debugMapReveal.revealed() ? "enabled" : "disabled");
+        }
+        return SDL_APP_CONTINUE;
+    }
+    if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
+        !event->key.repeat && event->key.key == SDLK_F2) {
+        if (state->debugMapProvider == nullptr) {
+            SDL_Log("Debug gameplay truth is available only in --local-game");
+        } else {
+            state->debugGameplayReveal.toggle();
+            SDL_Log(
+                "Debug gameplay truth %s",
+                state->debugGameplayReveal.revealed()
+                    ? "enabled"
+                    : "disabled");
         }
         return SDL_APP_CONTINUE;
     }
@@ -631,6 +646,13 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 }
             }
             std::string screenError;
+#if defined(BASILISK_GAME_DEBUG)
+            std::optional<basilisk::game::debug::DebugGameplayTruth>
+                debugGameplayTruth;
+            if (state->debugMapProvider != nullptr) {
+                debugGameplayTruth = state->debugMapProvider->gameplayTruth();
+            }
+#endif
             if (!basilisk::game::renderScreenShell(
                     state->renderer,
                     *state->textRenderer,
@@ -649,8 +671,12 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 #if defined(BASILISK_GAME_DEBUG)
                     state->debugMapProvider == nullptr
                         ? nullptr
-                        : &state->debugMapProvider->truth(),
+                        : &state->debugMapProvider->mapTruth(),
+                    debugGameplayTruth.has_value()
+                        ? &*debugGameplayTruth
+                        : nullptr,
                     state->debugMapReveal.revealed(),
+                    state->debugGameplayReveal.revealed(),
 #endif
                     outputWidth,
                     outputHeight,

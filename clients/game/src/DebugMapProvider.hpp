@@ -5,11 +5,14 @@
 #endif
 
 #include <compare>
+#include <functional>
 #include <map>
+#include <optional>
 #include <vector>
 
 #include "MapLayout.hpp"
 #include "basilisk/Types.hpp"
+#include "basilisk/actors/Basilisk.hpp"
 
 namespace basilisk::game::debug {
 
@@ -26,14 +29,30 @@ struct DebugMapTruth {
     std::vector<PhysicalTunnel> tunnels;
 };
 
+struct DebugGameplayTruth {
+    CaveId basiliskCave{};
+    BasiliskBehavior basiliskBehavior{BasiliskBehavior::Normal};
+    std::optional<CaveId> basiliskLastCave;
+    int basiliskEncounterCount{0};
+    std::vector<CaveId> pitCaves;
+    std::vector<CaveId> jackalCaves;
+    std::optional<CaveId> territorialSearchTarget;
+};
+
 class DebugMapProvider {
 public:
-    explicit DebugMapProvider(DebugMapTruth truth);
+    using GameplayTruthSource = std::function<DebugGameplayTruth()>;
 
-    [[nodiscard]] const DebugMapTruth& truth() const noexcept;
+    DebugMapProvider(
+        DebugMapTruth mapTruth,
+        GameplayTruthSource gameplayTruthSource);
+
+    [[nodiscard]] const DebugMapTruth& mapTruth() const noexcept;
+    [[nodiscard]] DebugGameplayTruth gameplayTruth() const;
 
 private:
-    DebugMapTruth truth_;
+    DebugMapTruth mapTruth_;
+    GameplayTruthSource gameplayTruthSource_;
 };
 
 class DebugMapRevealState {
