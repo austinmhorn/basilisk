@@ -419,6 +419,39 @@ void denseFullMapLayoutIsDeterministicAndSeparated() {
 
 }
 
+void representativeGeneratedLayoutsMeetQualityThresholds() {
+    constexpr std::array<MapSeed, 5> seeds{1, 57, 68, 71, 87};
+    for (const MapSeed seed : seeds) {
+        const MatchState state = MapGenerator::generate(
+            seed, MatchSeed{424242});
+        const PlayerMapView map = fullPhysicalMap(state);
+        PlayerMapLayout first;
+        PlayerMapLayout second;
+        first.update(map);
+        first.finalizeFullLayout(map);
+        second.update(map);
+        second.finalizeFullLayout(map);
+
+        for (const DiscoveredCaveView& caveView : map.caves) {
+            assert(requireCave(first, caveView.cave) ==
+                   requireCave(second, caveView.cave));
+        }
+
+        const auto [averageEdge, maximumEdge] =
+            connectedEdgeLengths(first, map);
+        const LogicalBounds bounds = first.positionedBounds();
+        const double aspect =
+            (bounds.maximumX - bounds.minimumX) /
+            (bounds.maximumY - bounds.minimumY);
+        assert(minimumCaveSeparation(first, map) >= 4.0);
+        assert(minimumNonIncidentNodeEdgeDistance(first, map) >= 2.0);
+        assert(edgeCrossingCount(first, map) <= 30);
+        assert(averageEdge <= 12.0);
+        assert(maximumEdge <= 25.0);
+        assert(std::abs(aspect - 1.4) <= 0.1);
+    }
+}
+
 void fixedGeometryKeepsDiscoveryAndViewportStable() {
     const LogicalBounds fullBounds{-8.0, -6.0, 10.0, 7.0, true};
     PlayerFixedMapGeometry initial;
@@ -968,6 +1001,7 @@ int main() {
     undiscoveredEndpointIsIgnored();
     repeatedUpdateIsIdentical();
     denseFullMapLayoutIsDeterministicAndSeparated();
+    representativeGeneratedLayoutsMeetQualityThresholds();
     fixedGeometryKeepsDiscoveryAndViewportStable();
     fixedPitRevealOverlaysUnknownEndpointThenExpires();
     framingContainsOnlyPlayerKnownPresentationPoints();

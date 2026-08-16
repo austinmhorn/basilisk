@@ -168,8 +168,8 @@ double layoutScore(
     const std::vector<LayoutEdge>& edges,
     double targetAspect) {
 
-    constexpr double desiredNodeSeparation = 4.5;
-    constexpr double hardNodeSeparation = 3.0;
+    constexpr double desiredNodeSeparation = 4.9;
+    constexpr double hardNodeSeparation = 4.15;
     constexpr double desiredNodeEdgeClearance = 2.25;
     constexpr double idealEdgeLength = 7.0;
     double score = 0.0;
@@ -180,7 +180,7 @@ double layoutScore(
                 distanceSquared(first->second, second->second));
             if (distance < hardNodeSeparation) {
                 const double shortfall = hardNodeSeparation - distance;
-                score += shortfall * shortfall * 5000.0;
+                score += shortfall * shortfall * 12000.0;
             }
             if (distance < desiredNodeSeparation) {
                 const double shortfall = desiredNodeSeparation - distance;
@@ -195,9 +195,13 @@ double layoutScore(
         const double length = std::sqrt(distanceSquared(start, end));
         const double stretch = length - idealEdgeLength;
         score += stretch * stretch * 0.35;
-        if (length > 16.0) {
-            const double excess = length - 16.0;
-            score += excess * excess * 1.5;
+        if (length > 14.0) {
+            const double excess = length - 14.0;
+            score += excess * excess * 6.0;
+        }
+        if (length > 25.0) {
+            const double excess = length - 25.0;
+            score += excess * excess * 1500.0;
         }
 
         for (const auto& [cave, position] : positions) {
@@ -223,7 +227,7 @@ double layoutScore(
                     positions.at(a.second),
                     positions.at(b.first),
                     positions.at(b.second))) {
-                score += 900.0;
+                score += 2000.0;
             }
         }
     }
@@ -321,7 +325,7 @@ void PlayerMapLayout::update(const PlayerMapView& map) {
 
 void PlayerMapLayout::finalizeFullLayout(const PlayerMapView& fullMap) {
     constexpr double targetAspect = 1.4;
-    constexpr double maximumHorizontalScale = 2.5;
+    constexpr double maximumHorizontalScale = 3.0;
     finalizeFullLayout(fullMap, targetAspect, maximumHorizontalScale);
 }
 
@@ -351,7 +355,7 @@ void PlayerMapLayout::finalizeFullLayout(
         (void)position;
         caveIds.push_back(cave);
     }
-    for (int pass = 0; pass < 6; ++pass) {
+    for (int pass = 0; pass < 12; ++pass) {
         double bestScore = layoutScore(cavePositions_, edges, targetAspect);
         std::optional<std::pair<CaveId, CaveId>> bestSwap;
         for (std::size_t first = 0; first < caveIds.size(); ++first) {
@@ -376,9 +380,9 @@ void PlayerMapLayout::finalizeFullLayout(
             cavePositions_.at(bestSwap->second));
     }
 
-    constexpr std::array<double, 4> steps{3.0, 1.5, 0.75, 0.375};
+    constexpr std::array<double, 5> steps{4.5, 3.0, 1.5, 0.75, 0.375};
     for (const double step : steps) {
-        for (int pass = 0; pass < 3; ++pass) {
+        for (int pass = 0; pass < 4; ++pass) {
             bool moved = false;
             for (auto& [cave, position] : cavePositions_) {
                 const LogicalPoint original = position;
