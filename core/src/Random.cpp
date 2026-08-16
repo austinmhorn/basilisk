@@ -7,13 +7,27 @@ namespace basilisk {
 RandomGenerator::RandomGenerator(std::uint64_t seed)
     : engine_(seed) {}
 
+std::uint64_t RandomGenerator::bounded(std::uint64_t upperExclusive) {
+    // Unsigned wraparound makes this 2^64 modulo the bound. Rejecting the
+    // shorter prefix leaves an exact multiple of upperExclusive outcomes.
+    const std::uint64_t rejectionThreshold =
+        (std::uint64_t{0} - upperExclusive) % upperExclusive;
+    while (true) {
+        const std::uint64_t value = engine_();
+        if (value >= rejectionThreshold) return value % upperExclusive;
+    }
+}
+
 int RandomGenerator::range(int minInclusive, int maxInclusive) {
     if (minInclusive > maxInclusive) {
         throw std::invalid_argument("Random range minimum cannot exceed maximum.");
     }
 
-    std::uniform_int_distribution<int> distribution(minInclusive, maxInclusive);
-    return distribution(engine_);
+    const std::int64_t minimum = minInclusive;
+    const std::uint64_t width = static_cast<std::uint64_t>(
+        static_cast<std::int64_t>(maxInclusive) - minimum) + 1U;
+    return static_cast<int>(
+        minimum + static_cast<std::int64_t>(bounded(width)));
 }
 
 bool RandomGenerator::chance(std::uint32_t numerator, std::uint32_t denominator) {
@@ -29,8 +43,7 @@ bool RandomGenerator::chance(std::uint32_t numerator, std::uint32_t denominator)
         return true;
     }
 
-    std::uniform_int_distribution<std::uint32_t> distribution(1, denominator);
-    return distribution(engine_) <= numerator;
+    return bounded(denominator) < numerator;
 }
 
 } // namespace basilisk

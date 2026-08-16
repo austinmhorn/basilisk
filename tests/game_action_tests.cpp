@@ -16,7 +16,6 @@
 #include "SnapshotPresentation.hpp"
 #include "basilisk/systems/RoundController.hpp"
 #include "basilisk/systems/SnapshotSystem.hpp"
-#include "basilisk/world/MapGenerator.hpp"
 
 using namespace basilisk;
 using namespace basilisk::game;
@@ -547,36 +546,46 @@ void localAdapterPublishesOnlyPlayerSafeSessionState() {
         session->displayedMapGeometry();
     assert(initialGeometry != nullptr);
     assert(initialGeometry->fullBounds.populated);
-    const LogicalBounds initialFullBounds = initialGeometry->fullBounds;
+}
 
-    const RoundNumber initialRound = initial->round;
-    const auto unknownMove = std::find_if(
-        initial->availableActions.begin(), initial->availableActions.end(),
-        [](const AvailableAction& action) {
-            return action.type == ActionType::Move &&
-                action.targetTunnel.has_value() &&
-                !action.targetCave.has_value();
-        });
-    assert(unknownMove != initial->availableActions.end());
-    const AvailableAction selected = *unknownMove;
-    const MapExitKey selectedExit{initial->currentCave, *selected.targetTunnel};
-    const auto hiddenEndpoint =
-        initialGeometry->unknownExitEndpoints.find(selectedExit);
-    assert(hiddenEndpoint != initialGeometry->unknownExitEndpoints.end());
-    const LogicalPoint endpointBeforeDiscovery = hiddenEndpoint->second;
-    assert(session->submitAndLock(selected));
+void fixedUnknownEndpointBecomesDiscoveredCaveAtSameCoordinate() {
+    ClientSessionController session({}, {}, playingView(), nullptr, nullptr);
+    constexpr LogicalPoint hiddenEndpoint{4.0, 2.0};
+    constexpr LogicalBounds fullBounds{-8.0, -6.0, 10.0, 7.0, true};
 
-    const PlayerRoundSnapshot* resolved = session->displayedSnapshot();
-    assert(resolved != nullptr);
-    assert(resolved->player == PlayerId{1});
-    assert(resolved->round == initialRound + 1);
-    assert(resolved->currentCave == resolved->map.currentCave);
-    const PlayerFixedMapGeometry* resolvedGeometry =
-        session->displayedMapGeometry();
-    assert(resolvedGeometry != nullptr);
-    assert(resolvedGeometry->fullBounds == initialFullBounds);
-    assert(resolvedGeometry->discoveredCaves.at(resolved->currentCave) ==
-           endpointBeforeDiscovery);
+    PlayerRoundSnapshot before;
+    before.player = PlayerId{1};
+    before.round = RoundNumber{1};
+    before.currentCave = CaveId{1};
+    before.map.currentCave = CaveId{1};
+    before.map.caves = {
+        DiscoveredCaveView{CaveId{1}, {TunnelView{TunnelId{1}, std::nullopt}}},
+    };
+    PlayerFixedMapGeometry beforeGeometry;
+    beforeGeometry.fullBounds = fullBounds;
+    beforeGeometry.discoveredCaves.emplace(CaveId{1}, LogicalPoint{0.0, 0.0});
+    beforeGeometry.unknownExitEndpoints.emplace(
+        MapExitKey{CaveId{1}, TunnelId{1}}, hiddenEndpoint);
+    assert(session.ingestSnapshot(before, beforeGeometry));
+    assert(session.displayedMapGeometry()->unknownExitEndpoints.at(
+               MapExitKey{CaveId{1}, TunnelId{1}}) == hiddenEndpoint);
+
+    PlayerRoundSnapshot after = before;
+    after.round = RoundNumber{2};
+    after.currentCave = CaveId{2};
+    after.map.currentCave = CaveId{2};
+    after.map.caves = {
+        DiscoveredCaveView{CaveId{1}, {TunnelView{TunnelId{1}, CaveId{2}}}},
+        DiscoveredCaveView{CaveId{2}, {TunnelView{TunnelId{1}, CaveId{1}}}},
+    };
+    PlayerFixedMapGeometry afterGeometry;
+    afterGeometry.fullBounds = fullBounds;
+    afterGeometry.discoveredCaves.emplace(CaveId{1}, LogicalPoint{0.0, 0.0});
+    afterGeometry.discoveredCaves.emplace(CaveId{2}, hiddenEndpoint);
+    assert(session.ingestSnapshot(after, afterGeometry));
+    assert(session.displayedMapGeometry()->fullBounds == fullBounds);
+    assert(session.displayedMapGeometry()->discoveredCaves.at(CaveId{2}) ==
+           hiddenEndpoint);
 }
 
 void caveMenuUsesOnlyLiteralTargetMatches() {
@@ -673,23 +682,27 @@ void inventoryItemSelectsOnlyMatchingLegalUseAction() {
 }
 
 void huntersMapStaysHuntersMapThroughClientActionPipeline() {
-    MatchState state = MapGenerator::generate(MapSeed{1}, MatchSeed{424242});
-    std::erase_if(state.players, [](const PlayerState& player) {
-        return player.id != PlayerId{1};
-    });
+    MatchState state;
+    state.mapSeed = MapSeed{1};
+    state.matchSeed = MatchSeed{424242};
+    state.rules.mapDiscoveryMode = MapDiscoveryMode::FogOfWar;
+    for (CaveId cave = 1; cave <= 4; ++cave) state.world.addCave(cave);
+    state.world.connect(CaveId{1}, CaveId{2});
+    state.world.connect(CaveId{1}, CaveId{3});
+    state.world.connect(CaveId{3}, CaveId{4});
+    state.players = {PlayerState{PlayerId{1}, CaveId{1}, 100, 3, true}};
+    state.basilisk.cave = CaveId{4};
+    state.pits = {PitState{CaveId{2}, true}};
+
     PlayerState& player = state.players.front();
-    player.cave = CaveId{6};
-    player.discovery.knownCaves = {CaveId{6}};
-    player.discovery.knownConnections.clear();
-    const auto& exits = state.world.cave(CaveId{6}).connections;
-    const auto caveSeven = std::find(exits.begin(), exits.end(), CaveId{7});
-    assert(caveSeven != exits.end());
-    player.knownPitTunnels[CaveId{6}] = static_cast<TunnelId>(
-        std::distance(exits.begin(), caveSeven) + 1);
+    player.discovery.knownCaves = {CaveId{1}};
+    const auto& exits = state.world.cave(CaveId{1}).connections;
+    const auto pitCave = std::find(exits.begin(), exits.end(), CaveId{2});
+    assert(pitCave != exits.end());
+    player.knownPitTunnels[CaveId{1}] = static_cast<TunnelId>(
+        std::distance(exits.begin(), pitCave) + 1);
     player.inventory.items = {ItemInstance{ItemType::OldHuntersMap}};
     player.pitMapRevealRounds = 0;
-    state.jackals.clear();
-    state.looseArrows.clear();
 
     auto commands = std::make_unique<CoreRoundSink>(state);
     CoreRoundSink* core = commands.get();
@@ -721,7 +734,7 @@ void huntersMapStaysHuntersMapThroughClientActionPipeline() {
     assert(std::none_of(
         after->map.caves.begin(), after->map.caves.end(),
         [](const DiscoveredCaveView& cave) {
-            return cave.cave == CaveId{7};
+            return cave.cave == CaveId{2};
         }));
 }
 
@@ -919,6 +932,7 @@ int main() {
     controllerOwnsWatchTransition();
     controllerForwardsCommandsWithAuthorityGating();
     localAdapterPublishesOnlyPlayerSafeSessionState();
+    fixedUnknownEndpointBecomesDiscoveredCaveAtSameCoordinate();
     caveMenuUsesOnlyLiteralTargetMatches();
     currentCaveMenuUsesOnlyCurrentLocationActions();
     inventoryItemSelectsOnlyMatchingLegalUseAction();

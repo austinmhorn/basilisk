@@ -9,7 +9,6 @@
 #include "basilisk/systems/RoundController.hpp"
 #include "basilisk/systems/SnapshotSystem.hpp"
 #include "basilisk/systems/TurnResolver.hpp"
-#include "basilisk/world/MapGenerator.hpp"
 
 using namespace basilisk;
 
@@ -27,8 +26,24 @@ bool snapshotContainsCave(
         });
 }
 
+MatchState makeControlledPitAndHuntersMapState() {
+    MatchState state;
+    state.mapSeed = MapSeed{1};
+    state.matchSeed = MatchSeed{424242};
+    state.rules.mapDiscoveryMode = MapDiscoveryMode::FogOfWar;
+    for (CaveId cave = 1; cave <= 4; ++cave) state.world.addCave(cave);
+    state.world.connect(CaveId{1}, CaveId{2});
+    state.world.connect(CaveId{1}, CaveId{3});
+    state.world.connect(CaveId{3}, CaveId{4});
+    state.players = {PlayerState{PlayerId{1}, CaveId{1}, 100, 3, true}};
+    state.players.front().discovery.knownCaves = {CaveId{1}};
+    state.basilisk.cave = CaveId{4};
+    state.pits = {PitState{CaveId{2}, true}};
+    return state;
+}
+
 void oldHuntersMapReportsOnlyDistance() {
-    auto state = MapGenerator::generate(20260813, 313131);
+    auto state = makeControlledPitAndHuntersMapState();
     auto& player = state.players.front();
     assert(player.inventory.add(ItemInstance{ItemType::OldHuntersMap}, state.rules.maxInventoryItems));
 
@@ -55,26 +70,12 @@ void oldHuntersMapReportsOnlyDistance() {
     assert(clue->amount == read->amount);
 }
 
-void seedOnePitInvestigationAndHuntersMapDoNotRevealCaveSeven() {
-    auto state = MapGenerator::generate(MapSeed{1}, MatchSeed{424242});
+void pitInvestigationAndHuntersMapDoNotRevealPitCave() {
+    auto state = makeControlledPitAndHuntersMapState();
     auto& player = state.players.front();
-    player.cave = CaveId{6};
-    player.inventory.items.clear();
-    player.searchedCaves.clear();
-    player.discovery.knownCaves = {CaveId{6}};
-    player.discovery.knownConnections.clear();
-    player.knownPitTunnels.clear();
-    player.pitMapRevealRounds = 0;
-    state.jackals.clear();
-    state.looseArrows.clear();
-
-    const auto pit = std::find_if(
-        state.pits.begin(), state.pits.end(), [](const PitState& candidate) {
-            return candidate.active && candidate.cave == CaveId{7};
-        });
-    assert(pit != state.pits.end());
-    const auto& exits = state.world.cave(CaveId{6}).connections;
-    const auto pitExit = std::find(exits.begin(), exits.end(), CaveId{7});
+    constexpr CaveId pitCave{2};
+    const auto& exits = state.world.cave(player.cave).connections;
+    const auto pitExit = std::find(exits.begin(), exits.end(), pitCave);
     assert(pitExit != exits.end());
     const TunnelId pitTunnel = static_cast<TunnelId>(
         std::distance(exits.begin(), pitExit) + 1);
@@ -97,24 +98,24 @@ void seedOnePitInvestigationAndHuntersMapDoNotRevealCaveSeven() {
     search.type = ActionType::Search;
     const std::vector<GameEvent> searchEvents = controller.resolve(state, {search});
 
-    assert(player.knownPitTunnels.at(CaveId{6}) == pitTunnel);
+    assert(player.knownPitTunnels.at(CaveId{1}) == pitTunnel);
     assert(player.inventory.contains(ItemType::OldHuntersMap));
-    assert(!player.discovery.knownCaves.contains(CaveId{7}));
+    assert(!player.discovery.knownCaves.contains(pitCave));
     assert(player.pitMapRevealRounds == 0);
 
     const PlayerRoundSnapshot afterSearch = SnapshotSystem::buildForPlayer(
         state, player.id, searchEvents);
-    assert(!snapshotContainsCave(afterSearch, CaveId{7}));
+    assert(!snapshotContainsCave(afterSearch, pitCave));
     assert(afterSearch.temporarilyRevealedPitCaves.empty());
-    const auto caveSix = std::find_if(
+    const auto currentCave = std::find_if(
         afterSearch.map.caves.begin(),
         afterSearch.map.caves.end(),
-        [](const DiscoveredCaveView& view) { return view.cave == CaveId{6}; });
-    assert(caveSix != afterSearch.map.caves.end());
+        [](const DiscoveredCaveView& view) { return view.cave == CaveId{1}; });
+    assert(currentCave != afterSearch.map.caves.end());
     const auto warnedExit = std::find_if(
-        caveSix->exits.begin(), caveSix->exits.end(),
+        currentCave->exits.begin(), currentCave->exits.end(),
         [pitTunnel](const TunnelView& exit) { return exit.id == pitTunnel; });
-    assert(warnedExit != caveSix->exits.end());
+    assert(warnedExit != currentCave->exits.end());
     assert(warnedExit->strongColdDraft);
     assert(!warnedExit->destination.has_value());
 
@@ -144,9 +145,9 @@ void seedOnePitInvestigationAndHuntersMapDoNotRevealCaveSeven() {
         });
     assert(distance != afterUse.observations.end());
     assert(distance->amount >= 0);
-    assert(!snapshotContainsCave(afterUse, CaveId{7}));
+    assert(!snapshotContainsCave(afterUse, pitCave));
     assert(afterUse.temporarilyRevealedPitCaves.empty());
-    assert(!player.discovery.knownCaves.contains(CaveId{7}));
+    assert(!player.discovery.knownCaves.contains(pitCave));
     assert(player.pitMapRevealRounds == 0);
 }
 
@@ -154,6 +155,6 @@ void seedOnePitInvestigationAndHuntersMapDoNotRevealCaveSeven() {
 
 int main() {
     oldHuntersMapReportsOnlyDistance();
-    seedOnePitInvestigationAndHuntersMapDoNotRevealCaveSeven();
+    pitInvestigationAndHuntersMapDoNotRevealPitCave();
     return 0;
 }

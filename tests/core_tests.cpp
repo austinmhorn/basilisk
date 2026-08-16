@@ -1,6 +1,9 @@
 #include <cassert>
+#include <array>
 #include <iostream>
+#include <limits>
 #include <optional>
+#include <stdexcept>
 #include <vector>
 
 #include "basilisk/Action.hpp"
@@ -129,17 +132,44 @@ void lethalShotsResolveSimultaneously() {
     assert(state.players[1].health == 0);
 }
 
-void randomGeneratorIsDeterministic() {
-    RandomGenerator first{987654321};
-    RandomGenerator second{987654321};
+void randomGeneratorUsesPortableOwnedMapping() {
+    RandomGenerator rng{0x0123456789ABCDEFULL};
 
-    for (int i = 0; i < 100; ++i) {
-        assert(first.range(1, 100000) == second.range(1, 100000));
+    assert(rng.range(0, 9) == 2);
+    assert(rng.range(-50, 50) == -11);
+    assert(rng.range(std::numeric_limits<int>::min(),
+                     std::numeric_limits<int>::max()) == 1477332994);
+    assert(rng.range(7, 7) == 7);
+
+    constexpr std::array expectedChances{
+        true, true, false, false, false, true,
+        false, true, false, true, true, false,
+    };
+    for (const bool expected : expectedChances) {
+        assert(rng.chance(1, 3) == expected);
     }
 
-    for (int i = 0; i < 100; ++i) {
-        assert(first.chance(1, 4) == second.chance(1, 4));
+    // Guaranteed outcomes preserve their existing behavior and consume no
+    // engine output; the following range value protects that contract too.
+    assert(!rng.chance(0, 9));
+    assert(rng.chance(9, 9));
+    assert(rng.range(0, 999999) == 949812);
+
+    bool invalidRangeRejected = false;
+    try {
+        static_cast<void>(rng.range(2, 1));
+    } catch (const std::invalid_argument&) {
+        invalidRangeRejected = true;
     }
+    assert(invalidRangeRejected);
+
+    bool invalidChanceRejected = false;
+    try {
+        static_cast<void>(rng.chance(2, 1));
+    } catch (const std::invalid_argument&) {
+        invalidChanceRejected = true;
+    }
+    assert(invalidChanceRejected);
 }
 
 void shootingJackalStunsForThreeNpcPhases() {
@@ -360,7 +390,7 @@ int main() {
     movementResolvesBeforeShooting();
     enteringBasiliskCaveKillsHunter();
     lethalShotsResolveSimultaneously();
-    randomGeneratorIsDeterministic();
+    randomGeneratorUsesPortableOwnedMapping();
     shootingJackalStunsForThreeNpcPhases();
     wrongCaveDoesNotCountAsTrueBasiliskEncounter();
     firstTrueEncounterCanEvadeAndMutate();

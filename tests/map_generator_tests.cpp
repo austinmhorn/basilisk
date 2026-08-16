@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cassert>
+#include <cstdint>
 #include <iostream>
 #include <queue>
 #include <set>
@@ -16,6 +17,53 @@ namespace {
 std::set<CaveId> connectionsOf(const MatchState& state, CaveId cave) {
     const auto& connections = state.world.cave(cave).connections;
     return std::set<CaveId>(connections.begin(), connections.end());
+}
+
+void mixSignatureWord(std::uint64_t& signature, std::uint64_t value) {
+    constexpr std::uint64_t fnvPrime = 1099511628211ULL;
+    // Explicit byte order keeps the signature independent of host endianness.
+    for (int byte = 0; byte < 8; ++byte) {
+        signature ^= value & 0xffU;
+        signature *= fnvPrime;
+        value >>= 8U;
+    }
+}
+
+std::uint64_t generatedWorldSignature(const MatchState& state) {
+    std::uint64_t signature = 14695981039346656037ULL;
+    const std::vector<CaveId> caves = state.world.caveIds();
+    mixSignatureWord(signature, caves.size());
+    for (const CaveId cave : caves) {
+        std::vector<CaveId> connections = state.world.cave(cave).connections;
+        std::sort(connections.begin(), connections.end());
+        mixSignatureWord(signature, cave);
+        mixSignatureWord(signature, connections.size());
+        for (const CaveId destination : connections) {
+            mixSignatureWord(signature, destination);
+        }
+    }
+
+    mixSignatureWord(signature, state.players.size());
+    for (const PlayerState& player : state.players) {
+        mixSignatureWord(signature, player.id);
+        mixSignatureWord(signature, player.cave);
+    }
+    mixSignatureWord(signature, state.basilisk.cave);
+
+    std::vector<CaveId> pits;
+    for (const PitState& pit : state.pits) pits.push_back(pit.cave);
+    std::sort(pits.begin(), pits.end());
+    mixSignatureWord(signature, pits.size());
+    for (const CaveId cave : pits) mixSignatureWord(signature, cave);
+
+    std::vector<CaveId> jackals;
+    for (const JackalState& jackal : state.jackals) {
+        jackals.push_back(jackal.cave);
+    }
+    std::sort(jackals.begin(), jackals.end());
+    mixSignatureWord(signature, jackals.size());
+    for (const CaveId cave : jackals) mixSignatureWord(signature, cave);
+    return signature;
 }
 
 int distanceBetween(const WorldGraph& world, CaveId start, CaveId target) {
@@ -200,6 +248,12 @@ void identicalSeedsReproduceEntireGeneratedWorld() {
     assert(firstMetrics.diameter == secondMetrics.diameter);
 }
 
+void canonicalSeedHasPortableStructuralSignature() {
+    const MatchState state = MapGenerator::generate(
+        MapSeed{20260812}, MatchSeed{424242});
+    assert(generatedWorldSignature(state) == 14569748892413728933ULL);
+}
+
 void manySeedsRemainValidOrganicAndWellPlaced() {
     ProceduralMapConfig config;
 
@@ -284,6 +338,7 @@ int main() {
     defaultThirtyCaveMapHasExpectedShapeAndActors();
     initialPlacementsDoNotOverlap();
     identicalSeedsReproduceEntireGeneratedWorld();
+    canonicalSeedHasPortableStructuralSignature();
     manySeedsRemainValidOrganicAndWellPlaced();
     deadEndTargetIsConfigurable();
     jackalScalingUsesCaveCountAndSeparation();
