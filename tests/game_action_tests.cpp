@@ -320,6 +320,32 @@ void emptyAndPopulatedRoundReportsUsePlayerObservations() {
         std::vector<std::string>{"You found 1 arrow(s)."}));
 }
 
+void roundReportLayoutIncludesEveryWrappedMessage() {
+    PlayerRoundSnapshot snapshot;
+    for (int index = 0; index < 4; ++index) {
+        PlayerObservation observation;
+        observation.type = ObservationType::ArrowFound;
+        observation.viewer = PlayerId{1};
+        observation.amount = index + 1;
+        snapshot.observations.push_back(observation);
+    }
+    const std::vector<std::string> report = roundReportText(snapshot);
+    assert(report.size() == 4);
+
+    const std::array<std::size_t, 3> threeRows{1, 1, 1};
+    const std::array<std::size_t, 4> fourRows{1, 1, 1, 1};
+    const RoundReportLayout three = roundReportLayout(threeRows, 1.0F);
+    const RoundReportLayout four = roundReportLayout(fourRows, 1.0F);
+    assert(four.rowHeights.size() == report.size());
+    assert(four.panelHeight > three.panelHeight);
+
+    const std::array<std::size_t, 4> wrappedRows{1, 3, 1, 1};
+    const RoundReportLayout wrapped = roundReportLayout(wrappedRows, 1.0F);
+    assert(wrapped.rowHeights.size() == report.size());
+    assert(wrapped.rowHeights[1] == 52.0F);
+    assert(wrapped.panelHeight > four.panelHeight);
+}
+
 std::array<client::PublicPlayerProfile, 2> demoProfiles() {
     return {
         client::PublicPlayerProfile{
@@ -923,6 +949,7 @@ int main() {
     newRoundClearsDraftAndLockedState();
     objectivePresentationFollowsSnapshotOnly();
     emptyAndPopulatedRoundReportsUsePlayerObservations();
+    roundReportLayoutIncludesEveryWrappedMessage();
     playingLifecycleHasAuthorityAndNoModal();
     firstDeathCanTransitionToViewOnlySpectating();
     finalDeathOffersQuitOnly();

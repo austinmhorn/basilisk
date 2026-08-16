@@ -1,5 +1,6 @@
 #include "SnapshotPresentation.hpp"
 
+#include <algorithm>
 #include <string>
 
 #include "basilisk/client/Presentation.hpp"
@@ -46,6 +47,25 @@ std::vector<std::string> roundReportText(const PlayerRoundSnapshot& snapshot) {
         result.push_back(presentation::observationText(observation));
     }
     return result;
+}
+
+RoundReportLayout roundReportLayout(
+    std::span<const std::size_t> wrappedLineCounts,
+    float scale) {
+
+    RoundReportLayout layout;
+    layout.rowHeights.reserve(wrappedLineCounts.size());
+    float height = 40.0F * scale;
+    for (const std::size_t lineCount : wrappedLineCounts) {
+        const float rowHeight = std::max(
+            25.0F * scale,
+            (10.0F + static_cast<float>(lineCount) * 14.0F) * scale);
+        layout.rowHeights.push_back(rowHeight);
+        height += rowHeight + 4.0F * scale;
+    }
+    height += 8.0F * scale;
+    layout.panelHeight = std::max(130.0F * scale, height);
+    return layout;
 }
 
 } // namespace basilisk::game

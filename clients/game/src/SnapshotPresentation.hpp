@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -21,10 +23,19 @@ struct SecondaryObjectivePresentation {
     std::optional<std::string> detail;
 };
 
+struct RoundReportLayout {
+    std::vector<float> rowHeights;
+    float panelHeight{0.0F};
+};
+
 [[nodiscard]] std::optional<SecondaryObjectivePresentation>
 secondaryObjectivePresentation(const PlayerRoundSnapshot& snapshot);
 
 [[nodiscard]] std::vector<std::string> roundReportText(
     const PlayerRoundSnapshot& snapshot);
+
+[[nodiscard]] RoundReportLayout roundReportLayout(
+    std::span<const std::size_t> wrappedLineCounts,
+    float scale);
 
 } // namespace basilisk::game

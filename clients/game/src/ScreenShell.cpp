@@ -223,17 +223,17 @@ std::optional<float> roundReportHeight(
 
     const float scale = context.scale;
     const std::vector<std::string> report = roundReportText(snapshot);
-    const std::size_t visible = std::min<std::size_t>(3, report.size());
 
     const float rowWidth = panelWidth - 26.0F * scale;
     const float textWidth = rowWidth - 25.0F * scale;
 
-    float height = 40.0F * scale;
+    std::vector<std::size_t> wrappedLineCounts;
+    wrappedLineCounts.reserve(report.size());
 
-    for (std::size_t index = 0; index < visible; ++index) {
+    for (const std::string& entry : report) {
         const auto lines = wrapTextLines(
             context,
-            report[index],
+            entry,
             FontWeight::Regular,
             ui::Typography::reportBody,
             textWidth);
@@ -242,16 +242,10 @@ std::optional<float> roundReportHeight(
             return std::nullopt;
         }
 
-        const float rowHeight = std::max(
-            25.0F * scale,
-            (10.0F + static_cast<float>(lines->size()) * 14.0F) * scale);
-
-        height += rowHeight + 4.0F * scale;
+        wrappedLineCounts.push_back(lines->size());
     }
 
-    height += 8.0F * scale;
-
-    return std::max(130.0F * scale, height);
+    return roundReportLayout(wrappedLineCounts, scale).panelHeight;
 }
 
 const PublicPlayerSlot* findSlot(
@@ -902,11 +896,10 @@ bool drawRoundReport(
     }
 
     const std::vector<std::string> report = roundReportText(snapshot);
-    const std::size_t visible = std::min<std::size_t>(3, report.size());
 
     float rowY = panel.y + 40.0F * scale;
 
-    for (std::size_t index = 0; index < visible; ++index) {
+    for (std::size_t index = 0; index < report.size(); ++index) {
         const float rowWidth = panel.w - 26.0F * scale;
         const float textWidth = rowWidth - 25.0F * scale;
 
@@ -921,9 +914,9 @@ bool drawRoundReport(
             return false;
         }
 
-        const float rowHeight = std::max(
-            25.0F * scale,
-            (10.0F + static_cast<float>(lines->size()) * 14.0F) * scale);
+        const std::size_t lineCount = lines->size();
+        const float rowHeight =
+            roundReportLayout(std::span{&lineCount, 1}, scale).rowHeights.front();
 
         const SDL_FRect row{
             panel.x + 13.0F * scale,
