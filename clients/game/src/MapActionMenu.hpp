@@ -52,6 +52,10 @@ struct MapActionMenuChoice {
     bool operator==(const MapActionMenuChoice&) const = default;
 };
 
+[[nodiscard]] std::string mapActionMenuChoiceTitle(
+    MapActionMenuChoice choice,
+    std::span<const AvailableAction> actions);
+
 class MapActionMenuState {
 public:
     [[nodiscard]] bool open(
