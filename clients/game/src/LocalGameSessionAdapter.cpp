@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -19,8 +20,6 @@ namespace basilisk::game {
 namespace {
 
 constexpr PlayerId kLocalPlayer{1};
-constexpr double kWideMapTargetAspect = 1.4;
-constexpr double kMaximumHorizontalLayoutScale = 2.5;
 
 PlayerMapView fullPhysicalMap(const MatchState& state) {
     PlayerMapView map;
@@ -49,10 +48,7 @@ public:
         : state_(std::move(state)), coordinator_(state_) {
         const PlayerMapView physicalMap = fullPhysicalMap(state_);
         fullLayout_.update(physicalMap);
-        fullLayout_.finalizeFullLayout(
-            physicalMap,
-            kWideMapTargetAspect,
-            kMaximumHorizontalLayoutScale);
+        fullLayout_.finalizeFullLayout(physicalMap);
     }
 
     void attach(ClientSessionController& session) noexcept {
@@ -82,6 +78,30 @@ public:
         if (!coordinator_.submitAction(action)) return false;
         return publishSnapshot(coordinator_.lastEvents());
     }
+
+#if defined(BASILISK_GAME_DEBUG_BUILD)
+    [[nodiscard]] debug::DebugMapTruth debugMapTruth() const {
+        debug::DebugMapTruth truth;
+        truth.fullBounds = fullLayout_.positionedBounds();
+        for (const CaveId cave : state_.world.caveIds()) {
+            if (const auto position = fullLayout_.cavePosition(cave)) {
+                truth.cavePositions.emplace(cave, *position);
+            }
+        }
+
+        std::set<debug::PhysicalTunnel> tunnels;
+        for (const CaveId source : state_.world.caveIds()) {
+            for (const CaveId destination :
+                 state_.world.cave(source).connections) {
+                const auto [first, second] =
+                    std::minmax(source, destination);
+                tunnels.insert(debug::PhysicalTunnel{first, second});
+            }
+        }
+        truth.tunnels.assign(tunnels.begin(), tunnels.end());
+        return truth;
+    }
+#endif
 
 private:
     [[nodiscard]] bool publishSnapshot(const std::vector<GameEvent>& events) {
@@ -133,12 +153,12 @@ public:
     }
 };
 
-} // namespace
+struct LocalSessionAssembly {
+    std::unique_ptr<ClientSessionController> session;
+    LocalActionCommandSink* actions{nullptr};
+};
 
-std::unique_ptr<ClientSessionController> LocalGameSessionAdapter::create(
-    MapSeed mapSeed,
-    MatchSeed matchSeed) {
-
+LocalSessionAssembly createLocalSession(MapSeed mapSeed, MatchSeed matchSeed) {
     MatchState state = MapGenerator::generate(mapSeed, matchSeed);
     std::erase_if(state.players, [](const PlayerState& player) {
         return player.id != kLocalPlayer;
@@ -168,8 +188,30 @@ std::unique_ptr<ClientSessionController> LocalGameSessionAdapter::create(
         std::move(actions),
         std::make_unique<LocalSessionCommandSink>());
     localActions->attach(*session);
-    if (!localActions->publishInitialSnapshot()) return nullptr;
-    return session;
+    if (!localActions->publishInitialSnapshot()) return {};
+    return {std::move(session), localActions};
 }
+
+} // namespace
+
+std::unique_ptr<ClientSessionController> LocalGameSessionAdapter::create(
+    MapSeed mapSeed,
+    MatchSeed matchSeed) {
+
+    return createLocalSession(mapSeed, matchSeed).session;
+}
+
+#if defined(BASILISK_GAME_DEBUG_BUILD)
+LocalGameSessionAdapter::DebugSession LocalGameSessionAdapter::createDebug(
+    MapSeed mapSeed,
+    MatchSeed matchSeed) {
+
+    LocalSessionAssembly assembly = createLocalSession(mapSeed, matchSeed);
+    if (assembly.session == nullptr || assembly.actions == nullptr) return {};
+    auto provider = std::make_unique<debug::DebugMapProvider>(
+        assembly.actions->debugMapTruth());
+    return {std::move(assembly.session), std::move(provider)};
+}
+#endif
 
 } // namespace basilisk::game

@@ -192,53 +192,127 @@ configure_file(
 )
 unset(_font_name)
 
-add_executable(BasiliskGame
+add_library(BasiliskGameRuntime STATIC
     src/DemoActionCommandSink.cpp
     src/DemoMap.cpp
     src/DemoSessionCommandSink.cpp
     src/DemoUi.cpp
-    src/main.cpp
     src/MapRenderer.cpp
-    src/ScreenShell.cpp
     src/SvgTextureManager.cpp
     src/TextRenderer.cpp
 )
 
-target_link_libraries(BasiliskGame
-    PRIVATE
+target_include_directories(BasiliskGameRuntime
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(BasiliskGameRuntime
+    PUBLIC
         Basilisk::GameAssets
-        Basilisk::GameLocalSession
         SDL3::SDL3
         SDL3_image::SDL3_image
         SDL3_ttf::SDL3_ttf
 )
-target_compile_features(BasiliskGame PRIVATE cxx_std_20)
+target_compile_features(BasiliskGameRuntime PUBLIC cxx_std_20)
 
-add_custom_command(
-    TARGET BasiliskGame
-    POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-        "$<TARGET_FILE_DIR:BasiliskGame>/assets/fonts"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${BASILISK_GAME_FONT_ASSET_DIR}"
-        "$<TARGET_FILE_DIR:BasiliskGame>/assets/fonts"
-    COMMENT "Packaging Inter font assets"
-)
+function(basilisk_add_game_executable target)
+    add_executable(${target}
+        src/main.cpp
+        src/ScreenShell.cpp
+    )
+    target_link_libraries(${target} PRIVATE BasiliskGameRuntime)
+    target_compile_features(${target} PRIVATE cxx_std_20)
 
-add_custom_command(
-    TARGET BasiliskGame
-    POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/ui"
-        "$<TARGET_FILE_DIR:BasiliskGame>/assets/ui"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/items"
-        "$<TARGET_FILE_DIR:BasiliskGame>/assets/items"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/emblems"
-        "$<TARGET_FILE_DIR:BasiliskGame>/assets/emblems"
-    COMMENT "Packaging SVG UI assets"
-)
+    add_custom_command(
+        TARGET ${target}
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:${target}>/assets/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${BASILISK_GAME_FONT_ASSET_DIR}"
+            "$<TARGET_FILE_DIR:${target}>/assets/fonts"
+        COMMENT "Packaging Inter font assets for ${target}"
+    )
+
+    add_custom_command(
+        TARGET ${target}
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/ui"
+            "$<TARGET_FILE_DIR:${target}>/assets/ui"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/items"
+            "$<TARGET_FILE_DIR:${target}>/assets/items"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/emblems"
+            "$<TARGET_FILE_DIR:${target}>/assets/emblems"
+        COMMENT "Packaging SVG UI assets for ${target}"
+    )
+endfunction()
+
+basilisk_add_game_executable(BasiliskGame)
+target_link_libraries(BasiliskGame PRIVATE Basilisk::GameLocalSession)
+
+if(NOT EMSCRIPTEN)
+    add_library(BasiliskGameDebugSupport STATIC
+        src/DebugMapProvider.cpp
+        src/DebugMapRenderer.cpp
+    )
+    add_library(Basilisk::GameDebugSupport ALIAS BasiliskGameDebugSupport)
+    target_include_directories(BasiliskGameDebugSupport
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_definitions(
+        BasiliskGameDebugSupport
+        PUBLIC
+            BASILISK_GAME_DEBUG_BUILD=1
+    )
+    target_link_libraries(
+        BasiliskGameDebugSupport
+        PUBLIC
+            Basilisk::GameMapLayout
+            SDL3::SDL3
+            SDL3_ttf::SDL3_ttf
+    )
+    target_compile_features(BasiliskGameDebugSupport PUBLIC cxx_std_20)
+
+    add_library(BasiliskGameDebugLocalSession STATIC
+        src/LocalGameSessionAdapter.cpp
+    )
+    add_library(
+        Basilisk::GameDebugLocalSession
+        ALIAS BasiliskGameDebugLocalSession
+    )
+    target_include_directories(BasiliskGameDebugLocalSession
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_definitions(
+        BasiliskGameDebugLocalSession
+        PUBLIC
+            BASILISK_GAME_DEBUG_BUILD=1
+    )
+    target_link_libraries(
+        BasiliskGameDebugLocalSession
+        PUBLIC
+            Basilisk::GameActions
+            Basilisk::GameMapLayout
+            Basilisk::GameDebugSupport
+        PRIVATE
+            Basilisk::Core
+    )
+    target_compile_features(BasiliskGameDebugLocalSession PUBLIC cxx_std_20)
+
+    basilisk_add_game_executable(BasiliskGameDebug)
+    target_compile_definitions(BasiliskGameDebug PRIVATE BASILISK_GAME_DEBUG=1)
+    target_link_libraries(
+        BasiliskGameDebug
+        PRIVATE
+            Basilisk::GameDebugLocalSession
+            Basilisk::GameDebugSupport
+    )
+endif()
 
 if(EMSCRIPTEN)
     set_target_properties(BasiliskGame PROPERTIES SUFFIX ".html")

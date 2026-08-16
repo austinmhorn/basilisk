@@ -319,6 +319,12 @@ void PlayerMapLayout::update(const PlayerMapView& map) {
     }
 }
 
+void PlayerMapLayout::finalizeFullLayout(const PlayerMapView& fullMap) {
+    constexpr double targetAspect = 1.4;
+    constexpr double maximumHorizontalScale = 2.5;
+    finalizeFullLayout(fullMap, targetAspect, maximumHorizontalScale);
+}
+
 void PlayerMapLayout::finalizeFullLayout(
     const PlayerMapView& fullMap,
     double targetAspect,

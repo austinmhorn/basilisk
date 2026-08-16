@@ -52,6 +52,7 @@ public:
 
     // Host-side deterministic finalization for a complete physical layout.
     // The topology is used only while generating fixed presentation geometry.
+    void finalizeFullLayout(const PlayerMapView& fullMap);
     void finalizeFullLayout(
         const PlayerMapView& fullMap,
         double targetAspect,

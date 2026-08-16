@@ -27,6 +27,10 @@
 #include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/Random.hpp"
 
+#if defined(BASILISK_GAME_DEBUG)
+#include "DebugMapProvider.hpp"
+#endif
+
 namespace {
 
 struct AppState {
@@ -52,6 +56,10 @@ struct AppState {
     basilisk::game::MapActionMenuGeometry mapActionMenuGeometry;
     basilisk::game::LifecycleModalGeometry lifecycleModalGeometry;
     std::optional<basilisk::RoundNumber> mapActionMenuRound;
+#if defined(BASILISK_GAME_DEBUG)
+    std::unique_ptr<basilisk::game::debug::DebugMapProvider> debugMapProvider;
+    basilisk::game::debug::DebugMapRevealState debugMapReveal;
+#endif
 };
 
 std::string bundledFontDirectory() {
@@ -138,13 +146,28 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
                 mapSeed = parsed;
             }
 
+#if defined(BASILISK_GAME_DEBUG)
+            auto debugSession =
+                basilisk::game::LocalGameSessionAdapter::createDebug(
+                    mapSeed,
+                    basilisk::MatchSeed{424242});
+            state->session = std::move(debugSession.session);
+            state->debugMapProvider = std::move(debugSession.mapProvider);
+#else
             state->session = basilisk::game::LocalGameSessionAdapter::create(
                 mapSeed,
                 basilisk::MatchSeed{424242});
+#endif
             if (state->session == nullptr) {
                 SDL_Log("Unable to create local Core session");
                 return SDL_APP_FAILURE;
             }
+#if defined(BASILISK_GAME_DEBUG)
+            if (state->debugMapProvider == nullptr) {
+                SDL_Log("Unable to create debug map provider");
+                return SDL_APP_FAILURE;
+            }
+#endif
             state->screenShellEnabled = true;
             state->autoLockSelectedActions = true;
             SDL_Log(
@@ -224,6 +247,21 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     if (event->type == SDL_EVENT_QUIT) {
         return SDL_APP_SUCCESS;
     }
+
+#if defined(BASILISK_GAME_DEBUG)
+    if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
+        !event->key.repeat && event->key.key == SDLK_F1) {
+        if (state->debugMapProvider == nullptr) {
+            SDL_Log("Debug map reveal is available only in --local-game");
+        } else {
+            state->debugMapReveal.toggle();
+            SDL_Log(
+                "Debug map reveal %s",
+                state->debugMapReveal.revealed() ? "enabled" : "disabled");
+        }
+        return SDL_APP_CONTINUE;
+    }
+#endif
 
     if (state != nullptr && state->demoMapEnabled &&
         event->type == SDL_EVENT_KEY_DOWN && !event->key.repeat &&
@@ -608,6 +646,12 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     state->mapActionMenu,
                     state->mapActionMenuGeometry,
                     state->lifecycleModalGeometry,
+#if defined(BASILISK_GAME_DEBUG)
+                    state->debugMapProvider == nullptr
+                        ? nullptr
+                        : &state->debugMapProvider->truth(),
+                    state->debugMapReveal.revealed(),
+#endif
                     outputWidth,
                     outputHeight,
                     screenError)) {

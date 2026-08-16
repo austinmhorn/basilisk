@@ -12,6 +12,10 @@
 #include "UITheme.hpp"
 #include "basilisk/client/Presentation.hpp"
 
+#if defined(BASILISK_GAME_DEBUG)
+#include "DebugMapRenderer.hpp"
+#endif
+
 namespace basilisk::game {
 namespace {
 
@@ -1609,6 +1613,10 @@ bool renderScreenShell(
     const MapActionMenuState& mapActionMenu,
     MapActionMenuGeometry& mapActionMenuGeometry,
     LifecycleModalGeometry& lifecycleModalGeometry,
+#if defined(BASILISK_GAME_DEBUG)
+    const debug::DebugMapTruth* debugMapTruth,
+    bool revealDebugMap,
+#endif
     int outputWidth,
     int outputHeight,
     std::string& error) {
@@ -1741,6 +1749,19 @@ bool renderScreenShell(
         SDL_SetRenderClipRect(renderer, nullptr);
         return false;
     }
+#if defined(BASILISK_GAME_DEBUG)
+    if (revealDebugMap && debugMapTruth != nullptr &&
+        !debug::renderRevealedPhysicalMap(
+            renderer,
+            textRenderer,
+            *debugMapTruth,
+            snapshot,
+            mapGeometry,
+            error)) {
+        SDL_SetRenderClipRect(renderer, nullptr);
+        return false;
+    }
+#endif
     SDL_SetRenderClipRect(renderer, nullptr);
 
     if (!drawHeaderHud(context, snapshot, session, headerHeight)) return false;

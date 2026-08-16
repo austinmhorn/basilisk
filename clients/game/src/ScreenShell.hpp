@@ -17,6 +17,10 @@
 #include "TextRenderer.hpp"
 #include "basilisk/ClientSnapshot.hpp"
 
+#if defined(BASILISK_GAME_DEBUG)
+#include "DebugMapProvider.hpp"
+#endif
+
 namespace basilisk::game {
 
 struct ActionRowGeometry {
@@ -99,6 +103,10 @@ struct LifecycleModalGeometry {
     const MapActionMenuState& mapActionMenu,
     MapActionMenuGeometry& mapActionMenuGeometry,
     LifecycleModalGeometry& lifecycleModalGeometry,
+#if defined(BASILISK_GAME_DEBUG)
+    const debug::DebugMapTruth* debugMapTruth,
+    bool revealDebugMap,
+#endif
     int outputWidth,
     int outputHeight,
     std::string& error);

@@ -95,6 +95,18 @@ if(TARGET BasiliskGameAssets)
     add_test(NAME BasiliskGameAssetCatalogTests COMMAND BasiliskGameAssetCatalogTests)
 endif()
 
+if(TARGET BasiliskGameDebugLocalSession)
+    add_executable(BasiliskGameDebugMapTests
+        game_debug_map_tests.cpp
+    )
+    target_link_libraries(
+        BasiliskGameDebugMapTests
+        PRIVATE
+            Basilisk::GameDebugLocalSession
+    )
+    add_test(NAME BasiliskGameDebugMapTests COMMAND BasiliskGameDebugMapTests)
+endif()
+
 if(TARGET BasiliskGameActions)
     add_executable(BasiliskGameActionTests
         game_action_tests.cpp
