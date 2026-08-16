@@ -52,6 +52,8 @@ std::string observationText(const PlayerObservation& observation) {
             return "A Jackal overwhelms you, knocks you unconscious, and drags you deeper into the caverns.";
         case ObservationType::JackalRepelled:
             return "Your Jackal Repellent drives the attacking Jackal back.";
+        case ObservationType::JackalStunned:
+            return "Your arrow strikes the Jackal, stunning it.";
         case ObservationType::RivalDied:
             return "The rival hunter has died somewhere in the caverns. The hunt continues; their Sigil can still be recovered.";
         case ObservationType::RivalDisconnected:

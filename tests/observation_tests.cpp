@@ -167,6 +167,23 @@ void ownBasiliskShotGetsOutcomeFeedback() {
     assert(!hasType(playerB, ObservationType::BasiliskEvaded));
 }
 
+void jackalStunConfirmationIsPrivateToShooter() {
+    auto state = makeObservationWorld();
+    const std::vector<GameEvent> events{
+        GameEvent{GameEventType::JackalStunned, PlayerId{1}, std::nullopt,
+                  CaveId{2}, 2}
+    };
+
+    const auto shooter = ObservationSystem::buildForPlayer(state, 1, events);
+    const auto rival = ObservationSystem::buildForPlayer(state, 2, events);
+    const auto* confirmation = findType(shooter, ObservationType::JackalStunned);
+
+    assert(confirmation != nullptr);
+    assert(!confirmation->cave.has_value());
+    assert(confirmation->amount == 0);
+    assert(!hasType(rival, ObservationType::JackalStunned));
+}
+
 void pitDeathExplainsCauseAndHidesRivalLocation() {
     auto state = makeObservationWorld();
     state.players[1].alive = false;
@@ -279,6 +296,7 @@ int main() {
     privateLootDoesNotLeakToOtherHunter();
     exactRivalMovementEventIsNotForwarded();
     ownBasiliskShotGetsOutcomeFeedback();
+    jackalStunConfirmationIsPrivateToShooter();
     pitDeathExplainsCauseAndHidesRivalLocation();
     basiliskContactDeathExplainsCauseOnlyToVictim();
     nonBasiliskDeathKeepsGenericDeathObservation();

@@ -110,6 +110,9 @@ void addEventFeedback(const MatchState& state, const PlayerState& viewer,
             case GameEventType::JackalRepelled:
                 if (event.targetPlayer == viewer.id) observations.push_back(PlayerObservation{ObservationType::JackalRepelled, viewer.id});
                 break;
+            case GameEventType::JackalStunned:
+                if (event.actor == viewer.id) observations.push_back(PlayerObservation{ObservationType::JackalStunned, viewer.id});
+                break;
             case GameEventType::PitInvestigationSucceeded:
                 if (event.actor == viewer.id) { PlayerObservation o{ObservationType::PitInvestigationSucceeded, viewer.id}; o.cave = event.cave; o.tunnel = event.tunnel; observations.push_back(o); }
                 break;

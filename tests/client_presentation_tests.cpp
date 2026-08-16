@@ -40,6 +40,8 @@ void staticObservationTextIsStable() {
            "The air shifts unpredictably. You can't tell which tunnel the draft is coming from.");
     assert(presentation::observationText(observation(ObservationType::BasiliskEvaded)) ==
            "Your arrow found the Basilisk, but it evaded the killing blow.");
+    assert(presentation::observationText(observation(ObservationType::JackalStunned)) ==
+           "Your arrow strikes the Jackal, stunning it.");
     assert(presentation::observationText(observation(ObservationType::MatchDrawn)) ==
            "The hunt ends in a draw.");
 }

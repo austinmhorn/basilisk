@@ -30,6 +30,7 @@ enum class ObservationType {
     JackalScaredYou,
     JackalKnockedOutYou,
     JackalRepelled,
+    JackalStunned,
     RivalDied,
     RivalDisconnected,
     RivalReconnected,
