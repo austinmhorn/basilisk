@@ -1,3 +1,12 @@
+# The test suite uses assert() for both checks and test-driving expressions.
+# Release configurations define NDEBUG globally, so explicitly undefine it for
+# every C++ target created in this directory.
+if(MSVC)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/UNDEBUG>)
+else()
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-UNDEBUG>)
+endif()
+
 add_executable(BasiliskCoreTests
     core_tests.cpp
 )
