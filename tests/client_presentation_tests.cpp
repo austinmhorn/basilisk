@@ -42,6 +42,16 @@ void staticObservationTextIsStable() {
            "Your arrow found the Basilisk, but it evaded the killing blow.");
     assert(presentation::observationText(observation(ObservationType::JackalStunned)) ==
            "Your arrow strikes the Jackal, stunning it.");
+    assert(presentation::observationText(observation(ObservationType::ArrowMissed)) ==
+           "Your arrow misses its target.");
+    assert(presentation::observationText(observation(ObservationType::YouHitRival)) ==
+           "Your arrow strikes the rival hunter.");
+    assert(presentation::observationText(observation(ObservationType::CaveAlreadySearched)) ==
+           "This cave has already been searched.");
+    assert(presentation::observationText(observation(ObservationType::SearchEmpty)) ==
+           "Your search turns up nothing.");
+    assert(presentation::observationText(observation(ObservationType::BasiliskBehaviorChanged)) ==
+           "Something about the Basilisk's behavior has changed.");
     assert(presentation::observationText(observation(ObservationType::MatchDrawn)) ==
            "The hunt ends in a draw.");
 }
@@ -73,6 +83,20 @@ void payloadObservationTextIsStable() {
     auto arrows = observation(ObservationType::ArrowFound);
     arrows.amount = 2;
     assert(presentation::observationText(arrows) == "You found 2 arrow(s).");
+
+    auto full = observation(ObservationType::InventoryFull);
+    full.itemType = ItemType::OldMinersMap;
+    assert(presentation::observationText(full) ==
+           "You found: Old Miner's Map, but your inventory is full.");
+
+    auto used = observation(ObservationType::ItemUsed);
+    used.itemType = ItemType::BloodBait;
+    assert(presentation::observationText(used) == "You used: Blood Bait.");
+
+    auto healed = observation(ObservationType::PlayerHealed);
+    healed.amount = 35;
+    assert(presentation::observationText(healed) ==
+           "You restore 35 health.");
 }
 
 void optionalPayloadFallbacksAreStable() {

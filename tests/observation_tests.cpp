@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <iostream>
 #include <vector>
@@ -184,6 +185,150 @@ void jackalStunConfirmationIsPrivateToShooter() {
     assert(!hasType(rival, ObservationType::JackalStunned));
 }
 
+void pvpFeedbackDistinguishesHitsKillsAndOtherHunters() {
+    auto state = makeObservationWorld();
+    state.players.push_back(PlayerState{3, 7, 100, 3, true});
+
+    const std::vector<GameEvent> nonlethal{
+        GameEvent{GameEventType::ArrowHitPlayer, PlayerId{1}, PlayerId{2},
+                  CaveId{2}, 50},
+        GameEvent{GameEventType::PlayerDamaged, PlayerId{1}, PlayerId{2},
+                  CaveId{2}, 50},
+    };
+    const auto shooterHit =
+        ObservationSystem::buildForPlayer(state, 1, nonlethal);
+    const auto victimHit =
+        ObservationSystem::buildForPlayer(state, 2, nonlethal);
+    const auto observerHit =
+        ObservationSystem::buildForPlayer(state, 3, nonlethal);
+    assert(hasType(shooterHit, ObservationType::YouHitRival));
+    assert(!hasType(shooterHit, ObservationType::YouKilledRival));
+    assert(hasType(victimHit, ObservationType::ArrowHitYou));
+    assert(!hasType(victimHit, ObservationType::YouHitRival));
+    assert(!hasType(observerHit, ObservationType::YouHitRival));
+
+    state.players[1].alive = false;
+    state.players[1].health = 0;
+    const std::vector<GameEvent> lethal{
+        GameEvent{GameEventType::ArrowHitPlayer, PlayerId{1}, PlayerId{2},
+                  CaveId{2}, 50},
+        GameEvent{GameEventType::PlayerDamaged, PlayerId{1}, PlayerId{2},
+                  CaveId{2}, 50},
+        GameEvent{GameEventType::PlayerKilled, PlayerId{1}, PlayerId{2},
+                  CaveId{2}},
+    };
+    const auto killer = ObservationSystem::buildForPlayer(state, 1, lethal);
+    const auto observer = ObservationSystem::buildForPlayer(state, 3, lethal);
+    assert(hasType(killer, ObservationType::YouKilledRival));
+    assert(!hasType(killer, ObservationType::YouHitRival));
+    assert(!hasType(killer, ObservationType::RivalDied));
+    assert(hasType(observer, ObservationType::RivalDied));
+    assert(!hasType(observer, ObservationType::YouKilledRival));
+}
+
+void privateFailureFeedbackGoesOnlyToActor() {
+    auto state = makeObservationWorld();
+    const std::vector<GameEvent> events{
+        GameEvent{GameEventType::ArrowMissed, PlayerId{1}, std::nullopt,
+                  CaveId{2}},
+        GameEvent{GameEventType::CaveAlreadySearched, PlayerId{1},
+                  std::nullopt, CaveId{1}},
+        GameEvent{GameEventType::InventoryFull, PlayerId{1}, std::nullopt,
+                  CaveId{1}, 0, std::nullopt, ItemType::BloodBait},
+    };
+
+    const auto actor = ObservationSystem::buildForPlayer(state, 1, events);
+    const auto rival = ObservationSystem::buildForPlayer(state, 2, events);
+    assert(hasType(actor, ObservationType::ArrowMissed));
+    assert(hasType(actor, ObservationType::CaveAlreadySearched));
+    const auto* full = findType(actor, ObservationType::InventoryFull);
+    assert(full != nullptr && full->itemType == ItemType::BloodBait);
+    assert(!hasType(rival, ObservationType::ArrowMissed));
+    assert(!hasType(rival, ObservationType::CaveAlreadySearched));
+    assert(!hasType(rival, ObservationType::InventoryFull));
+}
+
+void emptySearchFeedbackIsSuppressedByConcreteOutcomes() {
+    auto state = makeObservationWorld();
+    const GameEvent completed{
+        GameEventType::SearchCompleted, PlayerId{1}, std::nullopt, CaveId{1}};
+    auto observations =
+        ObservationSystem::buildForPlayer(state, 1, {completed});
+    assert(hasType(observations, ObservationType::SearchEmpty));
+    assert(!hasType(
+        ObservationSystem::buildForPlayer(state, 2, {completed}),
+        ObservationType::SearchEmpty));
+
+    constexpr std::array concreteOutcomes{
+        GameEventType::ItemFound,
+        GameEventType::OldHuntersMapFound,
+        GameEventType::InventoryFull,
+        GameEventType::ExoticCallingCardFound,
+    };
+    for (const GameEventType outcome : concreteOutcomes) {
+        GameEvent result{outcome, PlayerId{1}, std::nullopt, CaveId{1}};
+        result.itemType = ItemType::OldMinersMap;
+        observations = ObservationSystem::buildForPlayer(
+            state, 1, {completed, result});
+        assert(!hasType(observations, ObservationType::SearchEmpty));
+    }
+}
+
+void itemUseFeedbackAvoidsHealingDuplication() {
+    auto state = makeObservationWorld();
+    const std::vector<GameEvent> healing{
+        GameEvent{GameEventType::ItemUsed, PlayerId{1}, std::nullopt,
+                  CaveId{1}, 1, std::nullopt, ItemType::HealingDraught},
+        GameEvent{GameEventType::PlayerHealed, PlayerId{1}, PlayerId{1},
+                  CaveId{1}, 35, std::nullopt, ItemType::HealingDraught},
+    };
+    const auto healed = ObservationSystem::buildForPlayer(state, 1, healing);
+    assert(hasType(healed, ObservationType::PlayerHealed));
+    assert(!hasType(healed, ObservationType::ItemUsed));
+    assert(findType(healed, ObservationType::PlayerHealed)->amount == 35);
+
+    constexpr std::array confirmedItems{
+        ItemType::OldMinersMap,
+        ItemType::JackalRepellent,
+        ItemType::SurveyFragment,
+        ItemType::BloodBait,
+    };
+    for (const ItemType item : confirmedItems) {
+        const std::vector<GameEvent> events{
+            GameEvent{GameEventType::ItemUsed, PlayerId{1}, std::nullopt,
+                      CaveId{1}, 1, std::nullopt, item},
+        };
+        const auto actor = ObservationSystem::buildForPlayer(state, 1, events);
+        const auto rival = ObservationSystem::buildForPlayer(state, 2, events);
+        const auto* used = findType(actor, ObservationType::ItemUsed);
+        assert(used != nullptr && used->itemType == item);
+        assert(!hasType(rival, ObservationType::ItemUsed));
+    }
+}
+
+void behaviorChangeFeedbackRequiresOwnBasiliskHit() {
+    auto state = makeObservationWorld();
+    const std::vector<GameEvent> events{
+        GameEvent{GameEventType::BasiliskBehaviorChanged, std::nullopt,
+                  std::nullopt, CaveId{3}, 0, BasiliskBehavior::Restless},
+        GameEvent{GameEventType::ArrowReachedBasilisk, PlayerId{1},
+                  std::nullopt, CaveId{3}, 1, BasiliskBehavior::Normal},
+    };
+
+    const auto shooter = ObservationSystem::buildForPlayer(state, 1, events);
+    const auto rival = ObservationSystem::buildForPlayer(state, 2, events);
+    const auto* changed =
+        findType(shooter, ObservationType::BasiliskBehaviorChanged);
+    assert(changed != nullptr);
+    assert(!changed->cave.has_value());
+    assert(!changed->basiliskBehavior.has_value());
+    assert(!hasType(rival, ObservationType::BasiliskBehaviorChanged));
+
+    const auto noWitness = ObservationSystem::buildForPlayer(
+        state, 1, {events.front()});
+    assert(!hasType(noWitness, ObservationType::BasiliskBehaviorChanged));
+}
+
 void pitDeathExplainsCauseAndHidesRivalLocation() {
     auto state = makeObservationWorld();
     state.players[1].alive = false;
@@ -297,6 +442,11 @@ int main() {
     exactRivalMovementEventIsNotForwarded();
     ownBasiliskShotGetsOutcomeFeedback();
     jackalStunConfirmationIsPrivateToShooter();
+    pvpFeedbackDistinguishesHitsKillsAndOtherHunters();
+    privateFailureFeedbackGoesOnlyToActor();
+    emptySearchFeedbackIsSuppressedByConcreteOutcomes();
+    itemUseFeedbackAvoidsHealingDuplication();
+    behaviorChangeFeedbackRequiresOwnBasiliskHit();
     pitDeathExplainsCauseAndHidesRivalLocation();
     basiliskContactDeathExplainsCauseOnlyToVictim();
     nonBasiliskDeathKeepsGenericDeathObservation();

@@ -16,6 +16,51 @@ const PlayerState* findPlayer(const MatchState& state, PlayerId id) {
     return it == state.players.end() ? nullptr : &*it;
 }
 
+bool isLethalPlayerHit(
+    const GameEvent& hit,
+    const std::vector<GameEvent>& events) {
+
+    return std::any_of(
+        events.begin(), events.end(), [&](const GameEvent& event) {
+            return event.type == GameEventType::PlayerKilled &&
+                event.actor == hit.actor &&
+                event.targetPlayer == hit.targetPlayer;
+        });
+}
+
+bool hasSearchResult(
+    PlayerId player,
+    const std::vector<GameEvent>& events) {
+
+    return std::any_of(
+        events.begin(), events.end(), [player](const GameEvent& event) {
+            if (event.actor != player) return false;
+            switch (event.type) {
+                case GameEventType::ItemFound:
+                case GameEventType::OldHuntersMapFound:
+                case GameEventType::InventoryFull:
+                case GameEventType::ExoticCallingCardFound:
+                    return true;
+                default:
+                    return false;
+            }
+        });
+}
+
+bool hasPlayerFacingItemUse(ItemType item) {
+    switch (item) {
+        case ItemType::OldMinersMap:
+        case ItemType::JackalRepellent:
+        case ItemType::SurveyFragment:
+        case ItemType::BloodBait:
+            return true;
+        case ItemType::HealingDraught:
+        case ItemType::OldHuntersMap:
+            return false;
+    }
+    return false;
+}
+
 std::optional<int> distanceBetween(const WorldGraph& world, CaveId start, CaveId target) {
     if (!world.contains(start) || !world.contains(target)) return std::nullopt;
     if (start == target) return 0;
@@ -79,18 +124,28 @@ void addEnvironmentalClues(const MatchState& state, const PlayerState& viewer,
 void addEventFeedback(const MatchState& state, const PlayerState& viewer,
                       const std::vector<GameEvent>& events,
                       std::vector<PlayerObservation>& observations) {
-    bool viewerReachedBasilisk = false;
-    bool viewerKilledBasilisk = false;
+    const bool viewerReachedBasilisk = std::any_of(
+        events.begin(), events.end(), [&](const GameEvent& event) {
+            return event.type == GameEventType::ArrowReachedBasilisk &&
+                event.actor == viewer.id;
+        });
+    const bool viewerKilledBasilisk = std::any_of(
+        events.begin(), events.end(), [&](const GameEvent& event) {
+            return event.type == GameEventType::BasiliskKilled &&
+                event.actor == viewer.id;
+        });
     int jackalArrowsStolen = 0;
     const bool viewerFellIntoPit = std::any_of(events.begin(), events.end(), [&](const GameEvent& event) {
         return event.type == GameEventType::PitTriggered && event.targetPlayer == viewer.id;
     });
     for (const auto& event : events) {
-        if (event.type == GameEventType::ArrowReachedBasilisk && event.actor == viewer.id) viewerReachedBasilisk = true;
-        if (event.type == GameEventType::BasiliskKilled && event.actor == viewer.id) viewerKilledBasilisk = true;
         switch (event.type) {
             case GameEventType::ArrowHitPlayer:
                 if (event.targetPlayer == viewer.id) observations.push_back(PlayerObservation{ObservationType::ArrowHitYou, viewer.id, event.cave, event.actor, event.amount});
+                if (event.actor == viewer.id && !isLethalPlayerHit(event, events)) observations.push_back(PlayerObservation{ObservationType::YouHitRival, viewer.id});
+                break;
+            case GameEventType::ArrowMissed:
+                if (event.actor == viewer.id) observations.push_back(PlayerObservation{ObservationType::ArrowMissed, viewer.id});
                 break;
             case GameEventType::PlayerDamaged:
                 if (event.targetPlayer == viewer.id) observations.push_back(PlayerObservation{ObservationType::YouWereDamaged, viewer.id, event.cave, event.actor, event.amount});
@@ -140,10 +195,26 @@ void addEventFeedback(const MatchState& state, const PlayerState& viewer,
                         observations.push_back(PlayerObservation{type, viewer.id, event.cave});
                     }
                 }
+                else if (event.actor == viewer.id) observations.push_back(PlayerObservation{ObservationType::YouKilledRival, viewer.id});
                 else if (event.targetPlayer.has_value() && viewer.alive) observations.push_back(PlayerObservation{ObservationType::RivalDied, viewer.id});
+                break;
+            case GameEventType::CaveAlreadySearched:
+                if (event.actor == viewer.id) observations.push_back(PlayerObservation{ObservationType::CaveAlreadySearched, viewer.id});
+                break;
+            case GameEventType::SearchCompleted:
+                if (event.actor == viewer.id && !hasSearchResult(viewer.id, events)) observations.push_back(PlayerObservation{ObservationType::SearchEmpty, viewer.id});
                 break;
             case GameEventType::ItemFound:
                 if (event.actor == viewer.id) { PlayerObservation o{ObservationType::ItemFound, viewer.id}; o.cave = event.cave; o.itemType = event.itemType; observations.push_back(o); }
+                break;
+            case GameEventType::InventoryFull:
+                if (event.actor == viewer.id) { PlayerObservation o{ObservationType::InventoryFull, viewer.id}; o.itemType = event.itemType; observations.push_back(o); }
+                break;
+            case GameEventType::ItemUsed:
+                if (event.actor == viewer.id && event.itemType.has_value() && hasPlayerFacingItemUse(*event.itemType)) { PlayerObservation o{ObservationType::ItemUsed, viewer.id}; o.itemType = event.itemType; observations.push_back(o); }
+                break;
+            case GameEventType::PlayerHealed:
+                if (event.targetPlayer == viewer.id) observations.push_back(PlayerObservation{ObservationType::PlayerHealed, viewer.id, std::nullopt, std::nullopt, event.amount});
                 break;
             case GameEventType::OldHuntersMapFound:
                 if (event.actor == viewer.id) observations.push_back(PlayerObservation{ObservationType::OldHuntersMapFound, viewer.id, event.cave});
@@ -169,6 +240,9 @@ void addEventFeedback(const MatchState& state, const PlayerState& viewer,
                 break;
             case GameEventType::EscapeAvailable:
                 if (event.actor == viewer.id) observations.push_back(PlayerObservation{ObservationType::EscapeAvailable, viewer.id, event.cave});
+                break;
+            case GameEventType::BasiliskBehaviorChanged:
+                if (viewerReachedBasilisk) observations.push_back(PlayerObservation{ObservationType::BasiliskBehaviorChanged, viewer.id});
                 break;
             case GameEventType::MatchDrawn:
                 observations.push_back(PlayerObservation{ObservationType::MatchDrawn, viewer.id});

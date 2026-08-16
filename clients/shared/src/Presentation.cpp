@@ -36,6 +36,10 @@ std::string observationText(const PlayerObservation& observation) {
                 : "You identify the direction of the cold draft.";
         case ObservationType::PitInvestigationInconclusive:
             return "The air shifts unpredictably. You can't tell which tunnel the draft is coming from.";
+        case ObservationType::ArrowMissed:
+            return "Your arrow misses its target.";
+        case ObservationType::YouHitRival:
+            return "Your arrow strikes the rival hunter.";
         case ObservationType::ArrowHitYou: return "An arrow strikes you.";
         case ObservationType::YouWereDamaged: return "You take " + std::to_string(observation.amount) + " damage.";
         case ObservationType::YouKilledRival: return "The rival hunter falls.";
@@ -64,10 +68,25 @@ std::string observationText(const PlayerObservation& observation) {
             return "The rival hunter exhausted their decision reserve and is out of the hunt.";
         case ObservationType::RivalDisconnectTimedOut:
             return "The rival hunter did not return before the reconnect grace expired and is out of the hunt.";
+        case ObservationType::CaveAlreadySearched:
+            return "This cave has already been searched.";
+        case ObservationType::SearchEmpty:
+            return "Your search turns up nothing.";
         case ObservationType::ItemFound:
             return observation.itemType.has_value()
                 ? "You found: " + std::string(itemName(*observation.itemType)) + "."
                 : "You found an item.";
+        case ObservationType::InventoryFull:
+            return observation.itemType.has_value()
+                ? "You found: " + std::string(itemName(*observation.itemType)) +
+                    ", but your inventory is full."
+                : "You found an item, but your inventory is full.";
+        case ObservationType::ItemUsed:
+            return observation.itemType.has_value()
+                ? "You used: " + std::string(itemName(*observation.itemType)) + "."
+                : "You used an item.";
+        case ObservationType::PlayerHealed:
+            return "You restore " + std::to_string(observation.amount) + " health.";
         case ObservationType::OldHuntersMapFound:
             return "You found: Old Hunter's Map.";
         case ObservationType::OldHuntersMapDistance: {
