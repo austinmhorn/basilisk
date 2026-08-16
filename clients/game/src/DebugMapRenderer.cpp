@@ -340,12 +340,14 @@ bool renderDebugStatusLegend(
     const MapPresentationGeometry& geometry,
     bool mapRevealed,
     bool truthRevealed,
+    BasiliskBehavior behavior,
     std::string& error) {
 
     const float scale = static_cast<float>(geometry.transform.uiScale);
-    const std::array<std::string, 2> lines{
+    const std::array<std::string, 3> lines{
         std::string{"F1  MAP    "} + (mapRevealed ? "ON" : "OFF"),
-        std::string{"F2  TRUTH  "} + (truthRevealed ? "ON" : "OFF")};
+        std::string{"F2  TRUTH  "} + (truthRevealed ? "ON" : "OFF"),
+        std::string{"F3  BEHAVIOR  "} + behaviorName(behavior)};
     float y = static_cast<float>(
         geometry.transform.bounds.y + 10.0 * scale);
     for (const std::string& line : lines) {

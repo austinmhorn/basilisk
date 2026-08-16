@@ -1765,11 +1765,13 @@ bool renderScreenShell(
         SDL_SetRenderClipRect(renderer, nullptr);
         return false;
     }
-    if (debugMapTruth != nullptr && !debug::renderDebugStatusLegend(
+    if (debugMapTruth != nullptr && debugGameplayTruth != nullptr &&
+        !debug::renderDebugStatusLegend(
             textRenderer,
             mapGeometry,
             revealDebugMap,
             revealDebugGameplay,
+            debugGameplayTruth->basiliskBehavior,
             error)) {
         SDL_SetRenderClipRect(renderer, nullptr);
         return false;

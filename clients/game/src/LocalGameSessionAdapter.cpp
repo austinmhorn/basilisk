@@ -105,9 +105,11 @@ public:
     [[nodiscard]] debug::DebugGameplayTruth debugGameplayTruth() const {
         debug::DebugGameplayTruth truth;
         truth.basiliskCave = state_.basilisk.cave;
+        truth.basiliskAlive = state_.basilisk.alive;
         truth.basiliskBehavior = state_.basilisk.behavior;
         truth.basiliskLastCave = state_.basilisk.lastCave;
         truth.basiliskEncounterCount = state_.basilisk.trueEncounters;
+        truth.basiliskRoundsSinceMove = state_.basilisk.roundsSinceMove;
         truth.territorialSearchTarget = state_.mostRecentSearchCave;
         truth.pitCaves.reserve(state_.pits.size());
         for (const PitState& pit : state_.pits) {
@@ -118,6 +120,14 @@ public:
             truth.jackalCaves.push_back(jackal.cave);
         }
         return truth;
+    }
+
+    [[nodiscard]] bool forceBasiliskBehavior(
+        BasiliskBehavior behavior) noexcept {
+
+        state_.basilisk.behavior = behavior;
+        state_.basilisk.roundsSinceMove = 0;
+        return true;
     }
 #endif
 
@@ -230,6 +240,9 @@ LocalGameSessionAdapter::DebugSession LocalGameSessionAdapter::createDebug(
         assembly.actions->debugMapTruth(),
         [actions = assembly.actions] {
             return actions->debugGameplayTruth();
+        },
+        [actions = assembly.actions](BasiliskBehavior behavior) {
+            return actions->forceBasiliskBehavior(behavior);
         });
     return {std::move(assembly.session), std::move(provider)};
 }

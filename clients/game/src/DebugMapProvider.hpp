@@ -31,9 +31,11 @@ struct DebugMapTruth {
 
 struct DebugGameplayTruth {
     CaveId basiliskCave{};
+    bool basiliskAlive{true};
     BasiliskBehavior basiliskBehavior{BasiliskBehavior::Normal};
     std::optional<CaveId> basiliskLastCave;
     int basiliskEncounterCount{0};
+    int basiliskRoundsSinceMove{0};
     std::vector<CaveId> pitCaves;
     std::vector<CaveId> jackalCaves;
     std::optional<CaveId> territorialSearchTarget;
@@ -42,17 +44,21 @@ struct DebugGameplayTruth {
 class DebugMapProvider {
 public:
     using GameplayTruthSource = std::function<DebugGameplayTruth()>;
+    using BehaviorControlSource = std::function<bool(BasiliskBehavior)>;
 
     DebugMapProvider(
         DebugMapTruth mapTruth,
-        GameplayTruthSource gameplayTruthSource);
+        GameplayTruthSource gameplayTruthSource,
+        BehaviorControlSource behaviorControlSource);
 
     [[nodiscard]] const DebugMapTruth& mapTruth() const noexcept;
     [[nodiscard]] DebugGameplayTruth gameplayTruth() const;
+    [[nodiscard]] bool cycleBasiliskBehavior();
 
 private:
     DebugMapTruth mapTruth_;
     GameplayTruthSource gameplayTruthSource_;
+    BehaviorControlSource behaviorControlSource_;
 };
 
 class DebugMapRevealState {

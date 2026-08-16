@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <set>
 #include <vector>
@@ -117,10 +118,13 @@ void gameplayTruthReflectsAuthoritativeState() {
     const DebugGameplayTruth truth =
         debugSession.mapProvider->gameplayTruth();
     assert(truth.basiliskCave == authoritative.basilisk.cave);
+    assert(truth.basiliskAlive == authoritative.basilisk.alive);
     assert(truth.basiliskBehavior == authoritative.basilisk.behavior);
     assert(truth.basiliskLastCave == authoritative.basilisk.lastCave);
     assert(truth.basiliskEncounterCount ==
            authoritative.basilisk.trueEncounters);
+    assert(truth.basiliskRoundsSinceMove ==
+           authoritative.basilisk.roundsSinceMove);
 
     std::vector<CaveId> expectedPits;
     for (const PitState& pit : authoritative.pits) {
@@ -173,6 +177,61 @@ void mapAndGameplayRevealStatesAreIndependent() {
     assert(gameplayReveal.revealed());
 }
 
+void behaviorControlCyclesLiveStateAndResetsMovementClock() {
+    auto debugSession = LocalGameSessionAdapter::createDebug(
+        MapSeed{1}, MatchSeed{424242});
+    assert(debugSession.session != nullptr);
+    assert(debugSession.mapProvider != nullptr);
+
+    const PlayerRoundSnapshot* snapshot =
+        debugSession.session->displayedSnapshot();
+    assert(snapshot != nullptr);
+    const auto search = std::find_if(
+        snapshot->availableActions.begin(),
+        snapshot->availableActions.end(),
+        [](const AvailableAction& action) {
+            return action.type == ActionType::Search;
+        });
+    assert(search != snapshot->availableActions.end());
+    assert(debugSession.session->submitAndLock(*search));
+
+    const DebugGameplayTruth baseline =
+        debugSession.mapProvider->gameplayTruth();
+    assert(baseline.basiliskBehavior == BasiliskBehavior::Normal);
+    assert(baseline.basiliskRoundsSinceMove > 0);
+    const PlayerRoundSnapshot* afterSearch =
+        debugSession.session->displayedSnapshot();
+    assert(afterSearch != nullptr);
+    const RoundNumber unchangedRound = afterSearch->round;
+
+    constexpr std::array expected{
+        BasiliskBehavior::Restless,
+        BasiliskBehavior::Lurker,
+        BasiliskBehavior::Skittish,
+        BasiliskBehavior::Territorial,
+        BasiliskBehavior::Enraged,
+        BasiliskBehavior::Normal,
+    };
+    for (const BasiliskBehavior behavior : expected) {
+        assert(debugSession.mapProvider->cycleBasiliskBehavior());
+        const DebugGameplayTruth truth =
+            debugSession.mapProvider->gameplayTruth();
+        assert(truth.basiliskBehavior == behavior);
+        assert(truth.basiliskRoundsSinceMove == 0);
+        assert(truth.basiliskCave == baseline.basiliskCave);
+        assert(truth.basiliskAlive == baseline.basiliskAlive);
+        assert(truth.basiliskLastCave == baseline.basiliskLastCave);
+        assert(truth.basiliskEncounterCount ==
+               baseline.basiliskEncounterCount);
+        assert(truth.pitCaves == baseline.pitCaves);
+        assert(truth.jackalCaves == baseline.jackalCaves);
+        assert(truth.territorialSearchTarget ==
+               baseline.territorialSearchTarget);
+        assert(debugSession.session->displayedSnapshot()->round ==
+               unchangedRound);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -182,5 +241,6 @@ int main() {
     gameplayTruthReflectsAuthoritativeState();
     gameplayTruthTracksTheRunningSession();
     mapAndGameplayRevealStatesAreIndependent();
+    behaviorControlCyclesLiveStateAndResetsMovementClock();
     return 0;
 }

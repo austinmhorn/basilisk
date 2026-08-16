@@ -276,6 +276,17 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         }
         return SDL_APP_CONTINUE;
     }
+    if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
+        !event->key.repeat && event->key.key == SDLK_F3) {
+        if (state->debugMapProvider == nullptr) {
+            SDL_Log("Debug Basilisk behavior control is available only in --local-game");
+        } else if (!state->debugMapProvider->cycleBasiliskBehavior()) {
+            SDL_Log("Unable to cycle debug Basilisk behavior");
+        } else {
+            SDL_Log("Debug Basilisk behavior cycled");
+        }
+        return SDL_APP_CONTINUE;
+    }
 #endif
 
     if (state != nullptr && state->demoMapEnabled &&
