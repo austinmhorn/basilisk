@@ -11,15 +11,16 @@ PresentedAction presentAvailableAction(const AvailableAction& action) {
         case ActionType::Move:
             if (action.targetCave.has_value()) {
                 return {
-                    "Move to Cave " + std::to_string(*action.targetCave),
-                    "Known tunnel",
+                    "Move",
+                    "Cave " + std::to_string(*action.targetCave) +
+                        " · Known tunnel",
                 };
             }
             if (action.targetTunnel.has_value()) {
                 return {
-                    "Enter unknown exit",
+                    "Move",
                     "Tunnel " + std::to_string(*action.targetTunnel) +
-                        " - destination unknown",
+                        " · Destination unknown",
                 };
             }
             return {"Move", "Available movement action"};
@@ -28,11 +29,12 @@ PresentedAction presentAvailableAction(const AvailableAction& action) {
         case ActionType::Shoot:
             if (action.targetCave.has_value()) {
                 return {
-                    "Fire toward Cave " + std::to_string(*action.targetCave),
-                    "Uses 1 arrow",
+                    "Fire Arrow",
+                    "Cave " + std::to_string(*action.targetCave) +
+                        " · Uses 1 arrow",
                 };
             }
-            return {"Fire an arrow", "Uses 1 arrow"};
+            return {"Fire Arrow", "Uses 1 arrow"};
         case ActionType::UseItem:
             if (action.targetItem.has_value()) {
                 return {

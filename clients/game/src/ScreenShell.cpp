@@ -1388,11 +1388,8 @@ bool drawMapActionMenu(
                     : ui::Theme::surfaceRaised,
             hovered ? ui::Theme::blue : ui::Theme::border,
             scale);
-        const std::string label = choice.kind == MapActionMenuChoiceKind::MarkDestination
-            ? "MARK DESTINATION"
-            : choice.kind == MapActionMenuChoiceKind::ClearDestination
-                ? "CLEAR DESTINATION"
-                : spatialActionTitle(snapshot.availableActions[choice.actionIndex]);
+        const std::string label =
+            mapActionMenuChoiceTitle(choice, snapshot.availableActions);
         if (!context.label(
                 label,
                 FontWeight::SemiBold,
@@ -1608,7 +1605,9 @@ bool renderScreenShell(
     LifecycleModalGeometry& lifecycleModalGeometry,
 #if defined(BASILISK_GAME_DEBUG)
     const debug::DebugMapTruth* debugMapTruth,
+    const debug::DebugGameplayTruth* debugGameplayTruth,
     bool revealDebugMap,
+    bool revealDebugGameplay,
 #endif
     int outputWidth,
     int outputHeight,
@@ -1750,6 +1749,27 @@ bool renderScreenShell(
             *debugMapTruth,
             snapshot,
             mapGeometry,
+            error)) {
+        SDL_SetRenderClipRect(renderer, nullptr);
+        return false;
+    }
+    if (revealDebugGameplay && debugMapTruth != nullptr &&
+        debugGameplayTruth != nullptr &&
+        !debug::renderGameplayTruth(
+            renderer,
+            textRenderer,
+            *debugMapTruth,
+            *debugGameplayTruth,
+            mapGeometry,
+            error)) {
+        SDL_SetRenderClipRect(renderer, nullptr);
+        return false;
+    }
+    if (debugMapTruth != nullptr && !debug::renderDebugStatusLegend(
+            textRenderer,
+            mapGeometry,
+            revealDebugMap,
+            revealDebugGameplay,
             error)) {
         SDL_SetRenderClipRect(renderer, nullptr);
         return false;

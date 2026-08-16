@@ -49,15 +49,32 @@ std::vector<std::size_t> matchingSpatialActionIndices(
 
 std::string spatialActionTitle(const AvailableAction& action) {
     if (action.type == ActionType::Move && action.targetCave.has_value()) {
-        return "MOVE TO CAVE " + std::to_string(*action.targetCave);
+        return "Move";
     }
     if (action.type == ActionType::Move && action.targetTunnel.has_value()) {
-        return "ENTER UNKNOWN EXIT";
+        return "Move";
     }
     if (action.type == ActionType::Shoot && action.targetCave.has_value()) {
-        return "SHOOT INTO CAVE " + std::to_string(*action.targetCave);
+        return "Fire Arrow";
     }
     return presentAvailableAction(action).title;
+}
+
+std::string mapActionMenuChoiceTitle(
+    MapActionMenuChoice choice,
+    std::span<const AvailableAction> actions) {
+
+    switch (choice.kind) {
+        case MapActionMenuChoiceKind::MarkDestination:
+            return "Set Destination";
+        case MapActionMenuChoiceKind::ClearDestination:
+            return "Clear Destination";
+        case MapActionMenuChoiceKind::GameplayAction:
+            return choice.actionIndex < actions.size()
+                ? spatialActionTitle(actions[choice.actionIndex])
+                : std::string{};
+    }
+    return {};
 }
 
 bool MapActionMenuState::open(

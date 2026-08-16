@@ -177,8 +177,10 @@ void rowsComeDirectlyFromEveryAvailableAction() {
     }
     const auto rows = presentAvailableActions(actions);
     assert(rows.size() == actions.size());
-    assert(rows.front().title == "Move to Cave 100");
-    assert(rows.back().title == "Move to Cave 110");
+    assert(rows.front().title == "Move");
+    assert(rows.front().detail == "Cave 100 · Known tunnel");
+    assert(rows.back().title == "Move");
+    assert(rows.back().detail == "Cave 110 · Known tunnel");
 
     ActionSelectionState selection;
     selection.synchronize(RoundNumber{1}, actions.size(), playingView());
@@ -187,6 +189,46 @@ void rowsComeDirectlyFromEveryAvailableAction() {
     assert(selection.select(10, actions, playingView()));
     selection.ensureVisible(10, 3);
     assert(selection.scrollOffset() == 8);
+}
+
+void actionPresentationUsesUnifiedCopyAndTargetDetails() {
+    AvailableAction knownMove = actionWithShape(ActionType::Move);
+    knownMove.targetCave = CaveId{12};
+    const PresentedAction knownMoveRow = presentAvailableAction(knownMove);
+    assert(knownMoveRow.title == "Move");
+    assert(knownMoveRow.detail == "Cave 12 · Known tunnel");
+
+    AvailableAction unknownMove = actionWithShape(ActionType::Move);
+    unknownMove.targetTunnel = TunnelId{6};
+    const PresentedAction unknownMoveRow = presentAvailableAction(unknownMove);
+    assert(unknownMoveRow.title == "Move");
+    assert(unknownMoveRow.detail == "Tunnel 6 · Destination unknown");
+
+    AvailableAction targetedShoot = actionWithShape(ActionType::Shoot);
+    targetedShoot.targetCave = CaveId{16};
+    const PresentedAction targetedShootRow =
+        presentAvailableAction(targetedShoot);
+    assert(targetedShootRow.title == "Fire Arrow");
+    assert(targetedShootRow.detail == "Cave 16 · Uses 1 arrow");
+
+    const PresentedAction untargetedShootRow =
+        presentAvailableAction(actionWithShape(ActionType::Shoot));
+    assert(untargetedShootRow.title == "Fire Arrow");
+    assert(untargetedShootRow.detail == "Uses 1 arrow");
+
+    const std::array actions{knownMove, targetedShoot};
+    assert(mapActionMenuChoiceTitle(
+               {MapActionMenuChoiceKind::GameplayAction, 0}, actions) ==
+           "Move");
+    assert(mapActionMenuChoiceTitle(
+               {MapActionMenuChoiceKind::GameplayAction, 1}, actions) ==
+           "Fire Arrow");
+    assert(mapActionMenuChoiceTitle(
+               {MapActionMenuChoiceKind::MarkDestination, 0}, actions) ==
+           "Set Destination");
+    assert(mapActionMenuChoiceTitle(
+               {MapActionMenuChoiceKind::ClearDestination, 0}, actions) ==
+           "Clear Destination");
 }
 
 void changingSelectionReplacesDraft() {
@@ -634,8 +676,8 @@ void caveMenuUsesOnlyLiteralTargetMatches() {
     const auto matches = matchingSpatialActionIndices(
         actions, caveActionTarget(CaveId{12}), CaveId{7});
     assert((matches == std::vector<std::size_t>{0, 2}));
-    assert(spatialActionTitle(actions[0]) == "MOVE TO CAVE 12");
-    assert(spatialActionTitle(actions[2]) == "SHOOT INTO CAVE 12");
+    assert(spatialActionTitle(actions[0]) == "Move");
+    assert(spatialActionTitle(actions[2]) == "Fire Arrow");
     assert(matchingSpatialActionIndices(
                actions, caveActionTarget(CaveId{34}), CaveId{7}).empty());
 }
@@ -847,7 +889,7 @@ void unknownExitMatchesExactCurrentCaveProvenance() {
         unknownExitActionTarget(CaveId{18}, TunnelId{6});
     assert(matchingSpatialActionIndices(
                actions, collidingHistoricalExit, CaveId{19}).empty());
-    assert(spatialActionTitle(actions[1]) == "ENTER UNKNOWN EXIT");
+    assert(spatialActionTitle(actions[1]) == "Move");
     assert(!actions[1].targetCave.has_value());
     assert(!actions[2].targetCave.has_value());
 }
@@ -942,6 +984,7 @@ void navigationMenuChoiceDoesNotCreateActionDraft() {
 int main() {
     everyActionShapeCopiesExactly();
     rowsComeDirectlyFromEveryAvailableAction();
+    actionPresentationUsesUnifiedCopyAndTargetDetails();
     changingSelectionReplacesDraft();
     spectatorCannotSelectOrSubmit();
     successfulLockPreventsReplacement();
