@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+
+jobs:
+  build-and-test:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bootstrap Ubuntu dependencies
+        if: runner.os == 'Linux'
+        run: ./scripts/install-dependencies-ubuntu.sh
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBASILISK_BUILD_GAME=ON
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
+  build-web:
+    name: Build WebAssembly (Emscripten 6.0.4)
+    runs-on: ubuntu-latest
+    container: emscripten/emsdk:6.0.4
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Emscripten
+        run: |
+          emcc --version
+          em++ --version
+          command -v emcmake
+          emcmake cmake --version
+
+      - name: Configure
+        run: >-
+          emcmake cmake -S . -B build-web
+          -DCMAKE_BUILD_TYPE=Release
+          -DBASILISK_BUILD_GAME=ON
+          -DBASILISK_BUILD_CLI=OFF
+          -DBASILISK_BUILD_SIM=OFF
+          -DBASILISK_BUILD_TESTS=OFF
+
+      - name: Build
+        run: cmake --build build-web --config Release
+
+      - name: Verify browser artifacts
+        shell: bash
+        run: |
+          test -s build-web/clients/game/BasiliskGame.html
+          test -s build-web/clients/game/BasiliskGame.js
+          test -s build-web/clients/game/BasiliskGame.wasm
+
+      - name: Upload browser artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: BasiliskGame-web-emscripten-6.0.4
+          path: |
+            build-web/clients/game/BasiliskGame.html
+            build-web/clients/game/BasiliskGame.js
+            build-web/clients/game/BasiliskGame.wasm
+          if-no-files-found: error

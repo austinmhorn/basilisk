@@ -1,0 +1,14 @@
+# macOS metadata
+.DS_Store
+
+# Local build output
+/build/
+/build-game/
+/build-web/
+
+# Visual debug client snapshots
+/basilisk_debug_state.json
+/basilisk_debug_truth.json
+
+# Simulation output
+/simulation.log

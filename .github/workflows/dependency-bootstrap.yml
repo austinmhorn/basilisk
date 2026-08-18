@@ -1,0 +1,163 @@
+name: Dependency Bootstrap
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - "scripts/install-dependencies-*"
+      - ".github/workflows/dependency-bootstrap.yml"
+      - "README.md"
+      - "docs/**"
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - "scripts/install-dependencies-*"
+      - ".github/workflows/dependency-bootstrap.yml"
+      - "README.md"
+      - "docs/**"
+  workflow_dispatch:
+  schedule:
+    - cron: "23 9 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  native-bootstrap:
+    name: Native bootstrap (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bootstrap Ubuntu dependencies twice
+        if: runner.os == 'Linux'
+        run: |
+          ./scripts/install-dependencies-ubuntu.sh
+          ./scripts/install-dependencies-ubuntu.sh
+
+      - name: Bootstrap macOS dependencies twice
+        if: runner.os == 'macOS'
+        run: |
+          ./scripts/install-dependencies-macos.sh
+          ./scripts/install-dependencies-macos.sh
+
+      - name: Bootstrap Windows dependencies twice
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-dependencies-windows.ps1
+          if ($LASTEXITCODE -ne 0) {
+              throw "The first Windows bootstrap run failed with exit code $LASTEXITCODE."
+          }
+
+          & powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-dependencies-windows.ps1
+          if ($LASTEXITCODE -ne 0) {
+              throw "The second Windows bootstrap run failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Verify Ubuntu tools
+        if: runner.os == 'Linux'
+        run: |
+          git --version
+          cmake --version
+          python3 --version
+          g++ --version
+
+      - name: Verify macOS tools
+        if: runner.os == 'macOS'
+        run: |
+          git --version
+          cmake --version
+          python3 --version
+          xcrun --find clang++
+          xcrun clang++ --version
+
+      - name: Verify Windows tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git --version
+          cmake --version
+
+          if (Get-Command python -ErrorAction SilentlyContinue) {
+              python --version
+          } elseif (Get-Command py -ErrorAction SilentlyContinue) {
+              py -3 --version
+          } else {
+              throw 'Python was not found after bootstrap.'
+          }
+
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path $vswhere)) {
+              throw 'vswhere.exe was not found after bootstrap.'
+          }
+
+          $installationPath = & $vswhere `
+              -latest `
+              -products '*' `
+              -requires 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' `
+              -property installationPath | Select-Object -First 1
+          if (-not $installationPath) {
+              throw 'An MSVC installation with the C++ tools was not found.'
+          }
+
+          $vsDevCmd = Join-Path $installationPath 'Common7\Tools\VsDevCmd.bat'
+          if (-not (Test-Path $vsDevCmd)) {
+              throw "VsDevCmd.bat was not found at $vsDevCmd."
+          }
+
+          & $env:ComSpec /d /c "call `"$vsDevCmd`" -no_logo -arch=x64 -host_arch=x64 && where cl && cl"
+          if ($LASTEXITCODE -ne 0) {
+              throw "MSVC verification failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBASILISK_BUILD_GAME=ON
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
+  clean-ubuntu-bootstrap:
+    name: Clean Ubuntu 24.04 bootstrap
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bootstrap, verify, build, and test in a minimal container
+        shell: bash
+        run: |
+          docker run --rm \
+            --volume "${GITHUB_WORKSPACE}:/workspace" \
+            --workdir /workspace \
+            ubuntu:24.04 \
+            bash -c '
+              set -euo pipefail
+              ./scripts/install-dependencies-ubuntu.sh
+              ./scripts/install-dependencies-ubuntu.sh
+              git --version
+              cmake --version
+              python3 --version
+              g++ --version
+              cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBASILISK_BUILD_GAME=ON
+              cmake --build build --config Release
+              ctest --test-dir build --build-config Release --output-on-failure
+            '
