@@ -62,6 +62,7 @@ struct AppState {
     bool authResponseHandled{false};
     bool storedSessionAttempted{false};
     bool restoringSession{false};
+    bool resumeGameplayOnBootstrap{false};
     std::optional<basilisk::game::PublicAccountProfile> authenticatedProfile;
     std::optional<std::string> authenticatedSessionToken;
     basilisk::game::MainMenuState mainMenu;
@@ -146,6 +147,7 @@ SDL_AppResult handleMainMenuResult(
         state.authResponseHandled = false;
         state.storedSessionAttempted = true;
         state.restoringSession = false;
+        state.resumeGameplayOnBootstrap = false;
         state.view = AppView::Authentication;
         (void)SDL_StartTextInput(state.window);
         return SDL_APP_CONTINUE;
@@ -960,6 +962,15 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             state->session->displayedSnapshot() != nullptr) {
             state->view = AppView::Gameplay;
             state->screenShellEnabled = true;
+            state->resumeGameplayOnBootstrap = false;
+        }
+        if (state->view == AppView::MainMenu &&
+            state->resumeGameplayOnBootstrap &&
+            state->session != nullptr &&
+            state->session->displayedSnapshot() != nullptr) {
+            state->view = AppView::Gameplay;
+            state->screenShellEnabled = true;
+            state->resumeGameplayOnBootstrap = false;
         }
         if (state->view == AppView::Authentication &&
             !state->storedSessionAttempted &&
@@ -996,6 +1007,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 if (!basilisk::game::SessionTokenStorage::save(
                         success->sessionToken, storageError))
                     SDL_Log("Unable to save session: %s", storageError.c_str());
+                state->resumeGameplayOnBootstrap = state->restoringSession;
                 state->restoringSession = false;
                 state->authScreen.setWaiting(false);
                 state->view = AppView::MainMenu;
@@ -1008,6 +1020,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     (void)basilisk::game::SessionTokenStorage::clear(ignored);
                     state->authenticatedSessionToken.reset();
                     state->restoringSession = false;
+                    state->resumeGameplayOnBootstrap = false;
                     state->authScreen.setError(
                         "Your session expired. Sign in again.");
                 } else {

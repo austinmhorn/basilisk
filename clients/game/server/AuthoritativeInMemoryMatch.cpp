@@ -170,6 +170,32 @@ public:
     [[nodiscard]] std::optional<std::string> trophyScoringError() const {
         return trophyScoringError_;
     }
+    [[nodiscard]] std::uint64_t disconnectGraceMs() const noexcept {
+        return match_.rules.disconnectGraceMs;
+    }
+
+    [[nodiscard]] bool reconnect(
+        PlayerId player,
+        const std::shared_ptr<InMemoryMatchEndpoint>& endpoint,
+        std::string& error) {
+        if (!containsPlayer(player) || hasEndpoint(player)) {
+            error = "Player cannot reclaim this match session.";
+            return false;
+        }
+        const RoundNumber priorRound = match_.round;
+        coordinator_.reconnect(player);
+        const auto& events = coordinator_.authoritativeEvents();
+        if (events.empty()) {
+            error = "Player reconnect grace has expired.";
+            return false;
+        }
+        if (match_.round != priorRound) ++resolvedRoundCount_;
+        recordTrophyEvents(events);
+        refreshContexts();
+        publishAll(events);
+        attach(player, endpoint);
+        return enqueueBootstrap(player, *endpoint, error);
+    }
 
     void advanceTime(std::uint64_t elapsedMs) {
         const RoundNumber priorRound = match_.round;
@@ -542,6 +568,17 @@ AuthoritativeInMemoryMatch::connect(
     return endpoint;
 }
 
+std::shared_ptr<InMemoryMatchEndpoint>
+AuthoritativeInMemoryMatch::reconnect(
+    PlayerId authenticatedPlayer,
+    std::string& error) {
+    error.clear();
+    auto endpoint = std::shared_ptr<InMemoryMatchEndpoint>(
+        new InMemoryMatchEndpoint(state_, authenticatedPlayer));
+    if (!state_->reconnect(authenticatedPlayer, endpoint, error)) return nullptr;
+    return endpoint;
+}
+
 RoundNumber AuthoritativeInMemoryMatch::authoritativeRound() const noexcept {
     return state_->round();
 }
@@ -553,6 +590,10 @@ std::size_t AuthoritativeInMemoryMatch::resolvedRoundCount() const noexcept {
 std::optional<std::string>
 AuthoritativeInMemoryMatch::trophyScoringError() const {
     return state_->trophyScoringError();
+}
+
+std::uint64_t AuthoritativeInMemoryMatch::disconnectGraceMs() const noexcept {
+    return state_->disconnectGraceMs();
 }
 
 void AuthoritativeInMemoryMatch::advanceTime(std::uint64_t elapsedMs) {

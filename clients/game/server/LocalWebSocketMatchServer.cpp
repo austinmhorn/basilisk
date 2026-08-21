@@ -125,7 +125,7 @@ public:
             stopped_ = true;
             for (auto& [socket, client] : clients_) {
                 (void)socket;
-                disconnectClient(client);
+                disconnectClient(client, false);
             }
         }
         server_.stop();
@@ -165,9 +165,28 @@ public:
         std::lock_guard lock(mutex_);
         if (stopped_) return;
         match_->advanceTime(elapsedMs);
-        for (auto& [id, assigned] : assignedMatches_) {
-            (void)id;
+        for (auto matchIt = assignedMatches_.begin();
+             matchIt != assignedMatches_.end();) {
+            auto& assigned = matchIt->second;
             assigned.match->advanceTime(elapsedMs);
+            for (auto participant = assigned.participants.begin();
+                 participant != assigned.participants.end();) {
+                if (participant->second.connected) {
+                    ++participant;
+                    continue;
+                }
+                if (elapsedMs >= participant->second.graceRemainingMs) {
+                    participant = assigned.participants.erase(participant);
+                } else {
+                    participant->second.graceRemainingMs -= elapsedMs;
+                    ++participant;
+                }
+            }
+            if (assigned.participants.empty()) {
+                matchIt = assignedMatches_.erase(matchIt);
+            } else {
+                ++matchIt;
+            }
         }
         reportTrophyError();
         drainAll();
@@ -209,6 +228,7 @@ private:
         std::shared_ptr<InMemoryMatchEndpoint> endpoint;
         std::optional<AccountIdentity> account;
         std::optional<std::string> assignedMatch;
+        bool reconnectable{false};
         bool active{true};
     };
 
@@ -218,8 +238,14 @@ private:
     };
 
     struct AssignedMatch {
+        struct Participant {
+            PlayerId player{};
+            std::uint64_t graceRemainingMs{};
+            bool connected{true};
+        };
+
         std::unique_ptr<AuthoritativeInMemoryMatch> match;
-        std::size_t connectedPlayers{2};
+        std::map<AccountIdentity, Participant> participants;
         bool trophyErrorReported{false};
     };
 
@@ -272,7 +298,7 @@ private:
             return;
         }
         clients_.emplace(&socket, Client{*player, std::move(endpoint), std::nullopt,
-                                         std::nullopt, true});
+                                         std::nullopt, false, true});
         usedPlayers_.insert(*player);
         drainAll();
     }
@@ -322,7 +348,7 @@ private:
                 (void)lobbies_.cancelFindMatch(*found->second.account, ignored);
             }
             usedPlayers_.erase(found->second.player);
-            disconnectClient(found->second);
+            disconnectClient(found->second, false);
             clients_.erase(found);
             pendingAuthentication_.insert(&socket);
             drainAll();
@@ -344,10 +370,16 @@ private:
             handleLobbyDeliveries(deliveries);
             return;
         }
-        if (!found->second.endpoint->sendBytes(
-                bytes, error)) {
+        const bool explicitQuit =
+            network::inspectWireMessageType(bytes, type, error) &&
+            type == network::WireMessageType::Quit;
+        if (!found->second.endpoint->sendBytes(bytes, error)) {
             reject(socket, found->second, 1008, error);
             return;
+        }
+        if (explicitQuit) {
+            found->second.reconnectable = false;
+            updateAssignedReservation(found->second, false);
         }
         reportTrophyError();
         drainAll();
@@ -491,11 +523,18 @@ private:
         authenticatedPreMatch_.erase(hostConnection);
         authenticatedPreMatch_.erase(guestConnection);
         clients_.emplace(hostSocket, Client{PlayerId{1}, std::move(p1), *host,
-                                            matchId, true});
+                                            matchId, true, true});
         clients_.emplace(guestSocket, Client{PlayerId{2}, std::move(p2), *guest,
-                                             matchId, true});
+                                             matchId, true, true});
+        const std::uint64_t graceMs = match->disconnectGraceMs();
         assignedMatches_.emplace(matchId,
-            AssignedMatch{std::move(match), 2, false});
+            AssignedMatch{
+                std::move(match),
+                {
+                    {*host, {PlayerId{1}, graceMs, true}},
+                    {*guest, {PlayerId{2}, graceMs, true}},
+                },
+                false});
         drainAll();
         return true;
     }
@@ -564,6 +603,32 @@ private:
                 return;
             }
         }
+        for (auto& [matchId, assigned] : assignedMatches_) {
+            const auto participant = assigned.participants.find(account);
+            if (participant == assigned.participants.end() ||
+                participant->second.connected) continue;
+            auto endpoint = assigned.match->reconnect(
+                participant->second.player, error);
+            if (endpoint == nullptr) {
+                assigned.participants.erase(participant);
+                socket.close(1008, error);
+                pendingAuthentication_.erase(&socket);
+                return;
+            }
+            participant->second.connected = true;
+            participant->second.graceRemainingMs =
+                assigned.match->disconnectGraceMs();
+            pendingAuthentication_.erase(&socket);
+            clients_.emplace(&socket, Client{
+                participant->second.player,
+                std::move(endpoint),
+                account,
+                matchId,
+                true,
+                true});
+            drainAll();
+            return;
+        }
         const auto bound = authenticatedAccounts_.find(account);
         pendingAuthentication_.erase(&socket);
         if (bound == authenticatedAccounts_.end()) {
@@ -584,7 +649,7 @@ private:
         }
         clients_.emplace(
             &socket, Client{bound->second, std::move(endpoint), account,
-                            std::nullopt, true});
+                            std::nullopt, false, true});
         usedPlayers_.insert(bound->second);
         drainAll();
     }
@@ -594,7 +659,7 @@ private:
         Client& client,
         std::uint16_t code,
         const std::string& reason) {
-        disconnectClient(client);
+        disconnectClient(client, false);
         drainAll();
         socket.close(code, reason);
     }
@@ -616,12 +681,28 @@ private:
             std::string ignored;
             (void)lobbies_.cancelFindMatch(*found->second.account, ignored);
         }
-        disconnectClient(found->second);
+        disconnectClient(found->second, found->second.reconnectable);
         clients_.erase(found);
         drainAll();
     }
 
-    void disconnectClient(Client& client) {
+    void updateAssignedReservation(Client& client, bool preserve) {
+        if (!client.assignedMatch.has_value() || !client.account.has_value()) return;
+        const auto match = assignedMatches_.find(*client.assignedMatch);
+        if (match == assignedMatches_.end()) return;
+        const auto participant = match->second.participants.find(*client.account);
+        if (participant == match->second.participants.end()) return;
+        if (preserve) {
+            participant->second.connected = false;
+            participant->second.graceRemainingMs =
+                match->second.match->disconnectGraceMs();
+        } else {
+            match->second.participants.erase(participant);
+            if (match->second.participants.empty()) assignedMatches_.erase(match);
+        }
+    }
+
+    void disconnectClient(Client& client, bool preserveReservation) {
         if (!client.active) return;
         client.active = false;
         if (client.endpoint->send(network::ClientCommand{
@@ -629,12 +710,7 @@ private:
             network::QuitCommand{client.player},
         })) ++processedDisconnectCount_;
         reportTrophyError();
-        if (client.assignedMatch.has_value()) {
-            const auto found = assignedMatches_.find(*client.assignedMatch);
-            if (found != assignedMatches_.end() &&
-                --found->second.connectedPlayers == 0)
-                assignedMatches_.erase(found);
-        }
+        updateAssignedReservation(client, preserveReservation);
     }
 
     void reportTrophyError() {

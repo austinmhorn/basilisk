@@ -552,6 +552,113 @@ void authenticatedAssignmentLaunchesAuthoritativeGameplay() {
     }));
 }
 
+void authenticatedPlayerReclaimsAssignedMatchWithinGrace() {
+    TemporaryTrophyDatabase database;
+    std::string error;
+    auto auth = SQLiteAccountAuth::open(database.path(), error);
+    assert(auth != nullptr && error.empty());
+    AccountIdentity hostAccount;
+    AccountIdentity guestAccount;
+    assert(auth->createAccount(
+        LoginIdentity{"reconnect-host@example.test"},
+        "correct horse battery staple",
+        PublicAccountProfile{PublicProfileHandle{"reconnect-host"}, "Reconnect Host"},
+        hostAccount, error) == CreateAccountResult::Created);
+    assert(auth->createAccount(
+        LoginIdentity{"reconnect-guest@example.test"},
+        "correct horse battery staple",
+        PublicAccountProfile{PublicProfileHandle{"reconnect-guest"}, "Reconnect Guest"},
+        guestAccount, error) == CreateAccountResult::Created);
+    AuthSessionToken hostToken;
+    AuthSessionToken guestToken;
+    assert(auth->authenticate(LoginIdentity{"reconnect-host@example.test"},
+                              "correct horse battery staple", hostToken, error));
+    assert(auth->authenticate(LoginIdentity{"reconnect-guest@example.test"},
+                              "correct horse battery staple", guestToken, error));
+
+    LocalWebSocketServerConfig config;
+    config.port = static_cast<std::uint16_t>(ix::getFreePort());
+    config.authentication = auth;
+    config.profiles = profiles();
+    auto server = LocalWebSocketMatchServer::start(std::move(config), error);
+    assert(server != nullptr && error.empty());
+    auto host = WebSocketNetworkSession::connectForAuthentication(url(*server), error);
+    auto guest = WebSocketNetworkSession::connectForAuthentication(url(*server), error);
+    assert(host != nullptr && guest != nullptr);
+    assert(waitUntil([&] {
+        host->pump();
+        guest->pump();
+        return host->state() == NetworkConnectionState::Connected &&
+            guest->state() == NetworkConnectionState::Connected;
+    }));
+    assert(host->authenticate({network::kProtocolVersion,
+        network::AuthenticateSessionRequest{hostToken.value}}));
+    assert(guest->authenticate({network::kProtocolVersion,
+        network::AuthenticateSessionRequest{guestToken.value}}));
+    assert(waitUntil([&] {
+        host->pump();
+        guest->pump();
+        return host->authenticationResponse().has_value() &&
+            guest->authenticationResponse().has_value();
+    }));
+    assert(host->requestLobby({network::kProtocolVersion,
+        network::HostLobbyRequest{}}));
+    assert(waitUntil([&] {
+        host->pump();
+        return host->lobbyResponse().has_value() &&
+            std::holds_alternative<network::LobbyHosted>(
+                host->lobbyResponse()->payload);
+    }));
+    const std::string lobbyCode = std::get<network::LobbyHosted>(
+        host->lobbyResponse()->payload).lobbyCode;
+    assert(guest->requestLobby({network::kProtocolVersion,
+        network::JoinLobbyRequest{lobbyCode}}));
+    assert(waitUntil([&] {
+        host->pump();
+        guest->pump();
+        return host->controller() != nullptr && guest->controller() != nullptr;
+    }));
+
+    const PlayerRoundSnapshot before = *host->controller()->displayedSnapshot();
+    host.reset();
+    assert(waitUntil([&] { return server->connectedClientCount() == 1; }));
+
+    auto reclaimed = WebSocketNetworkSession::connectForAuthentication(
+        url(*server), error);
+    assert(reclaimed != nullptr);
+    assert(waitUntil([&] {
+        reclaimed->pump();
+        return reclaimed->state() == NetworkConnectionState::Connected;
+    }));
+    assert(reclaimed->authenticate({network::kProtocolVersion,
+        network::AuthenticateSessionRequest{hostToken.value}}));
+    assert(waitUntil([&] {
+        reclaimed->pump();
+        guest->pump();
+        return reclaimed->controller() != nullptr;
+    }));
+    const PlayerRoundSnapshot* resumed =
+        reclaimed->controller()->displayedSnapshot();
+    assert(resumed != nullptr);
+    assert(resumed->player == before.player);
+    assert(resumed->round == before.round);
+    assert(resumed->currentCave == before.currentCave);
+    assert(resumed->health == before.health);
+    assert(resumed->inventory.items == before.inventory.items);
+    assert(resumed->map.caves.size() == before.map.caves.size());
+
+    assert(reclaimed->controller()->submitAndLock(
+        searchAction(*reclaimed->controller())));
+    assert(guest->controller()->submitAndLock(searchAction(*guest->controller())));
+    assert(waitUntil([&] {
+        reclaimed->pump();
+        guest->pump();
+        return reclaimed->controller()->displayedSnapshot()->round > before.round &&
+            guest->controller()->displayedSnapshot()->round ==
+                reclaimed->controller()->displayedSnapshot()->round;
+    }));
+}
+
 } // namespace
 
 int main() {
@@ -571,4 +678,5 @@ int main() {
     serverPersistsPublicProfilesAndRejectsDuplicateHandles();
     authenticatedUnboundAccountCanHostLobby();
     authenticatedAssignmentLaunchesAuthoritativeGameplay();
+    authenticatedPlayerReclaimsAssignedMatchWithinGrace();
 }
