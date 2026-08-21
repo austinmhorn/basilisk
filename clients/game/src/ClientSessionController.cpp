@@ -93,6 +93,16 @@ bool ClientSessionController::submitAndLock(const AvailableAction& action) {
 }
 
 bool ClientSessionController::watchRemainingHunter() {
+    if (viewContext_.mode != client::ClientViewMode::Defeated ||
+        !viewContext_.spectatablePlayer.has_value()) {
+        return false;
+    }
+    if (sessionCommands_ != nullptr &&
+        !sessionCommands_->watchRemainingHunter(
+            viewContext_.localPlayer,
+            *viewContext_.spectatablePlayer)) {
+        return false;
+    }
     return beginSpectating(viewContext_);
 }
 

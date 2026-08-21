@@ -58,6 +58,27 @@ target_link_libraries(
 )
 target_compile_features(BasiliskGameActions PUBLIC cxx_std_20)
 
+add_library(BasiliskGameNetworkSession STATIC
+    src/NetworkGameSessionAdapter.cpp
+)
+
+add_library(
+    Basilisk::GameNetworkSession
+    ALIAS BasiliskGameNetworkSession
+)
+
+target_include_directories(BasiliskGameNetworkSession
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(
+    BasiliskGameNetworkSession
+    PUBLIC
+        Basilisk::GameActions
+        Basilisk::GameMapLayout
+)
+target_compile_features(BasiliskGameNetworkSession PUBLIC cxx_std_20)
+
 add_library(BasiliskGameLocalSession STATIC
     src/LocalGameSessionAdapter.cpp
 )

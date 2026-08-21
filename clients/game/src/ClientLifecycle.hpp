@@ -26,6 +26,11 @@ struct LifecycleModalPresentation {
 class ClientSessionCommandSink {
 public:
     virtual ~ClientSessionCommandSink() = default;
+    [[nodiscard]] virtual bool watchRemainingHunter(
+        PlayerId,
+        PlayerId) {
+        return true;
+    }
     [[nodiscard]] virtual bool quitGame(PlayerId localPlayer) = 0;
 };
 

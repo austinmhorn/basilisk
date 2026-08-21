@@ -119,6 +119,21 @@ if(TARGET BasiliskGameActions)
     add_test(NAME BasiliskGameActionTests COMMAND BasiliskGameActionTests)
 endif()
 
+if(TARGET BasiliskGameNetworkSession)
+    add_executable(BasiliskGameNetworkSessionTests
+        game_network_session_tests.cpp
+    )
+    target_link_libraries(
+        BasiliskGameNetworkSessionTests
+        PRIVATE
+            Basilisk::GameNetworkSession
+    )
+    add_test(
+        NAME BasiliskGameNetworkSessionTests
+        COMMAND BasiliskGameNetworkSessionTests
+    )
+endif()
+
 add_executable(BasiliskSnapshotTests
     snapshot_tests.cpp
 )
