@@ -1,5 +1,9 @@
 include(FetchContent)
 
+# SDL and the pinned SQLite amalgamation are implemented in C, while Basilisk
+# Core itself only requires C++.
+enable_language(C)
+
 add_library(BasiliskGameMapLayout STATIC
     src/MapLayout.cpp
     src/MapPresentation.cpp
@@ -143,6 +147,44 @@ target_compile_features(
 )
 
 if(NOT EMSCRIPTEN)
+    FetchContent_Declare(
+        sqlite_amalgamation
+        URL https://www.sqlite.org/2025/sqlite-amalgamation-3500400.zip
+        URL_HASH SHA256=1d3049dd0f830a025a53105fc79fd2ab9431aea99e137809d064d8ee8356b032
+        DOWNLOAD_EXTRACT_TIMESTAMP OFF
+    )
+    FetchContent_MakeAvailable(sqlite_amalgamation)
+
+    add_library(BasiliskSQLite3 STATIC EXCLUDE_FROM_ALL
+        ${sqlite_amalgamation_SOURCE_DIR}/sqlite3.c
+    )
+    target_include_directories(BasiliskSQLite3 SYSTEM PUBLIC
+        ${sqlite_amalgamation_SOURCE_DIR}
+    )
+    target_compile_definitions(BasiliskSQLite3 PRIVATE
+        SQLITE_OMIT_LOAD_EXTENSION
+        SQLITE_THREADSAFE=1
+    )
+
+    add_library(BasiliskTrophyPersistenceSQLite STATIC EXCLUDE_FROM_ALL
+        server/SQLiteTrophyPersistence.cpp
+    )
+    add_library(
+        Basilisk::TrophyPersistenceSQLite
+        ALIAS BasiliskTrophyPersistenceSQLite
+    )
+    target_include_directories(BasiliskTrophyPersistenceSQLite
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/server
+    )
+    target_link_libraries(BasiliskTrophyPersistenceSQLite
+        PUBLIC
+            Basilisk::AuthoritativeNetworkSession
+        PRIVATE
+            BasiliskSQLite3
+    )
+    target_compile_features(BasiliskTrophyPersistenceSQLite PUBLIC cxx_std_20)
+
     add_library(BasiliskWebSocketMatchServer STATIC EXCLUDE_FROM_ALL
         server/LocalWebSocketMatchServer.cpp
     )
@@ -186,9 +228,6 @@ target_link_libraries(
         Basilisk::Core
 )
 target_compile_features(BasiliskGameLocalSession PUBLIC cxx_std_20)
-
-# SDL is implemented in C, while Basilisk Core itself only requires C++.
-enable_language(C)
 
 set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC ON CACHE BOOL "" FORCE)

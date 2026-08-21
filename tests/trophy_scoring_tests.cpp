@@ -20,6 +20,14 @@ const std::map<PlayerId, AccountIdentity> accounts{
     {PlayerId{2}, AccountIdentity{"account-elias"}},
 };
 
+std::vector<TrophyLedgerEntry> entriesFor(const TrophyLedger& ledger) {
+    std::vector<TrophyLedgerEntry> entries;
+    std::string error;
+    assert(ledger.loadEntries(entries, error));
+    assert(error.empty());
+    return entries;
+}
+
 MatchResult completed(MatchOutcome outcome, std::optional<PlayerId> winner) {
     return {MatchStatus::Completed, outcome, winner};
 }
@@ -28,8 +36,9 @@ int totalFor(
     const TrophyLedger& ledger,
     const AccountIdentity& account) {
 
+    const auto entries = entriesFor(ledger);
     return std::accumulate(
-        ledger.entries().begin(), ledger.entries().end(), 0,
+        entries.begin(), entries.end(), 0,
         [&](int total, const TrophyLedgerEntry& entry) {
             return total + (entry.account == account ? entry.delta : 0);
         });
@@ -42,7 +51,7 @@ bool hasEntry(
     int delta) {
 
     return std::ranges::any_of(
-        ledger.entries(),
+        entriesFor(ledger),
         [&](const TrophyLedgerEntry& entry) {
             return entry.account == account && entry.reason == reason &&
                    entry.delta == delta;
@@ -107,12 +116,12 @@ void drawAndUnfinishedScoreNothing() {
     assert(ledger.scoreMatch(
         {"match-active"}, accounts, MatchResult{}, events) ==
         TrophyScoreResult::NotTerminal);
-    assert(ledger.entries().empty());
+    assert(entriesFor(ledger).empty());
     assert(ledger.scoreMatch(
         {"match-draw"}, accounts,
         completed(MatchOutcome::Draw, std::nullopt), events) ==
         TrophyScoreResult::Scored);
-    assert(ledger.entries().empty());
+    assert(entriesFor(ledger).empty());
 }
 
 void duplicateScoringIsRejectedWithoutDuplicateEntries() {
@@ -120,11 +129,10 @@ void duplicateScoringIsRejectedWithoutDuplicateEntries() {
     const auto result = completed(MatchOutcome::BasiliskKilled, PlayerId{1});
     assert(ledger.scoreMatch({"match-once"}, accounts, result, {}) ==
            TrophyScoreResult::Scored);
-    const std::vector<TrophyLedgerEntry> original(
-        ledger.entries().begin(), ledger.entries().end());
+    const std::vector<TrophyLedgerEntry> original = entriesFor(ledger);
     assert(ledger.scoreMatch({"match-once"}, accounts, result, {}) ==
            TrophyScoreResult::AlreadyScored);
-    assert(std::ranges::equal(ledger.entries(), original));
+    assert(std::ranges::equal(entriesFor(ledger), original));
 }
 
 std::vector<client::PublicPlayerProfile> profiles() {
@@ -155,7 +163,7 @@ void authoritativeMatchScoresItsTerminalEventStream() {
         network::kProtocolVersion,
         network::QuitCommand{PlayerId{2}}}));
     host->advanceTime(30'000);
-    assert(ledger->entries().empty());
+    assert(entriesFor(*ledger).empty());
     assert(ledger->scoreMatch(
         {"authoritative-draw"}, accounts,
         completed(MatchOutcome::Draw, std::nullopt), {}) ==

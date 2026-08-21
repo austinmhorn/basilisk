@@ -1,8 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <map>
 #include <memory>
-#include <set>
 #include <span>
 #include <string>
 #include <vector>
@@ -44,25 +44,73 @@ enum class TrophyScoreResult {
     Scored,
     NotTerminal,
     AlreadyScored,
+    PersistenceError,
 };
 
-// Append-only in-memory ledger. Persistence is intentionally deferred; callers
-// supply durable account identities rather than transient match PlayerIds.
+struct TrophyLeaderboardEntry {
+    AccountIdentity account;
+    std::int64_t total{};
+
+    bool operator==(const TrophyLeaderboardEntry&) const = default;
+};
+
+enum class TrophyAppendResult {
+    Appended,
+    DuplicateMatch,
+    Error,
+};
+
+// Server-side persistence seam. Implementations atomically claim a match ID
+// before appending its immutable rows and derive all totals from those rows.
+class TrophyPersistence {
+public:
+    virtual ~TrophyPersistence() = default;
+
+    [[nodiscard]] virtual TrophyAppendResult appendMatch(
+        const TrophyMatchId& match,
+        std::span<const TrophyLedgerEntry> entries,
+        std::string& error) = 0;
+    [[nodiscard]] virtual bool loadEntries(
+        std::vector<TrophyLedgerEntry>& entries,
+        std::string& error) const = 0;
+    [[nodiscard]] virtual bool trophyTotal(
+        const AccountIdentity& account,
+        std::int64_t& total,
+        std::string& error) const = 0;
+    [[nodiscard]] virtual bool leaderboard(
+        std::vector<TrophyLeaderboardEntry>& entries,
+        std::string& error) const = 0;
+};
+
+[[nodiscard]] std::shared_ptr<TrophyPersistence>
+makeInMemoryTrophyPersistence();
+
+// Authoritative scoring remains independent of the persistence implementation.
+// Callers supply durable account identities rather than transient PlayerIds.
 class TrophyLedger {
 public:
+    TrophyLedger();
+    explicit TrophyLedger(std::shared_ptr<TrophyPersistence> persistence);
+
     [[nodiscard]] TrophyScoreResult scoreMatch(
         const TrophyMatchId& match,
         const std::map<PlayerId, AccountIdentity>& accounts,
         const MatchResult& result,
         std::span<const GameEvent> authoritativeEvents);
 
-    [[nodiscard]] std::span<const TrophyLedgerEntry> entries() const noexcept {
-        return entries_;
-    }
+    [[nodiscard]] bool loadEntries(
+        std::vector<TrophyLedgerEntry>& entries,
+        std::string& error) const;
+    [[nodiscard]] bool trophyTotal(
+        const AccountIdentity& account,
+        std::int64_t& total,
+        std::string& error) const;
+    [[nodiscard]] bool leaderboard(
+        std::vector<TrophyLeaderboardEntry>& entries,
+        std::string& error) const;
 
 private:
-    std::set<TrophyMatchId> scoredMatches_;
-    std::vector<TrophyLedgerEntry> entries_;
+    std::shared_ptr<TrophyPersistence> persistence_;
 };
 
 struct TrophyScoringContext {

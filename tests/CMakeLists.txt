@@ -162,6 +162,21 @@ if(TARGET BasiliskAuthoritativeNetworkSession)
     )
 endif()
 
+if(TARGET BasiliskTrophyPersistenceSQLite)
+    add_executable(BasiliskTrophyPersistenceTests
+        trophy_persistence_tests.cpp
+    )
+    target_link_libraries(
+        BasiliskTrophyPersistenceTests
+        PRIVATE
+            Basilisk::TrophyPersistenceSQLite
+    )
+    add_test(
+        NAME BasiliskTrophyPersistenceTests
+        COMMAND BasiliskTrophyPersistenceTests
+    )
+endif()
+
 if(TARGET BasiliskWebSocketMatchServer)
     add_executable(BasiliskWebSocketNetworkTests
         game_websocket_network_tests.cpp
