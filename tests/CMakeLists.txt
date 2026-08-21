@@ -199,6 +199,16 @@ if(TARGET BasiliskAccountAuth)
     add_test(NAME BasiliskAccountAuthTests COMMAND BasiliskAccountAuthTests)
 endif()
 
+if(TARGET BasiliskLobbyCoordinator)
+    add_executable(BasiliskLobbyCoordinatorTests
+        lobby_coordinator_tests.cpp
+    )
+    target_link_libraries(BasiliskLobbyCoordinatorTests
+        PRIVATE Basilisk::LobbyCoordinator
+    )
+    add_test(NAME BasiliskLobbyCoordinatorTests COMMAND BasiliskLobbyCoordinatorTests)
+endif()
+
 if(TARGET BasiliskWebSocketMatchServer)
     add_executable(BasiliskWebSocketNetworkTests
         game_websocket_network_tests.cpp

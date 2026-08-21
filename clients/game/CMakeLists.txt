@@ -150,6 +150,18 @@ target_compile_features(
 )
 
 if(NOT EMSCRIPTEN)
+    add_library(BasiliskLobbyCoordinator STATIC EXCLUDE_FROM_ALL
+        server/LobbyCoordinator.cpp
+    )
+    add_library(Basilisk::LobbyCoordinator ALIAS BasiliskLobbyCoordinator)
+    target_include_directories(BasiliskLobbyCoordinator PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/server
+    )
+    target_link_libraries(BasiliskLobbyCoordinator
+        PUBLIC Basilisk::AuthoritativeNetworkSession
+    )
+    target_compile_features(BasiliskLobbyCoordinator PUBLIC cxx_std_20)
+
     FetchContent_Declare(
         argon2_reference
         GIT_REPOSITORY https://github.com/P-H-C/phc-winner-argon2.git
