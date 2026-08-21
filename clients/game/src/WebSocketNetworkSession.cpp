@@ -225,6 +225,24 @@ public:
                 }
                 continue;
             }
+            network::WireMessageType preMatchType{};
+            if (network::inspectWireMessageType(
+                    frame, preMatchType, decodeError) &&
+                (preMatchType == network::WireMessageType::LobbyHosted ||
+                 preMatchType == network::WireMessageType::LobbyMatchAssigned ||
+                 preMatchType == network::WireMessageType::LobbyCancelled ||
+                 preMatchType == network::WireMessageType::LobbyFailure)) {
+                network::LobbyResponse response;
+                if (!network::decodeLobbyResponse(frame, response, decodeError)) {
+                    fail("Invalid lobby response: " + decodeError);
+                    shutdownSocket();
+                    return;
+                }
+                lobbyResponse_ = std::move(response);
+                ++lobbyResponseRevision_;
+                continue;
+            }
+            decodeError.clear();
             if (adapter_ == nullptr) {
                 network::ServerBootstrap bootstrap;
                 if (!network::decodeServerBootstrap(frame, bootstrap, decodeError)) {
@@ -271,17 +289,7 @@ public:
                     shutdownSocket();
                     return;
                 }
-                if (type == network::WireMessageType::LobbyHosted ||
-                    type == network::WireMessageType::LobbyMatchAssigned ||
-                    type == network::WireMessageType::LobbyCancelled ||
-                    type == network::WireMessageType::LobbyFailure) {
-                    network::LobbyResponse response;
-                    if (network::decodeLobbyResponse(frame, response, decodeError)) {
-                        lobbyResponse_ = std::move(response);
-                        ++lobbyResponseRevision_;
-                        continue;
-                    }
-                } else if (type == network::WireMessageType::LogoutSuccess) {
+                if (type == network::WireMessageType::LogoutSuccess) {
                     network::AuthenticationResponse response;
                     if (network::decodeAuthenticationResponse(
                             frame, response, decodeError)) {

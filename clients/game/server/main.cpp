@@ -146,9 +146,10 @@ int main(int argc, char** argv) {
     }
 
     if (authenticationDatabase.has_value()) {
-        if (!p1Account.has_value() || !p2Account.has_value()) {
+        if (p1Account.has_value() != p2Account.has_value()) {
             std::fprintf(stderr,
-                "--auth-db requires --p1-account and --p2-account bindings.\n");
+                "Optional auth gameplay bindings require both --p1-account "
+                "and --p2-account.\n");
             return 2;
         }
         std::string authError;
@@ -160,10 +161,12 @@ int main(int argc, char** argv) {
                 authError.c_str());
             return 1;
         }
-        config.p1AuthenticatedAccount =
-            basilisk::game::server::AccountIdentity{*p1Account};
-        config.p2AuthenticatedAccount =
-            basilisk::game::server::AccountIdentity{*p2Account};
+        if (p1Account.has_value()) {
+            config.p1AuthenticatedAccount =
+                basilisk::game::server::AccountIdentity{*p1Account};
+            config.p2AuthenticatedAccount =
+                basilisk::game::server::AccountIdentity{*p2Account};
+        }
     }
 
     std::string error;

@@ -93,6 +93,17 @@ bool LobbyCoordinator::cancel(
     return true;
 }
 
+void LobbyCoordinator::cancelHostedBy(const AccountIdentity& account) {
+    std::lock_guard lock(mutex_);
+    for (auto found = waiting_.begin(); found != waiting_.end(); ++found) {
+        if (found->second != account) continue;
+        consumed_.insert(found->first);
+        waiting_.erase(found);
+        waitingHosts_.erase(account);
+        return;
+    }
+}
+
 std::string LobbyCoordinator::generateCode() { return codeGenerator_(); }
 
 } // namespace basilisk::game::server

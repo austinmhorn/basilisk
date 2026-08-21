@@ -13,6 +13,7 @@
 #include <ixwebsocket/IXWebSocketServer.h>
 
 #include "AuthoritativeInMemoryMatch.hpp"
+#include "AccountAuth.hpp"
 #include "LocalWebSocketMatchServer.hpp"
 #include "SQLiteTrophyPersistence.hpp"
 #if defined(_WIN32)
@@ -414,6 +415,51 @@ void serverPersistsPublicProfilesAndRejectsDuplicateHandles() {
     assert(error == "Public handle 'mara' for P2 is already in use.");
 }
 
+void authenticatedUnboundAccountCanHostLobby() {
+    TemporaryTrophyDatabase database;
+    std::string error;
+    auto auth = SQLiteAccountAuth::open(database.path(), error);
+    assert(auth != nullptr && error.empty());
+    AccountIdentity account;
+    assert(auth->createAccount(
+        LoginIdentity{"lobby-host@example.test"}, "correct horse battery staple",
+        PublicAccountProfile{PublicProfileHandle{"lobby-host"}, "Lobby Host"},
+        account, error) == CreateAccountResult::Created);
+    AuthSessionToken token;
+    assert(auth->authenticate(
+        LoginIdentity{"lobby-host@example.test"},
+        "correct horse battery staple", token, error));
+
+    LocalWebSocketServerConfig config;
+    config.port = static_cast<std::uint16_t>(ix::getFreePort());
+    config.authentication = auth;
+    config.profiles = profiles();
+    auto server = LocalWebSocketMatchServer::start(std::move(config), error);
+    assert(server != nullptr && error.empty());
+    auto client = WebSocketNetworkSession::connectForAuthentication(
+        url(*server), error);
+    assert(client != nullptr);
+    assert(waitUntil([&] {
+        client->pump();
+        return client->state() == NetworkConnectionState::Connected;
+    }));
+    assert(client->authenticate({network::kProtocolVersion,
+        network::AuthenticateSessionRequest{token.value}}));
+    assert(waitUntil([&] {
+        client->pump();
+        return client->authenticationResponse().has_value();
+    }));
+    assert(client->controller() == nullptr);
+    assert(client->requestLobby({network::kProtocolVersion,
+        network::HostLobbyRequest{}}));
+    assert(waitUntil([&] {
+        client->pump();
+        return client->lobbyResponse().has_value();
+    }));
+    assert(std::holds_alternative<network::LobbyHosted>(
+        client->lobbyResponse()->payload));
+}
+
 } // namespace
 
 int main() {
@@ -431,4 +477,5 @@ int main() {
     callbacksAfterClientCloseAreIgnored();
     serverQueriesUseDurableAccountsAndSQLiteSurvivesRestart();
     serverPersistsPublicProfilesAndRejectsDuplicateHandles();
+    authenticatedUnboundAccountCanHostLobby();
 }

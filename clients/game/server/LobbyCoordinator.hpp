@@ -37,6 +37,8 @@ public:
     [[nodiscard]] bool cancel(
         const AccountIdentity& account, const LobbyCode& code,
         std::string& error);
+    // Connection cleanup: cancel any lobby still waiting for this host.
+    void cancelHostedBy(const AccountIdentity& account);
 
 private:
     [[nodiscard]] std::string generateCode();

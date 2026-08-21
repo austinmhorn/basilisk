@@ -129,6 +129,7 @@ public:
         std::lock_guard lock(mutex_);
         clients_.clear();
         pendingAuthentication_.clear();
+        authenticatedPreMatch_.clear();
         usedPlayers_.clear();
     }
 
@@ -257,6 +258,11 @@ private:
 
     void receive(ix::WebSocket& socket, const ix::WebSocketMessage& message) {
         const auto found = clients_.find(&socket);
+        const auto preMatch = authenticatedPreMatch_.find(&socket);
+        if (found == clients_.end() && preMatch != authenticatedPreMatch_.end()) {
+            receivePreMatch(socket, preMatch->second, message);
+            return;
+        }
         if (found == clients_.end() && pendingAuthentication_.contains(&socket)) {
             receiveAuthentication(socket, message);
             return;
@@ -288,6 +294,8 @@ private:
             const std::string payload(
                 reinterpret_cast<const char*>(response.data()), response.size());
             (void)socket.sendBinary(payload);
+            if (found->second.account.has_value())
+                lobbies_.cancelHostedBy(*found->second.account);
             usedPlayers_.erase(found->second.player);
             disconnectClient(found->second);
             clients_.erase(found);
@@ -307,14 +315,7 @@ private:
                 return;
             }
             for (const LobbyProtocolDelivery& delivery : deliveries) {
-                for (auto& [recipientSocket, recipient] : clients_) {
-                    if (!recipient.active || !recipient.account.has_value() ||
-                        *recipient.account != delivery.recipient) continue;
-                    const std::string payload(
-                        reinterpret_cast<const char*>(delivery.bytes.data()),
-                        delivery.bytes.size());
-                    (void)recipientSocket->sendBinary(payload);
-                }
+                deliverLobby(delivery);
             }
             return;
         }
@@ -325,6 +326,66 @@ private:
         }
         reportTrophyError();
         drainAll();
+    }
+
+    void receivePreMatch(ix::WebSocket& socket, const AccountIdentity& account,
+                         const ix::WebSocketMessage& message) {
+        if (!message.binary || message.str.size() > kMaximumFrameBytes) {
+            lobbies_.cancelHostedBy(account);
+            authenticatedPreMatch_.erase(&socket);
+            socket.close(message.binary ? 1009 : 1003,
+                message.binary ? "Frame exceeds 1 MiB limit" : "Binary frames required");
+            return;
+        }
+        const auto* data = reinterpret_cast<const std::uint8_t*>(message.str.data());
+        const std::span<const std::uint8_t> bytes{data, message.str.size()};
+        std::string error;
+        network::WireMessageType type{};
+        if (!network::inspectWireMessageType(bytes, type, error)) {
+            socket.close(1008, error);
+            return;
+        }
+        if (type == network::WireMessageType::LogoutSession) {
+            network::WireBytes response;
+            if (!authenticationProtocol_.process(bytes, response, error)) {
+                socket.close(1008, error);
+                return;
+            }
+            const std::string payload(
+                reinterpret_cast<const char*>(response.data()), response.size());
+            (void)socket.sendBinary(payload);
+            lobbies_.cancelHostedBy(account);
+            authenticatedPreMatch_.erase(&socket);
+            pendingAuthentication_.insert(&socket);
+            return;
+        }
+        if (type != network::WireMessageType::HostLobby &&
+            type != network::WireMessageType::JoinLobby &&
+            type != network::WireMessageType::CancelHostedLobby) {
+            socket.close(1008, "Unexpected pre-match message type");
+            return;
+        }
+        std::vector<LobbyProtocolDelivery> deliveries;
+        if (!lobbyProtocol_.process(account, bytes, deliveries, error)) {
+            socket.close(1008, error);
+            return;
+        }
+        for (const LobbyProtocolDelivery& delivery : deliveries)
+            deliverLobby(delivery);
+    }
+
+    void deliverLobby(const LobbyProtocolDelivery& delivery) {
+        const std::string payload(
+            reinterpret_cast<const char*>(delivery.bytes.data()),
+            delivery.bytes.size());
+        for (auto& [socket, account] : authenticatedPreMatch_) {
+            if (account == delivery.recipient) (void)socket->sendBinary(payload);
+        }
+        for (auto& [socket, client] : clients_) {
+            if (client.active && client.account.has_value() &&
+                *client.account == delivery.recipient)
+                (void)socket->sendBinary(payload);
+        }
     }
 
     void receiveAuthentication(
@@ -361,8 +422,19 @@ private:
         AccountIdentity account;
         if (!authentication_->resolveSession(
                 AuthSessionToken{success->sessionToken}, account, error)) return;
+        for (const auto& [existingSocket, existing] : authenticatedPreMatch_) {
+            if (existing == account && existingSocket != &socket) {
+                socket.close(1008, "Account is already connected");
+                pendingAuthentication_.erase(&socket);
+                return;
+            }
+        }
         const auto bound = authenticatedAccounts_.find(account);
-        if (bound == authenticatedAccounts_.end()) return;
+        pendingAuthentication_.erase(&socket);
+        if (bound == authenticatedAccounts_.end()) {
+            authenticatedPreMatch_.emplace(&socket, account);
+            return;
+        }
         if (usedPlayers_.contains(bound->second)) {
             socket.close(1008, "Account is already in use");
             pendingAuthentication_.erase(&socket);
@@ -374,7 +446,6 @@ private:
             pendingAuthentication_.erase(&socket);
             return;
         }
-        pendingAuthentication_.erase(&socket);
         clients_.emplace(
             &socket, Client{bound->second, std::move(endpoint), account, true});
         usedPlayers_.insert(bound->second);
@@ -393,8 +464,15 @@ private:
 
     void disconnect(ix::WebSocket& socket) {
         pendingAuthentication_.erase(&socket);
+        const auto preMatch = authenticatedPreMatch_.find(&socket);
+        if (preMatch != authenticatedPreMatch_.end()) {
+            lobbies_.cancelHostedBy(preMatch->second);
+            authenticatedPreMatch_.erase(preMatch);
+        }
         const auto found = clients_.find(&socket);
         if (found == clients_.end()) return;
+        if (found->second.account.has_value())
+            lobbies_.cancelHostedBy(*found->second.account);
         disconnectClient(found->second);
         clients_.erase(found);
         drainAll();
@@ -443,6 +521,7 @@ private:
     LobbyProtocolService lobbyProtocol_{lobbies_};
     std::set<PlayerId> usedPlayers_;
     std::set<ix::WebSocket*> pendingAuthentication_;
+    std::map<ix::WebSocket*, AccountIdentity> authenticatedPreMatch_;
     std::map<ix::WebSocket*, Client> clients_;
     mutable std::mutex mutex_;
     bool stopped_{false};
@@ -458,11 +537,15 @@ LocalWebSocketMatchServer::~LocalWebSocketMatchServer() { stop(); }
 std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
     LocalWebSocketServerConfig config, std::string& error) {
     const bool accountAuthentication = config.authentication != nullptr;
-    if (accountAuthentication != config.p1AuthenticatedAccount.has_value() ||
-        accountAuthentication != config.p2AuthenticatedAccount.has_value() ||
-        (accountAuthentication &&
+    const bool anyAccountBinding = config.p1AuthenticatedAccount.has_value() ||
+        config.p2AuthenticatedAccount.has_value();
+    const bool completeAccountBinding = config.p1AuthenticatedAccount.has_value() &&
+        config.p2AuthenticatedAccount.has_value();
+    if ((!accountAuthentication && anyAccountBinding) ||
+        anyAccountBinding != completeAccountBinding ||
+        (completeAccountBinding &&
          config.p1AuthenticatedAccount == config.p2AuthenticatedAccount)) {
-        error = "Account authentication requires two distinct account bindings.";
+        error = "Optional gameplay account bindings must be complete and distinct.";
         return nullptr;
     }
     if (!accountAuthentication &&
@@ -562,7 +645,7 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
             {std::move(config.p2Token), PlayerId{2}},
         },
         std::move(config.authentication),
-        accountAuthentication
+        completeAccountBinding
             ? std::map<AccountIdentity, PlayerId>{
                 {*config.p1AuthenticatedAccount, PlayerId{1}},
                 {*config.p2AuthenticatedAccount, PlayerId{2}},
