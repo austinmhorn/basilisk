@@ -4,13 +4,16 @@
 #include <mutex>
 #include <string>
 
+#include "PublicAccountProfiles.hpp"
 #include "TrophyScoring.hpp"
 
 struct sqlite3;
 
 namespace basilisk::game::server {
 
-class SQLiteTrophyPersistence final : public TrophyPersistence {
+class SQLiteTrophyPersistence final
+    : public TrophyPersistence,
+      public PublicAccountProfileStore {
 public:
     [[nodiscard]] static std::shared_ptr<SQLiteTrophyPersistence> open(
         const std::string& databasePath,
@@ -33,6 +36,14 @@ public:
         std::string& error) const override;
     [[nodiscard]] bool leaderboard(
         std::vector<TrophyLeaderboardEntry>& entries,
+        std::string& error) const override;
+    [[nodiscard]] PublicProfileStoreResult storeProfile(
+        const AccountIdentity& account,
+        const PublicAccountProfile& profile,
+        std::string& error) override;
+    [[nodiscard]] bool profileForAccount(
+        const AccountIdentity& account,
+        std::optional<PublicAccountProfile>& profile,
         std::string& error) const override;
 
 private:

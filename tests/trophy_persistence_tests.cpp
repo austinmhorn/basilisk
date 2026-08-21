@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <concepts>
 #include <filesystem>
 #include <map>
 #include <numeric>
@@ -21,6 +22,17 @@ using namespace basilisk::game::server;
 namespace network = basilisk::game::network;
 
 namespace {
+
+template <typename T>
+concept HasPrivateAccount = requires(T value) { value.account; };
+
+template <typename T>
+concept HasAccountId = requires(T value) { value.accountId; };
+
+static_assert(!HasPrivateAccount<PublicAccountProfile>);
+static_assert(!HasAccountId<PublicAccountProfile>);
+static_assert(!HasPrivateAccount<PublicTrophyLeaderboardEntry>);
+static_assert(!HasAccountId<PublicTrophyLeaderboardEntry>);
 
 const std::map<PlayerId, AccountIdentity> accounts{
     {PlayerId{1}, AccountIdentity{"durable-account-one"}},
@@ -201,6 +213,94 @@ void leaderboardUsesTotalsAndDeterministicTies() {
         {AccountIdentity{"account-low"}, 0},
     };
     assert(leaderboard == expected);
+}
+
+void publicProfilesPersistAndEnforceStableUniqueHandles() {
+    TemporaryDatabase database;
+    const AccountIdentity firstAccount{"private-account-one"};
+    const PublicAccountProfile firstProfile{
+        PublicProfileHandle{"hunter-one"},
+        "Mara Voss",
+    };
+    {
+        const auto persistence = open(database);
+        std::string error;
+        assert(persistence->storeProfile(
+            firstAccount, firstProfile, error) ==
+            PublicProfileStoreResult::Stored);
+        assert(persistence->storeProfile(
+            firstAccount, firstProfile, error) ==
+            PublicProfileStoreResult::AlreadyStored);
+        assert(persistence->storeProfile(
+            firstAccount,
+            PublicAccountProfile{PublicProfileHandle{"changed"}, "Mara"},
+            error) == PublicProfileStoreResult::AccountConflict);
+        assert(persistence->storeProfile(
+            AccountIdentity{"private-account-two"},
+            PublicAccountProfile{firstProfile.handle, "Elias Thorn"},
+            error) == PublicProfileStoreResult::DuplicateHandle);
+    }
+
+    const auto reopened = open(database);
+    std::string error;
+    std::optional<PublicAccountProfile> loaded;
+    assert(reopened->profileForAccount(firstAccount, loaded, error));
+    assert(loaded == firstProfile);
+    assert(reopened->profileForAccount(
+        AccountIdentity{"missing-private-account"}, loaded, error));
+    assert(!loaded.has_value());
+}
+
+void publicLeaderboardCombinesProfilesWithLedgerTotals() {
+    TemporaryDatabase database;
+    const auto persistence = open(database);
+    std::string error;
+    const std::vector rows{
+        entry("public-board", "private-missing", TrophyReason::Win, 8),
+        entry("public-board", "private-zulu", TrophyReason::Win, 5),
+        entry("public-board", "private-alpha", TrophyReason::Win, 5),
+        entry("public-board", "private-low", TrophyReason::Loss, 0),
+    };
+    assert(persistence->appendMatch(
+        TrophyMatchId{"public-board"}, rows, error) ==
+        TrophyAppendResult::Appended);
+    assert(persistence->storeProfile(
+        AccountIdentity{"private-zulu"},
+        PublicAccountProfile{PublicProfileHandle{"zulu"}, "Zara"},
+        error) == PublicProfileStoreResult::Stored);
+    assert(persistence->storeProfile(
+        AccountIdentity{"private-alpha"},
+        PublicAccountProfile{PublicProfileHandle{"alpha"}, "Arden"},
+        error) == PublicProfileStoreResult::Stored);
+    assert(persistence->storeProfile(
+        AccountIdentity{"private-low"},
+        PublicAccountProfile{PublicProfileHandle{"low"}, "Low Hunter"},
+        error) == PublicProfileStoreResult::Stored);
+
+    auto ledger = std::make_shared<TrophyLedger>(persistence);
+    PublicTrophyReadModel readModel{ledger, persistence};
+    std::vector<PublicTrophyLeaderboardEntry> leaderboard;
+    assert(readModel.leaderboardPage(0, 10, leaderboard, error));
+    const std::vector<PublicTrophyLeaderboardEntry> expected{
+        {1, PublicProfileHandle{"alpha"}, "Arden", 5},
+        {1, PublicProfileHandle{"zulu"}, "Zara", 5},
+        {3, PublicProfileHandle{"low"}, "Low Hunter", 0},
+    };
+    assert(leaderboard == expected);
+
+    // Missing profiles are intentionally omitted, and private identifiers
+    // cannot appear in the public model even when they have the highest total.
+    assert(std::ranges::none_of(leaderboard, [](const auto& entry) {
+        return entry.handle.value.starts_with("private-") ||
+            entry.displayName.starts_with("private-");
+    }));
+
+    std::vector<PublicTrophyLeaderboardEntry> page;
+    assert(readModel.leaderboardPage(1, 1, page, error));
+    assert(page == std::vector<PublicTrophyLeaderboardEntry>{expected[1]});
+    assert(readModel.leaderboardPage(0, 2, page, error));
+    assert((page == std::vector<PublicTrophyLeaderboardEntry>{
+        expected[0], expected[1]}));
 }
 
 void unfinishedAuthoritativeMatchDoesNotClaimItsId() {
@@ -511,6 +611,8 @@ int main() {
     entriesAndTotalsSurviveReload();
     duplicateMatchIsRejectedAcrossReload();
     leaderboardUsesTotalsAndDeterministicTies();
+    publicProfilesPersistAndEnforceStableUniqueHandles();
+    publicLeaderboardCombinesProfilesWithLedgerTotals();
     unfinishedAuthoritativeMatchDoesNotClaimItsId();
     authoritativeZeroEntryDrawIsClaimedOnce();
     persistenceFailureDoesNotCorruptTerminalGameplayState();

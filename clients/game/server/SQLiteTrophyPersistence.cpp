@@ -24,6 +24,13 @@ CREATE TABLE IF NOT EXISTS trophy_ledger (
 );
 CREATE INDEX IF NOT EXISTS trophy_ledger_account
     ON trophy_ledger(account_id);
+CREATE TABLE IF NOT EXISTS public_account_profiles (
+    account_id TEXT PRIMARY KEY NOT NULL,
+    public_handle TEXT UNIQUE NOT NULL,
+    display_name TEXT NOT NULL,
+    CHECK (length(public_handle) > 0),
+    CHECK (length(display_name) > 0)
+);
 CREATE TRIGGER IF NOT EXISTS trophy_ledger_no_update
 BEFORE UPDATE ON trophy_ledger BEGIN
     SELECT RAISE(ABORT, 'trophy ledger rows are immutable');
@@ -292,6 +299,105 @@ bool SQLiteTrophyPersistence::leaderboard(
         error = sqlite3_errmsg(database_);
         return false;
     }
+    error.clear();
+    return true;
+}
+
+PublicProfileStoreResult SQLiteTrophyPersistence::storeProfile(
+    const AccountIdentity& account,
+    const PublicAccountProfile& profile,
+    std::string& error) {
+
+    std::lock_guard lock(mutex_);
+    if (account.value.empty() || profile.handle.value.empty() ||
+        profile.displayName.empty()) {
+        error = "Account, public handle, and display name must not be empty.";
+        return PublicProfileStoreResult::Error;
+    }
+    Statement existing(
+        database_,
+        "SELECT public_handle, display_name FROM public_account_profiles "
+        "WHERE account_id = ?",
+        error);
+    if (existing.get() == nullptr ||
+        !bindText(existing.get(), 1, account.value)) {
+        if (error.empty()) error = sqlite3_errmsg(database_);
+        return PublicProfileStoreResult::Error;
+    }
+    const int existingResult = sqlite3_step(existing.get());
+    if (existingResult == SQLITE_ROW) {
+        const PublicAccountProfile stored{
+            PublicProfileHandle{reinterpret_cast<const char*>(
+                sqlite3_column_text(existing.get(), 0))},
+            reinterpret_cast<const char*>(
+                sqlite3_column_text(existing.get(), 1)),
+        };
+        error.clear();
+        return stored == profile
+            ? PublicProfileStoreResult::AlreadyStored
+            : PublicProfileStoreResult::AccountConflict;
+    }
+    if (existingResult != SQLITE_DONE) {
+        error = sqlite3_errmsg(database_);
+        return PublicProfileStoreResult::Error;
+    }
+
+    Statement insert(
+        database_,
+        "INSERT INTO public_account_profiles"
+        "(account_id, public_handle, display_name) VALUES(?, ?, ?)",
+        error);
+    if (insert.get() == nullptr ||
+        !bindText(insert.get(), 1, account.value) ||
+        !bindText(insert.get(), 2, profile.handle.value) ||
+        !bindText(insert.get(), 3, profile.displayName)) {
+        if (error.empty()) error = sqlite3_errmsg(database_);
+        return PublicProfileStoreResult::Error;
+    }
+    const int result = sqlite3_step(insert.get());
+    if (result == SQLITE_CONSTRAINT) {
+        error.clear();
+        return PublicProfileStoreResult::DuplicateHandle;
+    }
+    if (result != SQLITE_DONE) {
+        error = sqlite3_errmsg(database_);
+        return PublicProfileStoreResult::Error;
+    }
+    error.clear();
+    return PublicProfileStoreResult::Stored;
+}
+
+bool SQLiteTrophyPersistence::profileForAccount(
+    const AccountIdentity& account,
+    std::optional<PublicAccountProfile>& profile,
+    std::string& error) const {
+
+    std::lock_guard lock(mutex_);
+    Statement query(
+        database_,
+        "SELECT public_handle, display_name FROM public_account_profiles "
+        "WHERE account_id = ?",
+        error);
+    if (query.get() == nullptr ||
+        !bindText(query.get(), 1, account.value)) {
+        if (error.empty()) error = sqlite3_errmsg(database_);
+        return false;
+    }
+    const int result = sqlite3_step(query.get());
+    if (result == SQLITE_DONE) {
+        profile.reset();
+        error.clear();
+        return true;
+    }
+    if (result != SQLITE_ROW) {
+        error = sqlite3_errmsg(database_);
+        return false;
+    }
+    profile = PublicAccountProfile{
+        PublicProfileHandle{reinterpret_cast<const char*>(
+            sqlite3_column_text(query.get(), 0))},
+        reinterpret_cast<const char*>(sqlite3_column_text(query.get(), 1)),
+    };
     error.clear();
     return true;
 }
