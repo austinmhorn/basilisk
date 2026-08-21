@@ -373,6 +373,47 @@ void serverQueriesUseDurableAccountsAndSQLiteSurvivesRestart() {
     assert(reconnected->controller()->trophyTotal() == 2);
 }
 
+void serverPersistsPublicProfilesAndRejectsDuplicateHandles() {
+    TemporaryTrophyDatabase database;
+    LocalServerTrophyConfig trophies{
+        TrophyMatchId{"public-profile-match"},
+        AccountIdentity{"durable-profile-p1"},
+        AccountIdentity{"durable-profile-p2"},
+        database.path(),
+        PublicAccountProfile{PublicProfileHandle{"mara"}, "Mara Voss"},
+        PublicAccountProfile{PublicProfileHandle{"elias"}, "Elias Thorn"},
+    };
+    auto server = startServer(trophies);
+    server->stop();
+
+    std::string error;
+    auto persistence = SQLiteTrophyPersistence::open(database.path(), error);
+    assert(persistence != nullptr && error.empty());
+    std::optional<PublicAccountProfile> profile;
+    assert(persistence->profileForAccount(
+        AccountIdentity{"durable-profile-p1"}, profile, error));
+    assert(profile == trophies.p1PublicProfile);
+    assert(persistence->profileForAccount(
+        AccountIdentity{"durable-profile-p2"}, profile, error));
+    assert(profile == trophies.p2PublicProfile);
+    persistence.reset();
+
+    TemporaryTrophyDatabase conflictDatabase;
+    trophies.match = TrophyMatchId{"duplicate-handle-match"};
+    trophies.sqliteDatabasePath = conflictDatabase.path();
+    trophies.p2PublicProfile = PublicAccountProfile{
+        PublicProfileHandle{"mara"}, "Elias Thorn"};
+    LocalWebSocketServerConfig config;
+    config.port = static_cast<std::uint16_t>(ix::getFreePort());
+    config.p1Token = "distinct-token-p1";
+    config.p2Token = "distinct-token-p2";
+    config.profiles = profiles();
+    config.trophies = trophies;
+    auto rejected = LocalWebSocketMatchServer::start(std::move(config), error);
+    assert(rejected == nullptr);
+    assert(error == "Public handle 'mara' for P2 is already in use.");
+}
+
 } // namespace
 
 int main() {
@@ -389,4 +430,5 @@ int main() {
     establishedSessionReportsConnectionLoss();
     callbacksAfterClientCloseAreIgnored();
     serverQueriesUseDurableAccountsAndSQLiteSurvivesRestart();
+    serverPersistsPublicProfilesAndRejectsDuplicateHandles();
 }

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "TrophyScoring.hpp"
+#include "PublicAccountProfiles.hpp"
 #include "basilisk/Types.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
 
@@ -19,6 +20,8 @@ struct LocalServerTrophyConfig {
 
     // Empty selects the existing in-memory persistence for tests/development.
     std::string sqliteDatabasePath;
+    std::optional<PublicAccountProfile> p1PublicProfile;
+    std::optional<PublicAccountProfile> p2PublicProfile;
 };
 
 struct LocalWebSocketServerConfig {

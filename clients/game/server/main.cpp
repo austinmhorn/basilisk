@@ -46,12 +46,19 @@ int main(int argc, char** argv) {
     std::optional<std::string> trophyMatch;
     std::optional<std::string> p1Account;
     std::optional<std::string> p2Account;
+    std::optional<std::string> p1PublicHandle;
+    std::optional<std::string> p2PublicHandle;
+    std::optional<std::string> p1DisplayName;
+    std::optional<std::string> p2DisplayName;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument{argv[index]};
         if (argument != "--port" && argument != "--p1-token" &&
             argument != "--p2-token" && argument != "--map-seed" &&
             argument != "--trophy-db" && argument != "--match-id" &&
-            argument != "--p1-account" && argument != "--p2-account") {
+            argument != "--p1-account" && argument != "--p2-account" &&
+            argument != "--p1-handle" && argument != "--p2-handle" &&
+            argument != "--p1-display-name" &&
+            argument != "--p2-display-name") {
             std::fprintf(stderr, "Unknown argument: %s\n", argv[index]);
             return 2;
         }
@@ -66,6 +73,10 @@ int main(int argc, char** argv) {
         else if (argument == "--match-id") trophyMatch = argv[index];
         else if (argument == "--p1-account") p1Account = argv[index];
         else if (argument == "--p2-account") p2Account = argv[index];
+        else if (argument == "--p1-handle") p1PublicHandle = argv[index];
+        else if (argument == "--p2-handle") p2PublicHandle = argv[index];
+        else if (argument == "--p1-display-name") p1DisplayName = argv[index];
+        else if (argument == "--p2-display-name") p2DisplayName = argv[index];
         else {
             std::uint64_t value = 0;
             if (!parseUnsigned(argv[index], value) ||
@@ -79,13 +90,28 @@ int main(int argc, char** argv) {
         }
     }
     const bool trophiesRequested = trophyDatabase.has_value() ||
-        trophyMatch.has_value() || p1Account.has_value() || p2Account.has_value();
+        trophyMatch.has_value() || p1Account.has_value() || p2Account.has_value() ||
+        p1PublicHandle.has_value() || p2PublicHandle.has_value() ||
+        p1DisplayName.has_value() || p2DisplayName.has_value();
     if (trophiesRequested) {
         if (!trophyMatch.has_value() || !p1Account.has_value() ||
             !p2Account.has_value()) {
             std::fprintf(stderr,
                 "Trophy scoring requires --match-id, --p1-account, and "
-                "--p2-account. --trophy-db is optional for in-memory use.\n");
+                "--p2-account.\n");
+            return 2;
+        }
+        const bool anyPublicProfile = p1PublicHandle.has_value() ||
+            p2PublicHandle.has_value() || p1DisplayName.has_value() ||
+            p2DisplayName.has_value();
+        const bool completePublicProfiles = p1PublicHandle.has_value() &&
+            p2PublicHandle.has_value() && p1DisplayName.has_value() &&
+            p2DisplayName.has_value();
+        if (trophyDatabase.has_value() != completePublicProfiles ||
+            anyPublicProfile != completePublicProfiles) {
+            std::fprintf(stderr,
+                "SQLite trophy persistence requires --trophy-db, --p1-handle, "
+                "--p2-handle, --p1-display-name, and --p2-display-name together.\n");
             return 2;
         }
         config.trophies = basilisk::game::server::LocalServerTrophyConfig{
@@ -94,6 +120,20 @@ int main(int argc, char** argv) {
             basilisk::game::server::AccountIdentity{std::move(*p2Account)},
             trophyDatabase.has_value() ? std::move(*trophyDatabase) : std::string{},
         };
+        if (completePublicProfiles) {
+            config.trophies->p1PublicProfile =
+                basilisk::game::server::PublicAccountProfile{
+                    basilisk::game::PublicProfileHandle{
+                        std::move(*p1PublicHandle)},
+                    std::move(*p1DisplayName),
+                };
+            config.trophies->p2PublicProfile =
+                basilisk::game::server::PublicAccountProfile{
+                    basilisk::game::PublicProfileHandle{
+                        std::move(*p2PublicHandle)},
+                    std::move(*p2DisplayName),
+                };
+        }
     }
 
     std::string error;

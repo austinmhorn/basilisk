@@ -344,6 +344,16 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
             error = "Trophy scoring requires a match ID and two distinct account IDs.";
             return nullptr;
         }
+        if (trophies.p1PublicProfile.has_value() !=
+            trophies.p2PublicProfile.has_value()) {
+            error = "Public profiles must be configured for both players.";
+            return nullptr;
+        }
+        if (trophies.p1PublicProfile.has_value() &&
+            trophies.sqliteDatabasePath.empty()) {
+            error = "Public profiles require SQLite trophy persistence.";
+            return nullptr;
+        }
         if (trophies.sqliteDatabasePath.empty()) {
             trophyLedger = std::make_shared<TrophyLedger>();
         } else {
@@ -353,6 +363,35 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
                 error = "Unable to open trophy database: " + error;
                 return nullptr;
             }
+            const auto persistProfile = [&](PlayerSlot slot,
+                                            const AccountIdentity& account,
+                                            const PublicAccountProfile& profile) {
+                const PublicProfileStoreResult result =
+                    persistence->storeProfile(account, profile, error);
+                if (result == PublicProfileStoreResult::Stored ||
+                    result == PublicProfileStoreResult::AlreadyStored)
+                    return true;
+                const char* player = slot == PlayerSlot::P1 ? "P1" : "P2";
+                if (result == PublicProfileStoreResult::DuplicateHandle) {
+                    error = std::string{"Public handle '"} +
+                        profile.handle.value + "' for " + player +
+                        " is already in use.";
+                } else if (result == PublicProfileStoreResult::AccountConflict) {
+                    error = std::string{"Public profile for "} + player +
+                        " conflicts with the account's existing stable profile.";
+                } else if (error.empty()) {
+                    error = std::string{"Unable to persist public profile for "} +
+                        player + ".";
+                }
+                return false;
+            };
+            if (trophies.p1PublicProfile.has_value() &&
+                (!persistProfile(
+                    PlayerSlot::P1, trophies.p1Account,
+                    *trophies.p1PublicProfile) ||
+                 !persistProfile(
+                    PlayerSlot::P2, trophies.p2Account,
+                    *trophies.p2PublicProfile))) return nullptr;
             trophyLedger = std::make_shared<TrophyLedger>(persistence);
             publicLeaderboard = std::make_shared<PublicTrophyReadModel>(
                 trophyLedger, persistence);
