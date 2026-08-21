@@ -80,6 +80,9 @@ target_link_libraries(
         Basilisk::GameMapLayout
 )
 target_compile_features(BasiliskGameNetworkSession PUBLIC cxx_std_20)
+if(WIN32)
+    target_compile_definitions(BasiliskGameNetworkSession PUBLIC NOMINMAX)
+endif()
 
 if(EMSCRIPTEN)
     target_link_options(BasiliskGameNetworkSession PUBLIC "-lwebsocket.js")
