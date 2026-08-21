@@ -15,6 +15,7 @@
 #include "ActionSelection.hpp"
 #include "ClientLifecycle.hpp"
 #include "ClientSessionController.hpp"
+#include "ConnectionStatusPresentation.hpp"
 #include "DemoMap.hpp"
 #include "DemoUi.hpp"
 #include "LocalGameSessionAdapter.hpp"
@@ -751,6 +752,25 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     screenError)) {
                 SDL_Log("Screen shell rendering failed: %s", screenError.c_str());
                 return SDL_APP_FAILURE;
+            }
+
+            if (state->networkSession != nullptr) {
+                std::string connectionError;
+                const bool sessionReady = snapshot != nullptr;
+                if (!basilisk::game::renderConnectionStatus(
+                        state->renderer,
+                        *state->textRenderer,
+                        state->networkSession->state(),
+                        state->networkSession->error(),
+                        sessionReady,
+                        outputWidth,
+                        outputHeight,
+                        connectionError)) {
+                    SDL_Log(
+                        "Connection status rendering failed: %s",
+                        connectionError.c_str());
+                    return SDL_APP_FAILURE;
+                }
             }
         } else if (snapshot != nullptr) {
             if (const auto* fixed = state->session->displayedMapGeometry()) {

@@ -319,6 +319,7 @@ target_compile_features(BasiliskGameRuntime PUBLIC cxx_std_20)
 
 function(basilisk_add_game_executable target)
     add_executable(${target}
+        src/ConnectionStatusPresentation.cpp
         src/main.cpp
         src/ScreenShell.cpp
     )
