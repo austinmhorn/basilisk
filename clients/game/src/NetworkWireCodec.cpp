@@ -662,6 +662,35 @@ bool readProfile(Reader& reader, client::PublicPlayerProfile& profile) {
            reader.string(profile.emblemId.value);
 }
 
+bool writeLeaderboardEntry(
+    Writer& writer,
+    const PublicTrophyLeaderboardEntry& entry) {
+
+    if (entry.rank == 0 ||
+        entry.rank > std::numeric_limits<std::uint32_t>::max() ||
+        entry.handle.value.empty() || entry.displayName.empty())
+        return writer.fail("Invalid public leaderboard entry.");
+    writer.u32(static_cast<std::uint32_t>(entry.rank));
+    if (!writer.string(entry.handle.value) ||
+        !writer.string(entry.displayName)) return false;
+    writer.i64(entry.trophyTotal);
+    return true;
+}
+
+bool readLeaderboardEntry(
+    Reader& reader,
+    PublicTrophyLeaderboardEntry& entry) {
+
+    std::uint32_t rank{};
+    if (!reader.u32(rank) || !reader.string(entry.handle.value) ||
+        !reader.string(entry.displayName) || !reader.i64(entry.trophyTotal))
+        return false;
+    if (rank == 0 || entry.handle.value.empty() || entry.displayName.empty())
+        return reader.fail("Invalid public leaderboard entry.");
+    entry.rank = rank;
+    return true;
+}
+
 bool writeViewContext(Writer& writer, const client::ClientViewContext& context) {
     writeId(writer, context.localPlayer);
     writeId(writer, context.viewedPlayer);
@@ -710,10 +739,12 @@ bool readHeader(
     switch (static_cast<WireMessageType>(encodedType)) {
         case WireMessageType::ServerBootstrap:
         case WireMessageType::ServerUpdate:
+        case WireMessageType::LeaderboardPageResponse:
         case WireMessageType::SubmitAction:
         case WireMessageType::LockAction:
         case WireMessageType::WatchRemainingHunter:
         case WireMessageType::Quit:
+        case WireMessageType::LeaderboardPageRequest:
             break;
         default:
             return reader.fail("Unknown wire message type.");
@@ -741,11 +772,46 @@ WireMessageType commandType(const ClientCommandPayload& payload) {
             return WireMessageType::LockAction;
         if constexpr (std::is_same_v<T, WatchRemainingHunterCommand>)
             return WireMessageType::WatchRemainingHunter;
-        return WireMessageType::Quit;
+        if constexpr (std::is_same_v<T, QuitCommand>)
+            return WireMessageType::Quit;
+        return WireMessageType::LeaderboardPageRequest;
     }, payload);
 }
 
 } // namespace
+
+bool inspectWireMessageType(
+    std::span<const std::uint8_t> bytes,
+    WireMessageType& type,
+    std::string& error) {
+
+    error.clear();
+    if (bytes.size() < 5) {
+        error = "Truncated wire message.";
+        return false;
+    }
+    for (std::size_t index = 0; index < std::size(kMagic); ++index) {
+        if (bytes[index] != kMagic[index]) {
+            error = "Invalid wire message magic.";
+            return false;
+        }
+    }
+    const auto candidate = static_cast<WireMessageType>(bytes[4]);
+    switch (candidate) {
+        case WireMessageType::ServerBootstrap:
+        case WireMessageType::ServerUpdate:
+        case WireMessageType::LeaderboardPageResponse:
+        case WireMessageType::SubmitAction:
+        case WireMessageType::LockAction:
+        case WireMessageType::WatchRemainingHunter:
+        case WireMessageType::Quit:
+        case WireMessageType::LeaderboardPageRequest:
+            type = candidate;
+            return true;
+    }
+    error = "Unknown wire message type.";
+    return false;
+}
 
 bool encodeWire(
     const ServerBootstrap& message,
@@ -811,14 +877,43 @@ bool encodeWire(
             writeId(writer, command.localPlayer);
             writeId(writer, command.viewedPlayer);
             return true;
-        } else {
+        } else if constexpr (std::is_same_v<T, QuitCommand>) {
             writeId(writer, command.player);
+            return true;
+        } else {
+            if (command.limit == 0 ||
+                command.limit > kMaximumLeaderboardPageSize)
+                return writer.fail("Invalid leaderboard page size.");
+            writer.u32(command.offset);
+            writer.u32(command.limit);
             return true;
         }
     }, message.payload);
     if (!written || !writer.finish()) return false;
     ClientCommand validated;
     return decodeClientCommand(bytes, validated, error);
+}
+
+bool encodeWire(
+    const LeaderboardPageResponse& message,
+    WireBytes& bytes,
+    std::string& error) {
+
+    Writer writer(bytes, error);
+    if (message.protocolVersion != kProtocolVersion)
+        return writer.fail("Unsupported Basilisk network protocol version.");
+    if (message.entries.size() > kMaximumLeaderboardPageSize)
+        return writer.fail("Leaderboard response exceeds requested page limit.");
+    writeHeader(
+        writer, WireMessageType::LeaderboardPageResponse,
+        message.protocolVersion);
+    writer.u32(message.offset);
+    if (!writeVector(writer, message.entries,
+            [&](const PublicTrophyLeaderboardEntry& entry) {
+                return writeLeaderboardEntry(writer, entry);
+            }) || !writer.finish()) return false;
+    LeaderboardPageResponse validated;
+    return decodeLeaderboardPageResponse(bytes, validated, error);
 }
 
 bool decodeServerBootstrap(
@@ -902,9 +997,11 @@ bool decodeClientCommand(
     if (type != WireMessageType::SubmitAction &&
         type != WireMessageType::LockAction &&
         type != WireMessageType::WatchRemainingHunter &&
-        type != WireMessageType::Quit) {
+        type != WireMessageType::Quit &&
+        type != WireMessageType::LeaderboardPageRequest) {
         error = (type == WireMessageType::ServerBootstrap ||
-                 type == WireMessageType::ServerUpdate)
+                 type == WireMessageType::ServerUpdate ||
+                 type == WireMessageType::LeaderboardPageResponse)
             ? "Unexpected wire message type."
             : "Unknown wire message type.";
         return false;
@@ -939,9 +1036,40 @@ bool decodeClientCommand(
             decoded.payload = command;
             break;
         }
+        case WireMessageType::LeaderboardPageRequest: {
+            LeaderboardPageRequest command;
+            if (!reader.u32(command.offset) || !reader.u32(command.limit))
+                return false;
+            if (command.limit == 0 ||
+                command.limit > kMaximumLeaderboardPageSize)
+                return reader.fail("Invalid leaderboard page size.");
+            decoded.payload = command;
+            break;
+        }
         default:
             return reader.fail("Unexpected wire message type.");
     }
+    if (!finishRead(reader)) return false;
+    message = std::move(decoded);
+    return true;
+}
+
+bool decodeLeaderboardPageResponse(
+    std::span<const std::uint8_t> bytes,
+    LeaderboardPageResponse& message,
+    std::string& error) {
+
+    Reader reader(bytes, error);
+    LeaderboardPageResponse decoded;
+    if (!readHeader(reader, WireMessageType::LeaderboardPageResponse,
+            decoded.protocolVersion) ||
+        !reader.u32(decoded.offset) ||
+        !readVector(reader, decoded.entries,
+            [&](PublicTrophyLeaderboardEntry& entry) {
+                return readLeaderboardEntry(reader, entry);
+            })) return false;
+    if (decoded.entries.size() > kMaximumLeaderboardPageSize)
+        return reader.fail("Leaderboard response exceeds page limit.");
     if (!finishRead(reader)) return false;
     message = std::move(decoded);
     return true;

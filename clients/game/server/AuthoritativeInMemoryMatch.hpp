@@ -10,6 +10,7 @@
 
 #include "NetworkProtocol.hpp"
 #include "NetworkWireCodec.hpp"
+#include "PublicAccountProfiles.hpp"
 #include "TrophyScoring.hpp"
 #include "basilisk/Types.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
@@ -53,7 +54,8 @@ public:
         MatchSeed matchSeed,
         std::vector<client::PublicPlayerProfile> profiles,
         std::string& error,
-        std::optional<TrophyScoringContext> trophyScoring = std::nullopt);
+        std::optional<TrophyScoringContext> trophyScoring = std::nullopt,
+        std::shared_ptr<PublicTrophyReadModel> leaderboard = nullptr);
 
     [[nodiscard]] std::shared_ptr<InMemoryMatchEndpoint> connect(
         PlayerId authenticatedPlayer,

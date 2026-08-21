@@ -1,21 +1,18 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "PublicLeaderboard.hpp"
 #include "TrophyScoring.hpp"
 
 namespace basilisk::game::server {
 
-struct PublicProfileHandle {
-    std::string value;
-
-    auto operator<=>(const PublicProfileHandle&) const = default;
-};
+using ::basilisk::game::PublicProfileHandle;
+using ::basilisk::game::PublicTrophyLeaderboardEntry;
 
 // Public account data contains no durable private account identity.
 struct PublicAccountProfile {
@@ -51,15 +48,6 @@ public:
 
 [[nodiscard]] std::shared_ptr<PublicAccountProfileStore>
 makeInMemoryPublicAccountProfileStore();
-
-struct PublicTrophyLeaderboardEntry {
-    std::size_t rank{};
-    PublicProfileHandle handle;
-    std::string displayName;
-    std::int64_t trophyTotal{};
-
-    bool operator==(const PublicTrophyLeaderboardEntry&) const = default;
-};
 
 // Read-only join of public account profiles with authoritative ledger totals.
 // Accounts without a public profile are intentionally omitted. Equal totals

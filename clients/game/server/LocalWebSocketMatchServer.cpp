@@ -334,6 +334,7 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
         return nullptr;
     }
     std::shared_ptr<TrophyLedger> trophyLedger;
+    std::shared_ptr<PublicTrophyReadModel> publicLeaderboard;
     std::optional<TrophyScoringContext> trophyScoring;
     if (config.trophies.has_value()) {
         const LocalServerTrophyConfig& trophies = *config.trophies;
@@ -352,7 +353,9 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
                 error = "Unable to open trophy database: " + error;
                 return nullptr;
             }
-            trophyLedger = std::make_shared<TrophyLedger>(std::move(persistence));
+            trophyLedger = std::make_shared<TrophyLedger>(persistence);
+            publicLeaderboard = std::make_shared<PublicTrophyReadModel>(
+                trophyLedger, persistence);
         }
         trophyScoring = TrophyScoringContext{
             trophies.match,
@@ -365,7 +368,7 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
     }
     auto match = AuthoritativeInMemoryMatch::create(
         config.mapSeed, config.matchSeed, std::move(config.profiles), error,
-        std::move(trophyScoring));
+        std::move(trophyScoring), std::move(publicLeaderboard));
     if (match == nullptr) return nullptr;
     if (config.port == 0) {
         error = "WebSocket server port must be non-zero.";

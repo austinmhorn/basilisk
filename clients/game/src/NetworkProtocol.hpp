@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "MapLayout.hpp"
+#include "PublicLeaderboard.hpp"
 #include "basilisk/Action.hpp"
 #include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/PublicMatchMetadata.hpp"
@@ -56,11 +57,25 @@ struct QuitCommand {
     PlayerId player{};
 };
 
+inline constexpr std::uint32_t kMaximumLeaderboardPageSize{100};
+
+struct LeaderboardPageRequest {
+    std::uint32_t offset{};
+    std::uint32_t limit{};
+};
+
+struct LeaderboardPageResponse {
+    std::uint32_t protocolVersion{kProtocolVersion};
+    std::uint32_t offset{};
+    std::vector<PublicTrophyLeaderboardEntry> entries;
+};
+
 using ClientCommandPayload = std::variant<
     SubmitActionCommand,
     LockActionCommand,
     WatchRemainingHunterCommand,
-    QuitCommand>;
+    QuitCommand,
+    LeaderboardPageRequest>;
 
 struct ClientCommand {
     std::uint32_t protocolVersion{kProtocolVersion};

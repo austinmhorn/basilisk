@@ -66,8 +66,9 @@ private:
 } // namespace
 
 NetworkGameSessionAdapter::NetworkGameSessionAdapter(
-    std::unique_ptr<ClientSessionController> controller)
-    : controller_(std::move(controller)) {}
+    std::unique_ptr<ClientSessionController> controller,
+    std::shared_ptr<network::ClientTransport> transport)
+    : controller_(std::move(controller)), transport_(std::move(transport)) {}
 
 std::unique_ptr<NetworkGameSessionAdapter>
 NetworkGameSessionAdapter::create(
@@ -88,7 +89,7 @@ NetworkGameSessionAdapter::create(
     auto actionCommands =
         std::make_unique<NetworkActionCommandSink>(transport);
     auto sessionCommands =
-        std::make_unique<NetworkSessionCommandSink>(std::move(transport));
+        std::make_unique<NetworkSessionCommandSink>(transport);
     auto controller = std::make_unique<ClientSessionController>(
         std::move(bootstrap.matchMetadata),
         std::move(bootstrap.profiles),
@@ -103,7 +104,8 @@ NetworkGameSessionAdapter::create(
         return nullptr;
     }
     return std::unique_ptr<NetworkGameSessionAdapter>(
-        new NetworkGameSessionAdapter(std::move(controller)));
+        new NetworkGameSessionAdapter(
+            std::move(controller), std::move(transport)));
 }
 
 ClientSessionController& NetworkGameSessionAdapter::controller() noexcept {
@@ -135,6 +137,34 @@ bool NetworkGameSessionAdapter::ingest(
     }
     controller_->setTrophyTotal(update.trophyTotal);
     return true;
+}
+
+bool NetworkGameSessionAdapter::requestLeaderboard(
+    std::uint32_t offset,
+    std::uint32_t limit) {
+
+    return transport_ != nullptr && transport_->send(network::ClientCommand{
+        network::kProtocolVersion,
+        network::LeaderboardPageRequest{offset, limit},
+    });
+}
+
+bool NetworkGameSessionAdapter::ingest(
+    network::LeaderboardPageResponse response,
+    std::string& error) {
+
+    error.clear();
+    if (response.protocolVersion != network::kProtocolVersion) {
+        error = "Unsupported Basilisk network protocol version.";
+        return false;
+    }
+    leaderboardPage_ = std::move(response);
+    return true;
+}
+
+const std::optional<network::LeaderboardPageResponse>&
+NetworkGameSessionAdapter::leaderboardPage() const noexcept {
+    return leaderboardPage_;
 }
 
 } // namespace basilisk::game

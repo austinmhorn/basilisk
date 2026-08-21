@@ -91,12 +91,14 @@ public:
     AuthoritativeInMemoryMatchState(
         MatchState match,
         std::vector<client::PublicPlayerProfile> profiles,
-        std::optional<TrophyScoringContext> trophyScoring)
+        std::optional<TrophyScoringContext> trophyScoring,
+        std::shared_ptr<PublicTrophyReadModel> leaderboard)
         : match_(std::move(match)),
           coordinator_(match_),
           metadata_(PublicMatchMetadataSystem::build(match_)),
           profiles_(std::move(profiles)),
-          trophyScoring_(std::move(trophyScoring)) {
+          trophyScoring_(std::move(trophyScoring)),
+          leaderboard_(std::move(leaderboard)) {
 
         const PlayerMapView physicalMap = fullPhysicalMap(match_);
         fullLayout_.update(physicalMap);
@@ -271,6 +273,38 @@ private:
         return true;
     }
 
+    [[nodiscard]] bool handle(
+        PlayerId authenticatedPlayer,
+        const network::LeaderboardPageRequest& command,
+        std::string& error) {
+
+        if (leaderboard_ == nullptr) {
+            error = "Public leaderboard is not configured.";
+            return false;
+        }
+        std::vector<PublicTrophyLeaderboardEntry> entries;
+        if (!leaderboard_->leaderboardPage(
+                command.offset, command.limit, entries, error)) return false;
+        network::LeaderboardPageResponse response;
+        response.offset = command.offset;
+        response.entries = std::move(entries);
+        network::WireBytes frame;
+        if (!network::encodeWire(response, frame, error)) return false;
+        const auto endpointIt = endpoints_.find(authenticatedPlayer);
+        if (endpointIt == endpoints_.end()) {
+            error = "Authenticated leaderboard endpoint is unavailable.";
+            return false;
+        }
+        const auto endpoint = endpointIt->second.lock();
+        if (endpoint == nullptr) {
+            error = "Authenticated leaderboard endpoint is unavailable.";
+            return false;
+        }
+        endpoint->enqueue(std::move(frame));
+        error.clear();
+        return true;
+    }
+
     void refreshContexts() {
         for (auto& [localPlayer, context] : viewContexts_) {
             const PlayerState* local = findPlayer(match_, localPlayer);
@@ -387,6 +421,7 @@ private:
     std::map<PlayerId, std::weak_ptr<InMemoryMatchEndpoint>> endpoints_;
     std::size_t resolvedRoundCount_{0};
     std::optional<TrophyScoringContext> trophyScoring_;
+    std::shared_ptr<PublicTrophyReadModel> leaderboard_;
     std::vector<GameEvent> trophyEvents_;
     bool trophyScoringAttempted_{false};
     std::optional<std::string> trophyScoringError_;
@@ -438,7 +473,8 @@ AuthoritativeInMemoryMatch::create(
     MatchSeed matchSeed,
     std::vector<client::PublicPlayerProfile> profiles,
     std::string& error,
-    std::optional<TrophyScoringContext> trophyScoring) {
+    std::optional<TrophyScoringContext> trophyScoring,
+    std::shared_ptr<PublicTrophyReadModel> leaderboard) {
 
     error.clear();
     MatchState match = MapGenerator::generate(mapSeed, matchSeed);
@@ -476,7 +512,8 @@ AuthoritativeInMemoryMatch::create(
         }
     }
     auto state = std::make_shared<AuthoritativeInMemoryMatchState>(
-        std::move(match), std::move(profiles), std::move(trophyScoring));
+        std::move(match), std::move(profiles), std::move(trophyScoring),
+        std::move(leaderboard));
     return std::unique_ptr<AuthoritativeInMemoryMatch>(
         new AuthoritativeInMemoryMatch(std::move(state)));
 }

@@ -51,7 +51,7 @@ template <typename T>
 concept HasTrophyMatchId = requires(T value) { value.trophyMatchId; };
 
 static_assert(kProtocolVersion == 2);
-static_assert(std::variant_size_v<ClientCommandPayload> == 4);
+static_assert(std::variant_size_v<ClientCommandPayload> == 5);
 static_assert(!HasWorld<ServerBootstrap>);
 static_assert(!HasAuthoritativeState<ServerBootstrap>);
 static_assert(!HasEvents<ServerBootstrap>);
@@ -367,6 +367,7 @@ void everyClientCommandRoundTrips() {
         ClientCommand{kProtocolVersion,
             WatchRemainingHunterCommand{PlayerId{7}, PlayerId{11}}},
         ClientCommand{kProtocolVersion, QuitCommand{PlayerId{7}}},
+        ClientCommand{kProtocolVersion, LeaderboardPageRequest{20, 10}},
     };
     for (const ClientCommand& command : commands)
         assertStableRoundTrip(command, decodeClientCommand);
@@ -383,6 +384,41 @@ void everyClientCommandRoundTrips() {
     assert(submitted.targetItem == action.targetItem);
     assert(submitted.contextualAction == action.contextualAction);
     assert(submitted.targetTunnel == action.targetTunnel);
+}
+
+void publicLeaderboardRequestAndResponseRoundTrip() {
+    const ClientCommand request{
+        kProtocolVersion,
+        LeaderboardPageRequest{25, 10},
+    };
+    assertStableRoundTrip(request, decodeClientCommand);
+
+    const LeaderboardPageResponse response{
+        kProtocolVersion,
+        25,
+        {
+            {1, PublicProfileHandle{"mara"}, "Mara Voss", 42},
+            {2, PublicProfileHandle{"elias"}, "Elias Thorn", -3},
+        },
+    };
+    assertStableRoundTrip(response, decodeLeaderboardPageResponse);
+
+    WireBytes bytes;
+    std::string error;
+    assert(encodeWire(response, bytes, error));
+    LeaderboardPageResponse decoded;
+    assert(decodeLeaderboardPageResponse(bytes, decoded, error));
+    assert(decoded.offset == 25);
+    assert(decoded.entries == response.entries);
+
+    bytes.push_back(0);
+    assert(!decodeLeaderboardPageResponse(bytes, decoded, error));
+    assert(!encodeWire(
+        ClientCommand{kProtocolVersion, LeaderboardPageRequest{0, 0}},
+        bytes, error));
+    assert(!encodeWire(
+        ClientCommand{kProtocolVersion, LeaderboardPageRequest{
+            0, kMaximumLeaderboardPageSize + 1}}, bytes, error));
 }
 
 void goldenFixtureIsStable() {
@@ -521,6 +557,20 @@ void byteTransportAndDecodedServerDataReachController() {
     assert(adapter->controller().displayedMapGeometry()
                ->unknownExitEndpoints.contains(
                    MapExitKey{CaveId{7}, TunnelId{2}}));
+
+    assert(adapter->requestLeaderboard(10, 5));
+    assert(transport->decodedCommands.size() == 3);
+    const auto* request = std::get_if<LeaderboardPageRequest>(
+        &transport->decodedCommands.back().payload);
+    assert(request != nullptr && request->offset == 10 && request->limit == 5);
+    LeaderboardPageResponse leaderboard{
+        kProtocolVersion,
+        10,
+        {{2, PublicProfileHandle{"mara"}, "Mara Voss", 17}},
+    };
+    assert(adapter->ingest(std::move(leaderboard), error));
+    assert(adapter->leaderboardPage().has_value());
+    assert(adapter->leaderboardPage()->entries.front().trophyTotal == 17);
 }
 
 std::unique_ptr<NetworkGameSessionAdapter> makeAdapter(
@@ -687,6 +737,7 @@ void protocolMismatchIsRejectedCleanly() {
 int main() {
     allServerFieldsRoundTripExactly();
     everyClientCommandRoundTrips();
+    publicLeaderboardRequestAndResponseRoundTrip();
     goldenFixtureIsStable();
     malformedWireIsRejected();
     byteTransportAndDecodedServerDataReachController();

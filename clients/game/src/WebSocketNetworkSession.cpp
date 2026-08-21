@@ -239,15 +239,32 @@ public:
                     return;
                 }
             } else {
-                network::ServerUpdate update;
                 bool ingested = false;
-                if (network::decodeServerUpdate(frame, update, decodeError)) {
-                    std::lock_guard lock(socketState_->mutex);
-                    if (socketState_->closed) {
-                        shutdownRequested = true;
-                    } else {
-                        ingested = adapter_->ingest(
+                network::WireMessageType type{};
+                if (!network::inspectWireMessageType(frame, type, decodeError)) {
+                    fail("Invalid server message: " + decodeError);
+                    shutdownSocket();
+                    return;
+                }
+                if (type == network::WireMessageType::LeaderboardPageResponse) {
+                    network::LeaderboardPageResponse response;
+                    if (network::decodeLeaderboardPageResponse(
+                            frame, response, decodeError)) {
+                        std::lock_guard lock(socketState_->mutex);
+                        if (socketState_->closed) shutdownRequested = true;
+                        else ingested = adapter_->ingest(
+                            std::move(response), decodeError);
+                    }
+                } else {
+                    network::ServerUpdate update;
+                    if (type == network::WireMessageType::ServerUpdate &&
+                        network::decodeServerUpdate(frame, update, decodeError)) {
+                        std::lock_guard lock(socketState_->mutex);
+                        if (socketState_->closed) shutdownRequested = true;
+                        else ingested = adapter_->ingest(
                             std::move(update), decodeError);
+                    } else if (decodeError.empty()) {
+                        decodeError = "Unexpected server message type.";
                     }
                 }
                 if (shutdownRequested) {

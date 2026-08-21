@@ -10,6 +10,7 @@
 #include "AuthoritativeInMemoryMatch.hpp"
 #include "NetworkGameSessionAdapter.hpp"
 #include "NetworkWireCodec.hpp"
+#include "PublicAccountProfiles.hpp"
 
 using namespace basilisk;
 using namespace basilisk::game;
@@ -229,11 +230,72 @@ void quitAndWatchUseExistingLifecycle() {
            RoundNumber{2});
 }
 
+void authenticatedServerReturnsOnlyPublicLeaderboardFields() {
+    const auto persistence = makeInMemoryTrophyPersistence();
+    const auto ledger = std::make_shared<TrophyLedger>(persistence);
+    std::string error;
+    const TrophyLedgerEntry first{
+        TrophyMatchId{"leaderboard-match"},
+        AccountIdentity{"private-account-one"},
+        TrophyReason::Win,
+        9,
+    };
+    const TrophyLedgerEntry second{
+        TrophyMatchId{"leaderboard-match"},
+        AccountIdentity{"private-account-two"},
+        TrophyReason::Loss,
+        3,
+    };
+    const std::vector<TrophyLedgerEntry> entries{first, second};
+    assert(persistence->appendMatch(
+        TrophyMatchId{"leaderboard-match"}, entries, error) ==
+        TrophyAppendResult::Appended);
+
+    const auto profileStore = makeInMemoryPublicAccountProfileStore();
+    assert(profileStore->storeProfile(
+        first.account,
+        PublicAccountProfile{PublicProfileHandle{"mara"}, "Mara Voss"},
+        error) == PublicProfileStoreResult::Stored);
+    assert(profileStore->storeProfile(
+        second.account,
+        PublicAccountProfile{PublicProfileHandle{"elias"}, "Elias Thorn"},
+        error) == PublicProfileStoreResult::Stored);
+    auto readModel = std::make_shared<PublicTrophyReadModel>(
+        ledger, profileStore);
+    auto host = AuthoritativeInMemoryMatch::create(
+        MapSeed{20260816}, MatchSeed{424242}, profiles(), error,
+        std::nullopt, readModel);
+    assert(host != nullptr);
+    auto endpoint = host->connect(PlayerId{1}, error);
+    assert(endpoint != nullptr);
+    assert(endpoint->takeNextServerFrame().has_value()); // Bootstrap.
+
+    assert(endpoint->send(ClientCommand{
+        kProtocolVersion,
+        LeaderboardPageRequest{0, 10},
+    }));
+    const auto frame = endpoint->takeNextServerFrame();
+    assert(frame.has_value());
+    LeaderboardPageResponse response;
+    assert(decodeLeaderboardPageResponse(*frame, response, error));
+    const std::vector<PublicTrophyLeaderboardEntry> expected{
+        {1, PublicProfileHandle{"mara"}, "Mara Voss", 9},
+        {2, PublicProfileHandle{"elias"}, "Elias Thorn", 3},
+    };
+    assert(response.offset == 0);
+    assert(response.entries == expected);
+    for (const auto& entry : response.entries) {
+        assert(entry.handle.value.find("private-account") == std::string::npos);
+        assert(entry.displayName.find("private-account") == std::string::npos);
+    }
+}
+
 } // namespace
 
 int main() {
     twoClientsAdvanceOneAuthoritativeRound();
     spoofedMalformedAndForgedCommandsAreRejected();
     quitAndWatchUseExistingLifecycle();
+    authenticatedServerReturnsOnlyPublicLeaderboardFields();
     return 0;
 }
