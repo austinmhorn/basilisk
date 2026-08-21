@@ -175,9 +175,11 @@ public:
         const RoundNumber priorRound = match_.round;
         coordinator_.advanceTime(elapsedMs);
         if (match_.round != priorRound) ++resolvedRoundCount_;
-        recordTrophyEvents(coordinator_.authoritativeEvents());
+        const auto& events = coordinator_.authoritativeEvents();
+        recordTrophyEvents(events);
+        if (match_.round == priorRound && events.empty()) return;
         refreshContexts();
-        publishAll(coordinator_.authoritativeEvents());
+        publishAll(events);
     }
 
 private:

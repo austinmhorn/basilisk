@@ -147,6 +147,56 @@ void twoClientsAdvanceOneAuthoritativeRound() {
     assert(host->resolvedRoundCount() == 1);
 }
 
+void noOpTimeTickPreservesResolvedRoundObservations() {
+    std::string error;
+    auto host = AuthoritativeInMemoryMatch::create(
+        MapSeed{1}, MatchSeed{424242}, profiles(), error);
+    assert(host != nullptr);
+    ConnectedClient p1 = connectClient(*host, PlayerId{1});
+    ConnectedClient p2 = connectClient(*host, PlayerId{2});
+
+    bool foundJackalDamage = false;
+    for (int turn = 0; turn < 100 && !foundJackalDamage; ++turn) {
+        for (ConnectedClient* client : {&p1, &p2}) {
+            const PlayerRoundSnapshot* snapshot =
+                client->session->controller().displayedSnapshot();
+            if (snapshot->alive && !snapshot->availableActions.empty())
+                assert(client->session->controller().submitAndLock(
+                    snapshot->availableActions.front()));
+        }
+        p1.ingestUpdates();
+        p2.ingestUpdates();
+        for (ConnectedClient* client : {&p1, &p2}) {
+            const auto& observations =
+                client->session->controller().displayedSnapshot()->observations;
+            const bool knockout = std::any_of(observations.begin(), observations.end(),
+                [](const PlayerObservation& observation) {
+                    return observation.type == ObservationType::JackalKnockedOutYou;
+                });
+            const bool damage = std::any_of(observations.begin(), observations.end(),
+                [](const PlayerObservation& observation) {
+                    return observation.type == ObservationType::YouWereDamaged;
+                });
+            if (!knockout || !damage) continue;
+            host->advanceTime(100);
+            client->ingestUpdates();
+            const auto& afterTick =
+                client->session->controller().displayedSnapshot()->observations;
+            assert(std::any_of(afterTick.begin(), afterTick.end(),
+                [](const PlayerObservation& observation) {
+                    return observation.type == ObservationType::JackalKnockedOutYou;
+                }));
+            assert(std::any_of(afterTick.begin(), afterTick.end(),
+                [](const PlayerObservation& observation) {
+                    return observation.type == ObservationType::YouWereDamaged;
+                }));
+            foundJackalDamage = true;
+            break;
+        }
+    }
+    assert(foundJackalDamage);
+}
+
 void spoofedMalformedAndForgedCommandsAreRejected() {
     std::string error;
     auto host = AuthoritativeInMemoryMatch::create(
@@ -294,6 +344,7 @@ void authenticatedServerReturnsOnlyPublicLeaderboardFields() {
 
 int main() {
     twoClientsAdvanceOneAuthoritativeRound();
+    noOpTimeTickPreservesResolvedRoundObservations();
     spoofedMalformedAndForgedCommandsAreRejected();
     quitAndWatchUseExistingLifecycle();
     authenticatedServerReturnsOnlyPublicLeaderboardFields();
