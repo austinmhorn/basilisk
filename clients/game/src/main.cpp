@@ -24,6 +24,7 @@
 #include "ScreenShell.hpp"
 #include "SvgTextureManager.hpp"
 #include "TextRenderer.hpp"
+#include "WebSocketNetworkSession.hpp"
 #include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/Random.hpp"
 
@@ -44,7 +45,10 @@ struct AppState {
     bool autoLockSelectedActions{false};
     std::size_t demoSnapshotStage{0};
 
-    std::unique_ptr<basilisk::game::ClientSessionController> session;
+    std::unique_ptr<basilisk::game::ClientSessionController> ownedSession;
+    basilisk::game::ClientSessionController* session{nullptr};
+    std::unique_ptr<basilisk::game::WebSocketNetworkSession> networkSession;
+    bool networkFailureLogged{false};
     basilisk::game::PlayerMapLayout mapLayout;
     basilisk::game::MapPresentationState mapPresentation;
     basilisk::game::MapPresentationGeometry mapGeometry;
@@ -104,13 +108,47 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         return SDL_APP_FAILURE;
     }
     *appstate = state;
-    state->session =
+    state->ownedSession =
         std::make_unique<basilisk::game::ClientSessionController>();
+    state->session = state->ownedSession.get();
 
+    std::optional<std::string> connectUrl;
+    std::optional<std::string> connectToken;
     for (int index = 1; index < argc; ++index) {
+        if (argv == nullptr || argv[index] == nullptr) continue;
+        const std::string_view argument{argv[index]};
+        if (argument != "--connect" && argument != "--token") continue;
+        if (index + 1 >= argc || argv[index + 1] == nullptr) {
+            SDL_Log("%s requires a value", argv[index]);
+            return SDL_APP_FAILURE;
+        }
+        if (argument == "--connect") connectUrl = argv[++index];
+        else connectToken = argv[++index];
+    }
+    if (connectUrl.has_value() != connectToken.has_value()) {
+        SDL_Log("--connect and --token must be provided together");
+        return SDL_APP_FAILURE;
+    }
+    if (connectUrl.has_value()) {
+        std::string error;
+        state->networkSession = basilisk::game::WebSocketNetworkSession::connect(
+            *connectUrl, *connectToken, error);
+        if (state->networkSession == nullptr) {
+            SDL_Log("Unable to connect network session: %s", error.c_str());
+            return SDL_APP_FAILURE;
+        }
+        state->ownedSession.reset();
+        state->session = nullptr;
+        state->screenShellEnabled = true;
+        SDL_Log("Connecting to Basilisk server at %s", connectUrl->c_str());
+    }
+
+    for (int index = connectUrl.has_value() ? argc : 1; index < argc; ++index) {
         if (argv != nullptr && argv[index] != nullptr &&
             std::string_view{argv[index]} == "--demo-map") {
-            state->session = basilisk::game::demo::makeDemoSessionController();
+            state->ownedSession =
+                basilisk::game::demo::makeDemoSessionController();
+            state->session = state->ownedSession.get();
             (void)state->session->ingestSnapshot(
                 basilisk::game::demo::makeDemoMapSnapshot());
             (void)basilisk::game::selectRouteDestination(
@@ -152,12 +190,14 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
                 basilisk::game::LocalGameSessionAdapter::createDebug(
                     mapSeed,
                     basilisk::MatchSeed{424242});
-            state->session = std::move(debugSession.session);
+            state->ownedSession = std::move(debugSession.session);
+            state->session = state->ownedSession.get();
             state->debugMapProvider = std::move(debugSession.mapProvider);
 #else
-            state->session = basilisk::game::LocalGameSessionAdapter::create(
+            state->ownedSession = basilisk::game::LocalGameSessionAdapter::create(
                 mapSeed,
                 basilisk::MatchSeed{424242});
+            state->session = state->ownedSession.get();
 #endif
             if (state->session == nullptr) {
                 SDL_Log("Unable to create local Core session");
@@ -372,7 +412,8 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         }
     }
 
-    const basilisk::PlayerRoundSnapshot* snapshot = state == nullptr
+    const basilisk::PlayerRoundSnapshot* snapshot = state == nullptr ||
+            state->session == nullptr
         ? nullptr
         : state->session->displayedSnapshot();
     const bool lifecycleModalActive = snapshot != nullptr &&
@@ -631,6 +672,20 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 SDL_AppResult SDL_AppIterate(void* appstate) {
     auto* state = static_cast<AppState*>(appstate);
 
+    if (state->networkSession != nullptr) {
+        state->networkSession->pump();
+        state->session = state->networkSession->controller();
+        if (!state->networkFailureLogged &&
+            (state->networkSession->state() ==
+                 basilisk::game::NetworkConnectionState::Error ||
+             state->networkSession->state() ==
+                 basilisk::game::NetworkConnectionState::Disconnected)) {
+            SDL_Log("Network session ended: %s",
+                state->networkSession->error().c_str());
+            state->networkFailureLogged = true;
+        }
+    }
+
     SDL_SetRenderDrawColor(
         state->renderer, 12, 16, state->backgroundBlue, SDL_ALPHA_OPAQUE);
     SDL_RenderClear(state->renderer);
@@ -638,10 +693,11 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
     int outputWidth = 0;
     int outputHeight = 0;
     if (SDL_GetRenderOutputSize(state->renderer, &outputWidth, &outputHeight)) {
-        const basilisk::PlayerRoundSnapshot* snapshot =
-            state->session->displayedSnapshot();
+        const basilisk::PlayerRoundSnapshot* snapshot = state->session == nullptr
+            ? nullptr
+            : state->session->displayedSnapshot();
         if (state->screenShellEnabled) {
-            if (snapshot != nullptr) {
+            if (snapshot != nullptr && state->session != nullptr) {
                 state->actionSelection.synchronize(
                     snapshot->round,
                     snapshot->availableActions.size(),
@@ -664,7 +720,8 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 debugGameplayTruth = state->debugMapProvider->gameplayTruth();
             }
 #endif
-            if (!basilisk::game::renderScreenShell(
+            if (state->session != nullptr &&
+                !basilisk::game::renderScreenShell(
                     state->renderer,
                     *state->textRenderer,
                     *state->svgTextures,

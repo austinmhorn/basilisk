@@ -61,6 +61,7 @@ target_compile_features(BasiliskGameActions PUBLIC cxx_std_20)
 add_library(BasiliskGameNetworkSession STATIC
     src/NetworkGameSessionAdapter.cpp
     src/NetworkWireCodec.cpp
+    src/WebSocketNetworkSession.cpp
 )
 
 add_library(
@@ -79,6 +80,37 @@ target_link_libraries(
         Basilisk::GameMapLayout
 )
 target_compile_features(BasiliskGameNetworkSession PUBLIC cxx_std_20)
+
+if(EMSCRIPTEN)
+    target_link_options(BasiliskGameNetworkSession PUBLIC "-lwebsocket.js")
+else()
+    set(USE_TLS OFF CACHE BOOL "" FORCE)
+    set(USE_ZLIB OFF CACHE BOOL "" FORCE)
+    set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
+    set(BUILD_DEMO OFF CACHE BOOL "" FORCE)
+    set(USE_TEST OFF CACHE BOOL "" FORCE)
+    set(_basilisk_ix_build_shared_was_defined FALSE)
+    if(DEFINED BUILD_SHARED_LIBS)
+        set(_basilisk_ix_build_shared_was_defined TRUE)
+        set(_basilisk_ix_saved_build_shared "${BUILD_SHARED_LIBS}")
+    endif()
+    set(BUILD_SHARED_LIBS OFF)
+    FetchContent_Declare(
+        IXWebSocket
+        URL https://github.com/machinezone/IXWebSocket/archive/refs/tags/v12.0.1.tar.gz
+        URL_HASH SHA256=d23bdc91dbfe2b9ae13c322d539392d7a6b8b506560f41c90e227fa0f86a2405
+        DOWNLOAD_EXTRACT_TIMESTAMP OFF
+    )
+    FetchContent_MakeAvailable(IXWebSocket)
+    if(_basilisk_ix_build_shared_was_defined)
+        set(BUILD_SHARED_LIBS "${_basilisk_ix_saved_build_shared}")
+    else()
+        unset(BUILD_SHARED_LIBS)
+    endif()
+    unset(_basilisk_ix_build_shared_was_defined)
+    unset(_basilisk_ix_saved_build_shared)
+    target_link_libraries(BasiliskGameNetworkSession PRIVATE ixwebsocket)
+endif()
 
 add_library(BasiliskAuthoritativeNetworkSession STATIC EXCLUDE_FROM_ALL
     server/AuthoritativeInMemoryMatch.cpp
@@ -102,6 +134,31 @@ target_compile_features(
     BasiliskAuthoritativeNetworkSession
     PUBLIC cxx_std_20
 )
+
+if(NOT EMSCRIPTEN)
+    add_library(BasiliskWebSocketMatchServer STATIC EXCLUDE_FROM_ALL
+        server/LocalWebSocketMatchServer.cpp
+    )
+    add_library(
+        Basilisk::WebSocketMatchServer
+        ALIAS BasiliskWebSocketMatchServer
+    )
+    target_include_directories(BasiliskWebSocketMatchServer
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/server
+    )
+    target_link_libraries(BasiliskWebSocketMatchServer
+        PUBLIC
+            Basilisk::AuthoritativeNetworkSession
+        PRIVATE
+            ixwebsocket
+    )
+    target_compile_features(BasiliskWebSocketMatchServer PUBLIC cxx_std_20)
+
+    add_executable(BasiliskServer EXCLUDE_FROM_ALL server/main.cpp)
+    target_link_libraries(BasiliskServer PRIVATE Basilisk::WebSocketMatchServer)
+    target_compile_features(BasiliskServer PRIVATE cxx_std_20)
+endif()
 
 add_library(BasiliskGameLocalSession STATIC
     src/LocalGameSessionAdapter.cpp
@@ -265,7 +322,12 @@ function(basilisk_add_game_executable target)
         src/main.cpp
         src/ScreenShell.cpp
     )
-    target_link_libraries(${target} PRIVATE BasiliskGameRuntime)
+    target_link_libraries(
+        ${target}
+        PRIVATE
+            BasiliskGameRuntime
+            Basilisk::GameNetworkSession
+    )
     target_compile_features(${target} PRIVATE cxx_std_20)
 
     add_custom_command(
@@ -296,7 +358,11 @@ function(basilisk_add_game_executable target)
 endfunction()
 
 basilisk_add_game_executable(BasiliskGame)
-target_link_libraries(BasiliskGame PRIVATE Basilisk::GameLocalSession)
+target_link_libraries(
+    BasiliskGame
+    PRIVATE
+        Basilisk::GameLocalSession
+)
 
 if(NOT EMSCRIPTEN)
     add_library(BasiliskGameDebugSupport STATIC
@@ -364,6 +430,7 @@ if(EMSCRIPTEN)
     target_link_options(
         BasiliskGame
         PRIVATE
+            "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/web/network-arguments.js"
             "SHELL:--preload-file ${BASILISK_GAME_FONT_ASSET_DIR}@/assets/fonts"
             "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets/ui@/assets/ui"
             "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets/items@/assets/items"

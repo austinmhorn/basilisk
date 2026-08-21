@@ -149,6 +149,26 @@ if(TARGET BasiliskAuthoritativeNetworkSession)
     )
 endif()
 
+if(TARGET BasiliskWebSocketMatchServer)
+    add_executable(BasiliskWebSocketNetworkTests
+        game_websocket_network_tests.cpp
+    )
+    target_link_libraries(
+        BasiliskWebSocketNetworkTests
+        PRIVATE
+            Basilisk::WebSocketMatchServer
+    )
+    target_include_directories(
+        BasiliskWebSocketNetworkTests
+        PRIVATE
+            $<TARGET_PROPERTY:ixwebsocket,INTERFACE_INCLUDE_DIRECTORIES>
+    )
+    add_test(
+        NAME BasiliskWebSocketNetworkTests
+        COMMAND BasiliskWebSocketNetworkTests
+    )
+endif()
+
 add_executable(BasiliskSnapshotTests
     snapshot_tests.cpp
 )

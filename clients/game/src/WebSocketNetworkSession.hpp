@@ -1,0 +1,45 @@
+#pragma once
+
+#include <memory>
+#include <string>
+
+#include "ClientSessionController.hpp"
+
+namespace basilisk::game {
+
+enum class NetworkConnectionState {
+    Connecting,
+    Connected,
+    Disconnected,
+    Error,
+};
+
+// Owns a platform WebSocket and adapts its binary v1 frames to the ordinary
+// player-safe NetworkGameSessionAdapter.
+class WebSocketNetworkSession {
+public:
+    [[nodiscard]] static std::unique_ptr<WebSocketNetworkSession> connect(
+        std::string url,
+        std::string token,
+        std::string& error);
+
+    ~WebSocketNetworkSession();
+    WebSocketNetworkSession(WebSocketNetworkSession&&) noexcept;
+    WebSocketNetworkSession& operator=(WebSocketNetworkSession&&) noexcept;
+    WebSocketNetworkSession(const WebSocketNetworkSession&) = delete;
+    WebSocketNetworkSession& operator=(const WebSocketNetworkSession&) = delete;
+
+    // Process frames on the application's main thread.
+    void pump();
+    [[nodiscard]] NetworkConnectionState state() const noexcept;
+    [[nodiscard]] std::string error() const;
+    [[nodiscard]] ClientSessionController* controller() noexcept;
+    [[nodiscard]] const ClientSessionController* controller() const noexcept;
+
+private:
+    class Impl;
+    explicit WebSocketNetworkSession(std::unique_ptr<Impl> impl);
+    std::unique_ptr<Impl> impl_;
+};
+
+} // namespace basilisk::game
