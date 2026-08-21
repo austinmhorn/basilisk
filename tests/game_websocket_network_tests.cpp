@@ -13,6 +13,9 @@
 
 #include "AuthoritativeInMemoryMatch.hpp"
 #include "LocalWebSocketMatchServer.hpp"
+#if defined(_WIN32)
+#include "NativeNetworkRuntime.hpp"
+#endif
 #include "WebSocketNetworkSession.hpp"
 
 using namespace basilisk;
@@ -275,6 +278,11 @@ void callbacksAfterClientCloseAreIgnored() {
 } // namespace
 
 int main() {
+#if defined(_WIN32)
+    std::string networkError;
+    auto networkRuntime = NativeNetworkRuntime::acquire(networkError);
+    assert(networkRuntime != nullptr && networkError.empty());
+#endif
     twoRealWebSocketsAdvanceOneAuthoritativeRound();
     invalidAndDuplicateTokensAreRejected();
     disconnectUsesExistingMatchLifecycle();

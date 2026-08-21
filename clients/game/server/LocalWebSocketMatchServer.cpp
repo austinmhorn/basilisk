@@ -13,6 +13,9 @@
 #include <ixwebsocket/IXWebSocketServer.h>
 
 #include "AuthoritativeInMemoryMatch.hpp"
+#if defined(_WIN32)
+#include "NativeNetworkRuntime.hpp"
+#endif
 
 namespace basilisk::game::server {
 namespace {
@@ -70,8 +73,17 @@ public:
     Impl(
         std::unique_ptr<AuthoritativeInMemoryMatch> match,
         std::uint16_t port,
-        std::map<std::string, PlayerId> tokens)
+        std::map<std::string, PlayerId> tokens
+#if defined(_WIN32)
+        , std::unique_ptr<NativeNetworkRuntime> networkRuntime
+#endif
+        )
+#if defined(_WIN32)
+        : networkRuntime_(std::move(networkRuntime)),
+          match_(std::move(match)),
+#else
         : match_(std::move(match)),
+#endif
           server_(port, "127.0.0.1", 5, 2),
           tokens_(std::move(tokens)) {}
 
@@ -249,6 +261,9 @@ private:
         }
     }
 
+#if defined(_WIN32)
+    std::unique_ptr<NativeNetworkRuntime> networkRuntime_;
+#endif
     std::unique_ptr<AuthoritativeInMemoryMatch> match_;
     ix::WebSocketServer server_;
     std::map<std::string, PlayerId> tokens_;
@@ -278,12 +293,20 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
         error = "WebSocket server port must be non-zero.";
         return nullptr;
     }
+#if defined(_WIN32)
+    auto networkRuntime = NativeNetworkRuntime::acquire(error);
+    if (networkRuntime == nullptr) return nullptr;
+#endif
     auto impl = std::make_unique<Impl>(
         std::move(match), config.port,
         std::map<std::string, PlayerId>{
             {std::move(config.p1Token), PlayerId{1}},
             {std::move(config.p2Token), PlayerId{2}},
-        });
+        }
+#if defined(_WIN32)
+        , std::move(networkRuntime)
+#endif
+        );
     if (!impl->start(error)) return nullptr;
     return std::unique_ptr<LocalWebSocketMatchServer>(
         new LocalWebSocketMatchServer(std::move(impl)));

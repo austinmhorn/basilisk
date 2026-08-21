@@ -16,6 +16,10 @@
 #if defined(__EMSCRIPTEN__)
 #include <emscripten/websocket.h>
 #else
+#if defined(_WIN32)
+#include "NativeNetworkRuntime.hpp"
+#endif
+
 #include <ixwebsocket/IXWebSocket.h>
 #endif
 
@@ -81,10 +85,21 @@ private:
 
 class WebSocketNetworkSession::Impl {
 public:
+#if defined(_WIN32)
+    Impl(
+        std::string url,
+        std::string token,
+        std::unique_ptr<NativeNetworkRuntime> networkRuntime)
+        : networkRuntime_(std::move(networkRuntime)),
+          socketState_(std::make_shared<SharedSocketState>()),
+          transport_(std::make_shared<WebSocketClientTransport>(socketState_)),
+          url_(authenticatedUrl(std::move(url), token)) {}
+#else
     Impl(std::string url, std::string token)
         : socketState_(std::make_shared<SharedSocketState>()),
           transport_(std::make_shared<WebSocketClientTransport>(socketState_)),
           url_(authenticatedUrl(std::move(url), token)) {}
+#endif
 
     ~Impl() { stop(); }
 
@@ -380,6 +395,9 @@ private:
             break;
         }
     }
+#if defined(_WIN32)
+    std::unique_ptr<NativeNetworkRuntime> networkRuntime_;
+#endif
     ix::WebSocket socket_;
 #endif
     std::shared_ptr<SharedSocketState> socketState_;
@@ -402,7 +420,14 @@ std::unique_ptr<WebSocketNetworkSession> WebSocketNetworkSession::connect(
         error = "--connect and --token both require non-empty values.";
         return nullptr;
     }
+#if defined(_WIN32)
+    auto networkRuntime = NativeNetworkRuntime::acquire(error);
+    if (networkRuntime == nullptr) return nullptr;
+    auto impl = std::make_unique<Impl>(
+        std::move(url), std::move(token), std::move(networkRuntime));
+#else
     auto impl = std::make_unique<Impl>(std::move(url), std::move(token));
+#endif
     if (!impl->start(error)) return nullptr;
     return std::unique_ptr<WebSocketNetworkSession>(
         new WebSocketNetworkSession(std::move(impl)));

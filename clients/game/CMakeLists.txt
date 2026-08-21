@@ -81,6 +81,9 @@ target_link_libraries(
 )
 target_compile_features(BasiliskGameNetworkSession PUBLIC cxx_std_20)
 if(WIN32)
+    target_sources(BasiliskGameNetworkSession PRIVATE
+        src/NativeNetworkRuntime.cpp
+    )
     target_compile_definitions(BasiliskGameNetworkSession PUBLIC NOMINMAX)
 endif()
 
