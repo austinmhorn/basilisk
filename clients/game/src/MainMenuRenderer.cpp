@@ -48,6 +48,8 @@ std::string_view actionLabel(MainMenuAction action) {
         case MainMenuAction::PreviousPage: return "PREVIOUS";
         case MainMenuAction::NextPage: return "NEXT";
         case MainMenuAction::Logout: return "LOG OUT";
+        case MainMenuAction::SubmitLobbyCode: return "JOIN";
+        case MainMenuAction::CancelLobby: return "CANCEL";
     }
     return {};
 }
@@ -58,6 +60,9 @@ std::string_view pageTitle(MainMenuPage page) {
         case MainMenuPage::StartGame: return "START GAME";
         case MainMenuPage::Leaderboards: return "TROPHY LEADERBOARD";
         case MainMenuPage::Settings: return "SETTINGS";
+        case MainMenuPage::HostLobby: return "HOST GAME";
+        case MainMenuPage::JoinLobby: return "JOIN GAME";
+        case MainMenuPage::MatchReady: return "MATCH READY";
     }
     return {};
 }
@@ -175,6 +180,47 @@ bool renderMainMenu(
                 static_cast<float>(12.0 * scale), ui::Theme::mutedBright,
                 left, buttonY, error)) return false;
         buttonY += 54.0 * scale;
+    } else if (menu.page() == MainMenuPage::HostLobby) {
+        if (!menu.lobbyCode().empty()) {
+            if (!label(text, "LOBBY CODE", FontWeight::SemiBold,
+                    static_cast<float>(10.0 * scale), ui::Theme::muted,
+                    left, buttonY, error) ||
+                !label(text, menu.lobbyCode(), FontWeight::Bold,
+                    static_cast<float>(32.0 * scale), ui::Theme::gold,
+                    left, buttonY + 30.0 * scale, error) ||
+                !label(text, "Waiting for player...", FontWeight::Medium,
+                    static_cast<float>(13.0 * scale), ui::Theme::mutedBright,
+                    left, buttonY + 82.0 * scale, error)) return false;
+        } else if (!label(text, "Creating lobby...", FontWeight::Medium,
+                static_cast<float>(13.0 * scale), ui::Theme::mutedBright,
+                left, buttonY, error)) return false;
+        buttonY += 140.0 * scale;
+    } else if (menu.page() == MainMenuPage::JoinLobby) {
+        if (!label(text, "LOBBY CODE", FontWeight::SemiBold,
+                static_cast<float>(10.0 * scale), ui::Theme::muted,
+                left, buttonY, error)) return false;
+        const PresentationRect input{left, buttonY + 24.0 * scale,
+            430.0 * scale, 54.0 * scale};
+        panel(renderer, input, ui::Theme::surfaceRaised, ui::Theme::gold);
+        if (!label(text, menu.lobbyCode().empty() ? "ENTER CODE" : menu.lobbyCode(),
+                FontWeight::SemiBold, static_cast<float>(16.0 * scale),
+                menu.lobbyCode().empty() ? ui::Theme::muted : ui::Theme::text,
+                input.x + 18.0 * scale, input.y + 16.0 * scale, error)) return false;
+        if (!menu.lobbyError().empty() && !label(text, menu.lobbyError(),
+                FontWeight::Medium, static_cast<float>(10.0 * scale),
+                ui::Theme::red, left, buttonY + 91.0 * scale, error)) return false;
+        buttonY += 130.0 * scale;
+    } else if (menu.page() == MainMenuPage::MatchReady) {
+        if (!label(text, "MATCH READY", FontWeight::Bold,
+                static_cast<float>(28.0 * scale), ui::Theme::gold,
+                left, buttonY, error) ||
+            !label(text, "Lobby " + menu.lobbyCode(), FontWeight::Medium,
+                static_cast<float>(13.0 * scale), ui::Theme::text,
+                left, buttonY + 48.0 * scale, error) ||
+            !label(text, "Gameplay launch is coming next.", FontWeight::Regular,
+                static_cast<float>(11.0 * scale), ui::Theme::mutedBright,
+                left, buttonY + 78.0 * scale, error)) return false;
+        buttonY += 126.0 * scale;
     }
 
     const auto actions = menu.actions();

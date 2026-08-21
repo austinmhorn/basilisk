@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <string>
@@ -53,6 +54,7 @@ public:
     authenticationResponse() const noexcept;
     [[nodiscard]] const std::optional<network::LobbyResponse>&
     lobbyResponse() const noexcept;
+    [[nodiscard]] std::size_t lobbyResponseRevision() const noexcept;
 
 private:
     class Impl;

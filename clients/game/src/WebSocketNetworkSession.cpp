@@ -278,6 +278,7 @@ public:
                     network::LobbyResponse response;
                     if (network::decodeLobbyResponse(frame, response, decodeError)) {
                         lobbyResponse_ = std::move(response);
+                        ++lobbyResponseRevision_;
                         continue;
                     }
                 } else if (type == network::WireMessageType::LogoutSuccess) {
@@ -401,6 +402,9 @@ public:
     authenticationResponse() const noexcept { return authenticationResponse_; }
     const std::optional<network::LobbyResponse>& lobbyResponse() const noexcept {
         return lobbyResponse_;
+    }
+    std::size_t lobbyResponseRevision() const noexcept {
+        return lobbyResponseRevision_;
     }
 
 private:
@@ -527,6 +531,7 @@ private:
     std::string url_;
     std::optional<network::AuthenticationResponse> authenticationResponse_;
     std::optional<network::LobbyResponse> lobbyResponse_;
+    std::size_t lobbyResponseRevision_{0};
     bool authenticationMode_{false};
     bool awaitingAuthentication_{false};
     bool authenticated_{false};
@@ -618,6 +623,9 @@ WebSocketNetworkSession::authenticationResponse() const noexcept {
 const std::optional<network::LobbyResponse>&
 WebSocketNetworkSession::lobbyResponse() const noexcept {
     return impl_->lobbyResponse();
+}
+std::size_t WebSocketNetworkSession::lobbyResponseRevision() const noexcept {
+    return impl_->lobbyResponseRevision();
 }
 
 } // namespace basilisk::game

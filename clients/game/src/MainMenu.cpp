@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <utility>
 
 namespace basilisk::game {
 namespace {
@@ -24,6 +26,11 @@ constexpr std::array leaderboardActions{
     MainMenuAction::Back,
 };
 constexpr std::array settingsActions{MainMenuAction::Logout, MainMenuAction::Back};
+constexpr std::array hostLobbyActions{
+    MainMenuAction::CancelLobby, MainMenuAction::Back};
+constexpr std::array joinLobbyActions{
+    MainMenuAction::SubmitLobbyCode, MainMenuAction::Back};
+constexpr std::array matchReadyActions{MainMenuAction::Back};
 
 } // namespace
 
@@ -35,6 +42,9 @@ std::span<const MainMenuAction> MainMenuState::actions() const noexcept {
         case MainMenuPage::StartGame: return startActions;
         case MainMenuPage::Leaderboards: return leaderboardActions;
         case MainMenuPage::Settings: return settingsActions;
+        case MainMenuPage::HostLobby: return hostLobbyActions;
+        case MainMenuPage::JoinLobby: return joinLobbyActions;
+        case MainMenuPage::MatchReady: return matchReadyActions;
     }
     return mainActions;
 }
@@ -50,6 +60,9 @@ MainMenuAction MainMenuState::selectedAction() const noexcept {
 std::uint32_t MainMenuState::leaderboardOffset() const noexcept {
     return leaderboardOffset_;
 }
+const std::string& MainMenuState::lobbyCode() const noexcept { return lobbyCode_; }
+const std::string& MainMenuState::lobbyError() const noexcept { return lobbyError_; }
+bool MainMenuState::lobbyWaiting() const noexcept { return lobbyWaiting_; }
 
 void MainMenuState::select(std::size_t index) noexcept {
     if (index < actions().size()) selectedIndex_ = index;
@@ -83,7 +96,11 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
         case MainMenuAction::Exit:
             return MainMenuResult::Exit;
         case MainMenuAction::Back:
-            setPage(MainMenuPage::Main);
+            if (page_ == MainMenuPage::HostLobby && lobbyWaiting_)
+                return MainMenuResult::RequestCancelLobby;
+            setPage(page_ == MainMenuPage::JoinLobby ||
+                    page_ == MainMenuPage::MatchReady
+                ? MainMenuPage::StartGame : MainMenuPage::Main);
             break;
         case MainMenuAction::PreviousPage:
             if (leaderboardOffset_ >= leaderboardPageSize) {
@@ -97,16 +114,73 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
         case MainMenuAction::Logout:
             return MainMenuResult::Logout;
         case MainMenuAction::FindGame:
-        case MainMenuAction::HostGame:
-        case MainMenuAction::JoinGame:
             break;
+        case MainMenuAction::HostGame:
+            lobbyCode_.clear();
+            lobbyError_.clear();
+            lobbyWaiting_ = true;
+            setPage(MainMenuPage::HostLobby);
+            return MainMenuResult::RequestHostLobby;
+        case MainMenuAction::JoinGame:
+            lobbyCode_.clear();
+            lobbyError_.clear();
+            lobbyWaiting_ = false;
+            setPage(MainMenuPage::JoinLobby);
+            break;
+        case MainMenuAction::SubmitLobbyCode:
+            if (lobbyCode_.empty()) {
+                lobbyError_ = "Enter a lobby code.";
+                break;
+            }
+            lobbyWaiting_ = true;
+            lobbyError_.clear();
+            return MainMenuResult::RequestJoinLobby;
+        case MainMenuAction::CancelLobby:
+            return MainMenuResult::RequestCancelLobby;
     }
     return MainMenuResult::None;
 }
 
 MainMenuResult MainMenuState::back() noexcept {
-    if (page_ != MainMenuPage::Main) setPage(MainMenuPage::Main);
+    if (page_ == MainMenuPage::HostLobby && lobbyWaiting_)
+        return MainMenuResult::RequestCancelLobby;
+    if (page_ != MainMenuPage::Main)
+        setPage(page_ == MainMenuPage::JoinLobby ||
+                page_ == MainMenuPage::MatchReady
+            ? MainMenuPage::StartGame : MainMenuPage::Main);
     return MainMenuResult::None;
+}
+
+void MainMenuState::appendLobbyCode(std::string_view text) {
+    if (page_ != MainMenuPage::JoinLobby || lobbyWaiting_) return;
+    for (unsigned char value : text) {
+        if (lobbyCode_.size() >= 12) break;
+        if (std::isalnum(value) != 0)
+            lobbyCode_.push_back(static_cast<char>(std::toupper(value)));
+    }
+}
+void MainMenuState::eraseLobbyCode() {
+    if (page_ == MainMenuPage::JoinLobby && !lobbyWaiting_ && !lobbyCode_.empty())
+        lobbyCode_.pop_back();
+}
+void MainMenuState::lobbyHosted(std::string code) {
+    lobbyCode_ = std::move(code);
+    lobbyWaiting_ = true;
+    lobbyError_.clear();
+}
+void MainMenuState::lobbyAssigned(std::string code) {
+    lobbyCode_ = std::move(code);
+    lobbyWaiting_ = false;
+    lobbyError_.clear();
+    setPage(MainMenuPage::MatchReady);
+}
+void MainMenuState::lobbyCancelled() {
+    lobbyCode_.clear(); lobbyError_.clear(); lobbyWaiting_ = false;
+    setPage(MainMenuPage::StartGame);
+}
+void MainMenuState::lobbyFailed(std::string error) {
+    lobbyWaiting_ = false;
+    lobbyError_ = std::move(error);
 }
 
 void MainMenuState::setPage(MainMenuPage page) noexcept {

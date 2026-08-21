@@ -27,6 +27,24 @@ int main() {
     assert(menu.actions().size() == 4);
     assert(menu.activate(MainMenuAction::FindGame) == MainMenuResult::None);
     assert(menu.page() == MainMenuPage::StartGame);
+    assert(menu.activate(MainMenuAction::HostGame) ==
+           MainMenuResult::RequestHostLobby);
+    assert(menu.page() == MainMenuPage::HostLobby);
+    menu.lobbyHosted("CAVE7X");
+    assert(menu.lobbyCode() == "CAVE7X" && menu.lobbyWaiting());
+    assert(menu.activate(MainMenuAction::CancelLobby) ==
+           MainMenuResult::RequestCancelLobby);
+    menu.lobbyCancelled();
+    assert(menu.page() == MainMenuPage::StartGame);
+    assert(menu.activate(MainMenuAction::JoinGame) == MainMenuResult::None);
+    menu.appendLobbyCode("hunt34");
+    assert(menu.lobbyCode() == "HUNT34");
+    assert(menu.activate(MainMenuAction::SubmitLobbyCode) ==
+           MainMenuResult::RequestJoinLobby);
+    menu.lobbyAssigned("HUNT34");
+    assert(menu.page() == MainMenuPage::MatchReady);
+    assert(menu.back() == MainMenuResult::None);
+    assert(menu.page() == MainMenuPage::StartGame);
     assert(menu.back() == MainMenuResult::None);
     assert(menu.page() == MainMenuPage::Main);
 
