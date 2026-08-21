@@ -7,6 +7,7 @@
 #include <string>
 
 #include "TrophyScoring.hpp"
+#include "PublicLeaderboard.hpp"
 
 struct sqlite3;
 
@@ -58,6 +59,12 @@ public:
         const std::string& password,
         AccountIdentity& account,
         std::string& error);
+    [[nodiscard]] CreateAccountResult createAccount(
+        const LoginIdentity& login,
+        const std::string& password,
+        const PublicAccountProfile& profile,
+        AccountIdentity& account,
+        std::string& error);
     [[nodiscard]] bool authenticate(
         const LoginIdentity& login,
         const std::string& password,
@@ -68,6 +75,13 @@ public:
         const AuthSessionToken& token,
         AccountIdentity& account,
         std::string& error) override;
+    [[nodiscard]] bool publicProfile(
+        const AccountIdentity& account,
+        PublicAccountProfile& profile,
+        std::string& error);
+    [[nodiscard]] bool invalidateSession(
+        const AuthSessionToken& token,
+        std::string& error);
 
 private:
     SQLiteAccountAuth(sqlite3* database, Clock clock);

@@ -691,6 +691,25 @@ bool readLeaderboardEntry(
     return true;
 }
 
+bool writePublicAccountProfile(
+    Writer& writer,
+    const PublicAccountProfile& profile) {
+    if (profile.handle.value.empty() || profile.displayName.empty())
+        return writer.fail("Invalid public account profile.");
+    return writer.string(profile.handle.value) &&
+           writer.string(profile.displayName);
+}
+
+bool readPublicAccountProfile(
+    Reader& reader,
+    PublicAccountProfile& profile) {
+    if (!reader.string(profile.handle.value) ||
+        !reader.string(profile.displayName)) return false;
+    if (profile.handle.value.empty() || profile.displayName.empty())
+        return reader.fail("Invalid public account profile.");
+    return true;
+}
+
 bool writeViewContext(Writer& writer, const client::ClientViewContext& context) {
     writeId(writer, context.localPlayer);
     writeId(writer, context.viewedPlayer);
@@ -740,11 +759,18 @@ bool readHeader(
         case WireMessageType::ServerBootstrap:
         case WireMessageType::ServerUpdate:
         case WireMessageType::LeaderboardPageResponse:
+        case WireMessageType::AuthenticationSuccess:
+        case WireMessageType::AuthenticationFailure:
+        case WireMessageType::LogoutSuccess:
         case WireMessageType::SubmitAction:
         case WireMessageType::LockAction:
         case WireMessageType::WatchRemainingHunter:
         case WireMessageType::Quit:
         case WireMessageType::LeaderboardPageRequest:
+        case WireMessageType::CreateAccount:
+        case WireMessageType::Login:
+        case WireMessageType::AuthenticateSession:
+        case WireMessageType::LogoutSession:
             break;
         default:
             return reader.fail("Unknown wire message type.");
@@ -801,11 +827,18 @@ bool inspectWireMessageType(
         case WireMessageType::ServerBootstrap:
         case WireMessageType::ServerUpdate:
         case WireMessageType::LeaderboardPageResponse:
+        case WireMessageType::AuthenticationSuccess:
+        case WireMessageType::AuthenticationFailure:
+        case WireMessageType::LogoutSuccess:
         case WireMessageType::SubmitAction:
         case WireMessageType::LockAction:
         case WireMessageType::WatchRemainingHunter:
         case WireMessageType::Quit:
         case WireMessageType::LeaderboardPageRequest:
+        case WireMessageType::CreateAccount:
+        case WireMessageType::Login:
+        case WireMessageType::AuthenticateSession:
+        case WireMessageType::LogoutSession:
             type = candidate;
             return true;
     }
@@ -914,6 +947,78 @@ bool encodeWire(
             }) || !writer.finish()) return false;
     LeaderboardPageResponse validated;
     return decodeLeaderboardPageResponse(bytes, validated, error);
+}
+
+bool encodeWire(
+    const AuthenticationRequest& message,
+    WireBytes& bytes,
+    std::string& error) {
+    Writer writer(bytes, error);
+    if (message.protocolVersion != kProtocolVersion)
+        return writer.fail("Unsupported Basilisk network protocol version.");
+    const WireMessageType type = std::visit([](const auto& request) {
+        using T = std::decay_t<decltype(request)>;
+        if constexpr (std::is_same_v<T, CreateAccountRequest>)
+            return WireMessageType::CreateAccount;
+        if constexpr (std::is_same_v<T, LoginRequest>)
+            return WireMessageType::Login;
+        if constexpr (std::is_same_v<T, AuthenticateSessionRequest>)
+            return WireMessageType::AuthenticateSession;
+        return WireMessageType::LogoutSession;
+    }, message.payload);
+    writeHeader(writer, type, message.protocolVersion);
+    const bool written = std::visit([&](const auto& request) {
+        using T = std::decay_t<decltype(request)>;
+        if constexpr (std::is_same_v<T, CreateAccountRequest>) {
+            return !request.login.empty() && !request.password.empty() &&
+                writer.string(request.login) && writer.string(request.password) &&
+                writePublicAccountProfile(writer, request.profile);
+        } else if constexpr (std::is_same_v<T, LoginRequest>) {
+            return !request.login.empty() && !request.password.empty() &&
+                writer.string(request.login) && writer.string(request.password);
+        } else {
+            return !request.sessionToken.empty() &&
+                writer.string(request.sessionToken);
+        }
+    }, message.payload);
+    if (!written) return writer.fail("Invalid authentication request.");
+    if (!writer.finish()) return false;
+    AuthenticationRequest validated;
+    return decodeAuthenticationRequest(bytes, validated, error);
+}
+
+bool encodeWire(
+    const AuthenticationResponse& message,
+    WireBytes& bytes,
+    std::string& error) {
+    Writer writer(bytes, error);
+    if (message.protocolVersion != kProtocolVersion)
+        return writer.fail("Unsupported Basilisk network protocol version.");
+    const WireMessageType type = std::visit([](const auto& response) {
+        using T = std::decay_t<decltype(response)>;
+        if constexpr (std::is_same_v<T, AuthenticationSuccess>)
+            return WireMessageType::AuthenticationSuccess;
+        if constexpr (std::is_same_v<T, AuthenticationFailure>)
+            return WireMessageType::AuthenticationFailure;
+        return WireMessageType::LogoutSuccess;
+    }, message.payload);
+    writeHeader(writer, type, message.protocolVersion);
+    const bool written = std::visit([&](const auto& response) {
+        using T = std::decay_t<decltype(response)>;
+        if constexpr (std::is_same_v<T, AuthenticationSuccess>) {
+            return !response.sessionToken.empty() &&
+                writer.string(response.sessionToken) &&
+                writePublicAccountProfile(writer, response.profile);
+        } else if constexpr (std::is_same_v<T, AuthenticationFailure>) {
+            return !response.message.empty() && writer.string(response.message);
+        } else {
+            return true;
+        }
+    }, message.payload);
+    if (!written) return writer.fail("Invalid authentication response.");
+    if (!writer.finish()) return false;
+    AuthenticationResponse validated;
+    return decodeAuthenticationResponse(bytes, validated, error);
 }
 
 bool decodeServerBootstrap(
@@ -1070,6 +1175,101 @@ bool decodeLeaderboardPageResponse(
             })) return false;
     if (decoded.entries.size() > kMaximumLeaderboardPageSize)
         return reader.fail("Leaderboard response exceeds page limit.");
+    if (!finishRead(reader)) return false;
+    message = std::move(decoded);
+    return true;
+}
+
+bool decodeAuthenticationRequest(
+    std::span<const std::uint8_t> bytes,
+    AuthenticationRequest& message,
+    std::string& error) {
+    WireMessageType type{};
+    if (!inspectWireMessageType(bytes, type, error)) return false;
+    if (type != WireMessageType::CreateAccount &&
+        type != WireMessageType::Login &&
+        type != WireMessageType::AuthenticateSession &&
+        type != WireMessageType::LogoutSession) {
+        error = "Unexpected wire message type.";
+        return false;
+    }
+    Reader reader(bytes, error);
+    AuthenticationRequest decoded;
+    if (!readHeader(reader, type, decoded.protocolVersion)) return false;
+    switch (type) {
+        case WireMessageType::CreateAccount: {
+            CreateAccountRequest request;
+            if (!reader.string(request.login) ||
+                !reader.string(request.password) ||
+                !readPublicAccountProfile(reader, request.profile)) return false;
+            if (request.login.empty() || request.password.empty())
+                return reader.fail("Invalid authentication request.");
+            decoded.payload = std::move(request);
+            break;
+        }
+        case WireMessageType::Login: {
+            LoginRequest request;
+            if (!reader.string(request.login) ||
+                !reader.string(request.password)) return false;
+            if (request.login.empty() || request.password.empty())
+                return reader.fail("Invalid authentication request.");
+            decoded.payload = std::move(request);
+            break;
+        }
+        case WireMessageType::AuthenticateSession: {
+            AuthenticateSessionRequest request;
+            if (!reader.string(request.sessionToken)) return false;
+            if (request.sessionToken.empty())
+                return reader.fail("Invalid authentication request.");
+            decoded.payload = std::move(request);
+            break;
+        }
+        case WireMessageType::LogoutSession: {
+            LogoutRequest request;
+            if (!reader.string(request.sessionToken)) return false;
+            if (request.sessionToken.empty())
+                return reader.fail("Invalid authentication request.");
+            decoded.payload = std::move(request);
+            break;
+        }
+        default: return reader.fail("Unexpected wire message type.");
+    }
+    if (!finishRead(reader)) return false;
+    message = std::move(decoded);
+    return true;
+}
+
+bool decodeAuthenticationResponse(
+    std::span<const std::uint8_t> bytes,
+    AuthenticationResponse& message,
+    std::string& error) {
+    WireMessageType type{};
+    if (!inspectWireMessageType(bytes, type, error)) return false;
+    if (type != WireMessageType::AuthenticationSuccess &&
+        type != WireMessageType::AuthenticationFailure &&
+        type != WireMessageType::LogoutSuccess) {
+        error = "Unexpected wire message type.";
+        return false;
+    }
+    Reader reader(bytes, error);
+    AuthenticationResponse decoded;
+    if (!readHeader(reader, type, decoded.protocolVersion)) return false;
+    if (type == WireMessageType::AuthenticationSuccess) {
+        AuthenticationSuccess response;
+        if (!reader.string(response.sessionToken) ||
+            !readPublicAccountProfile(reader, response.profile)) return false;
+        if (response.sessionToken.empty())
+            return reader.fail("Invalid authentication response.");
+        decoded.payload = std::move(response);
+    } else if (type == WireMessageType::AuthenticationFailure) {
+        AuthenticationFailure response;
+        if (!reader.string(response.message)) return false;
+        if (response.message.empty())
+            return reader.fail("Invalid authentication response.");
+        decoded.payload = std::move(response);
+    } else {
+        decoded.payload = LogoutSuccess{};
+    }
     if (!finishRead(reader)) return false;
     message = std::move(decoded);
     return true;

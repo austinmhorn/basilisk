@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -16,6 +17,49 @@
 namespace basilisk::game::network {
 
 inline constexpr std::uint32_t kProtocolVersion{2};
+
+struct CreateAccountRequest {
+    std::string login;
+    std::string password;
+    PublicAccountProfile profile;
+};
+
+struct LoginRequest {
+    std::string login;
+    std::string password;
+};
+
+struct AuthenticateSessionRequest { std::string sessionToken; };
+struct LogoutRequest { std::string sessionToken; };
+
+using AuthenticationRequestPayload = std::variant<
+    CreateAccountRequest,
+    LoginRequest,
+    AuthenticateSessionRequest,
+    LogoutRequest>;
+
+struct AuthenticationRequest {
+    std::uint32_t protocolVersion{kProtocolVersion};
+    AuthenticationRequestPayload payload;
+};
+
+struct AuthenticationSuccess {
+    std::string sessionToken;
+    PublicAccountProfile profile;
+};
+
+struct AuthenticationFailure { std::string message; };
+struct LogoutSuccess {};
+
+using AuthenticationResponsePayload = std::variant<
+    AuthenticationSuccess,
+    AuthenticationFailure,
+    LogoutSuccess>;
+
+struct AuthenticationResponse {
+    std::uint32_t protocolVersion{kProtocolVersion};
+    AuthenticationResponsePayload payload;
+};
 
 // Initial player-safe state supplied after an online session is established.
 struct ServerBootstrap {

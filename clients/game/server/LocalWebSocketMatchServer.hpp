@@ -33,9 +33,9 @@ struct LocalWebSocketServerConfig {
     MatchSeed matchSeed{424242};
     std::vector<client::PublicPlayerProfile> profiles;
     std::optional<LocalServerTrophyConfig> trophies;
-    // When present, URL tokens are short-lived sessions resolved to these
-    // private accounts. The fixed token fields remain the development fallback.
-    std::shared_ptr<AccountSessionResolver> authentication;
+    // When present, authentication is performed with binary protocol messages.
+    // The fixed URL-token fields remain the development fallback.
+    std::shared_ptr<SQLiteAccountAuth> authentication;
     std::optional<AccountIdentity> p1AuthenticatedAccount;
     std::optional<AccountIdentity> p2AuthenticatedAccount;
 };

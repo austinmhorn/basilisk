@@ -14,13 +14,7 @@ namespace basilisk::game::server {
 using ::basilisk::game::PublicProfileHandle;
 using ::basilisk::game::PublicTrophyLeaderboardEntry;
 
-// Public account data contains no durable private account identity.
-struct PublicAccountProfile {
-    PublicProfileHandle handle;
-    std::string displayName;
-
-    bool operator==(const PublicAccountProfile&) const = default;
-};
+using ::basilisk::game::PublicAccountProfile;
 
 enum class PublicProfileStoreResult {
     Stored,

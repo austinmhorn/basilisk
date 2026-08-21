@@ -212,6 +212,7 @@ if(NOT EMSCRIPTEN)
 
     add_library(BasiliskAccountAuth STATIC EXCLUDE_FROM_ALL
         server/AccountAuth.cpp
+        server/AccountAuthProtocol.cpp
     )
     add_library(Basilisk::AccountAuth ALIAS BasiliskAccountAuth)
     target_include_directories(BasiliskAccountAuth PUBLIC

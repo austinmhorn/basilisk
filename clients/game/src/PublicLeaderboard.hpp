@@ -13,6 +13,13 @@ struct PublicProfileHandle {
     auto operator<=>(const PublicProfileHandle&) const = default;
 };
 
+struct PublicAccountProfile {
+    PublicProfileHandle handle;
+    std::string displayName;
+
+    bool operator==(const PublicAccountProfile&) const = default;
+};
+
 // Public read-model data contains no durable private account identity.
 struct PublicTrophyLeaderboardEntry {
     std::size_t rank{};

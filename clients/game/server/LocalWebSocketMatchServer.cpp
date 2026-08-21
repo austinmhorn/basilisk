@@ -14,6 +14,7 @@
 #include <ixwebsocket/IXWebSocketServer.h>
 
 #include "AuthoritativeInMemoryMatch.hpp"
+#include "AccountAuthProtocol.hpp"
 #include "SQLiteTrophyPersistence.hpp"
 #if defined(_WIN32)
 #include "NativeNetworkRuntime.hpp"
@@ -77,7 +78,7 @@ public:
         std::shared_ptr<TrophyLedger> trophyLedger,
         std::uint16_t port,
         std::map<std::string, PlayerId> tokens,
-        std::shared_ptr<AccountSessionResolver> authentication,
+        std::shared_ptr<SQLiteAccountAuth> authentication,
         std::map<AccountIdentity, PlayerId> authenticatedAccounts
 #if defined(_WIN32)
         , std::unique_ptr<NativeNetworkRuntime> networkRuntime
@@ -93,6 +94,7 @@ public:
           server_(port, "127.0.0.1", 5, 2),
           tokens_(std::move(tokens)),
           authentication_(std::move(authentication)),
+          authenticationProtocol_(authentication_),
           authenticatedAccounts_(std::move(authenticatedAccounts)) {}
 
     bool start(std::string& error) {
@@ -125,6 +127,7 @@ public:
         server_.stop();
         std::lock_guard lock(mutex_);
         clients_.clear();
+        pendingAuthentication_.clear();
         usedPlayers_.clear();
     }
 
@@ -217,17 +220,17 @@ private:
     }
 
     void authenticate(ix::WebSocket& socket, const std::string& uri) {
+        if (authentication_ != nullptr) {
+            if (tokenFromUri(uri).has_value()) {
+                socket.close(1008, "Session tokens must use binary frames");
+                return;
+            }
+            pendingAuthentication_.insert(&socket);
+            return;
+        }
         const auto token = tokenFromUri(uri);
         std::optional<PlayerId> player;
-        if (token.has_value() && authentication_ != nullptr) {
-            AccountIdentity account;
-            std::string error;
-            if (authentication_->resolveSession(
-                    AuthSessionToken{*token}, account, error)) {
-                const auto found = authenticatedAccounts_.find(account);
-                if (found != authenticatedAccounts_.end()) player = found->second;
-            }
-        } else if (token.has_value()) {
+        if (token.has_value()) {
             const auto found = tokens_.find(*token);
             if (found != tokens_.end()) player = found->second;
         }
@@ -252,6 +255,10 @@ private:
 
     void receive(ix::WebSocket& socket, const ix::WebSocketMessage& message) {
         const auto found = clients_.find(&socket);
+        if (found == clients_.end() && pendingAuthentication_.contains(&socket)) {
+            receiveAuthentication(socket, message);
+            return;
+        }
         if (found == clients_.end() || !found->second.active) {
             socket.close(1008, "Unauthenticated or disconnected client");
             return;
@@ -265,13 +272,87 @@ private:
             return;
         }
         const auto* data = reinterpret_cast<const std::uint8_t*>(message.str.data());
+        const std::span<const std::uint8_t> bytes{data, message.str.size()};
         std::string error;
+        network::WireMessageType type{};
+        if (authentication_ != nullptr &&
+            network::inspectWireMessageType(bytes, type, error) &&
+            type == network::WireMessageType::LogoutSession) {
+            network::WireBytes response;
+            if (!authenticationProtocol_.process(bytes, response, error)) {
+                reject(socket, found->second, 1008, error);
+                return;
+            }
+            const std::string payload(
+                reinterpret_cast<const char*>(response.data()), response.size());
+            (void)socket.sendBinary(payload);
+            disconnectClient(found->second);
+            clients_.erase(found);
+            pendingAuthentication_.erase(&socket);
+            drainAll();
+            socket.close(1000, "Logged out");
+            return;
+        }
         if (!found->second.endpoint->sendBytes(
-                std::span<const std::uint8_t>{data, message.str.size()}, error)) {
+                bytes, error)) {
             reject(socket, found->second, 1008, error);
             return;
         }
         reportTrophyError();
+        drainAll();
+    }
+
+    void receiveAuthentication(
+        ix::WebSocket& socket, const ix::WebSocketMessage& message) {
+        if (!message.binary) {
+            socket.close(1003, "Binary frames required");
+            pendingAuthentication_.erase(&socket);
+            return;
+        }
+        if (message.str.size() > kMaximumFrameBytes) {
+            socket.close(1009, "Frame exceeds 1 MiB limit");
+            pendingAuthentication_.erase(&socket);
+            return;
+        }
+        const auto* data = reinterpret_cast<const std::uint8_t*>(message.str.data());
+        network::WireBytes response;
+        std::string error;
+        if (!authenticationProtocol_.process(
+                std::span<const std::uint8_t>{data, message.str.size()},
+                response, error)) {
+            socket.close(1008, error);
+            pendingAuthentication_.erase(&socket);
+            return;
+        }
+        const std::string payload(
+            reinterpret_cast<const char*>(response.data()), response.size());
+        if (!socket.sendBinary(payload).success) return;
+
+        network::AuthenticationResponse decoded;
+        if (!network::decodeAuthenticationResponse(response, decoded, error)) return;
+        const auto* success = std::get_if<network::AuthenticationSuccess>(
+            &decoded.payload);
+        if (success == nullptr) return;
+        AccountIdentity account;
+        if (!authentication_->resolveSession(
+                AuthSessionToken{success->sessionToken}, account, error)) return;
+        const auto bound = authenticatedAccounts_.find(account);
+        if (bound == authenticatedAccounts_.end()) return;
+        if (usedPlayers_.contains(bound->second)) {
+            socket.close(1008, "Account is already in use");
+            pendingAuthentication_.erase(&socket);
+            return;
+        }
+        auto endpoint = match_->connect(bound->second, error);
+        if (endpoint == nullptr) {
+            socket.close(1008, error);
+            pendingAuthentication_.erase(&socket);
+            return;
+        }
+        pendingAuthentication_.erase(&socket);
+        clients_.emplace(
+            &socket, Client{bound->second, std::move(endpoint), true});
+        usedPlayers_.insert(bound->second);
         drainAll();
     }
 
@@ -286,6 +367,7 @@ private:
     }
 
     void disconnect(ix::WebSocket& socket) {
+        pendingAuthentication_.erase(&socket);
         const auto found = clients_.find(&socket);
         if (found == clients_.end()) return;
         disconnectClient(found->second);
@@ -329,9 +411,11 @@ private:
     std::shared_ptr<TrophyLedger> trophyLedger_;
     ix::WebSocketServer server_;
     std::map<std::string, PlayerId> tokens_;
-    std::shared_ptr<AccountSessionResolver> authentication_;
+    std::shared_ptr<SQLiteAccountAuth> authentication_;
+    AccountAuthProtocol authenticationProtocol_;
     std::map<AccountIdentity, PlayerId> authenticatedAccounts_;
     std::set<PlayerId> usedPlayers_;
+    std::set<ix::WebSocket*> pendingAuthentication_;
     std::map<ix::WebSocket*, Client> clients_;
     mutable std::mutex mutex_;
     bool stopped_{false};

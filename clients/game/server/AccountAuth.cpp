@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
     FOREIGN KEY (account_id) REFERENCES accounts(account_id)
 );
 CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at);
+CREATE TABLE IF NOT EXISTS public_account_profiles (
+    account_id TEXT PRIMARY KEY NOT NULL,
+    public_handle TEXT UNIQUE NOT NULL,
+    display_name TEXT NOT NULL,
+    FOREIGN KEY (account_id) REFERENCES accounts(account_id)
+);
 )sql";
 
 class Statement {
@@ -234,6 +240,51 @@ CreateAccountResult SQLiteAccountAuth::createAccount(
     return CreateAccountResult::Created;
 }
 
+CreateAccountResult SQLiteAccountAuth::createAccount(
+    const LoginIdentity& login,
+    const std::string& password,
+    const PublicAccountProfile& profile,
+    AccountIdentity& account,
+    std::string& error) {
+    if (profile.handle.value.empty() || profile.displayName.empty()) {
+        error = "Public handle and display name must not be empty.";
+        return CreateAccountResult::InvalidInput;
+    }
+    if (!execute(database_, "BEGIN IMMEDIATE", error))
+        return CreateAccountResult::Error;
+    AccountIdentity created;
+    const CreateAccountResult createdResult = createAccount(
+        login, password, created, error);
+    if (createdResult != CreateAccountResult::Created) {
+        std::string ignored;
+        (void)execute(database_, "ROLLBACK", ignored);
+        return createdResult;
+    }
+    Statement insert(database_,
+        "INSERT INTO public_account_profiles(account_id, public_handle, "
+        "display_name) VALUES(?, ?, ?)", error);
+    if (insert.get() == nullptr ||
+        !bindText(insert.get(), 1, created.value) ||
+        !bindText(insert.get(), 2, profile.handle.value) ||
+        !bindText(insert.get(), 3, profile.displayName) ||
+        sqlite3_step(insert.get()) != SQLITE_DONE) {
+        if (error.empty()) error = sqlite3_errmsg(database_);
+        std::string ignored;
+        (void)execute(database_, "ROLLBACK", ignored);
+        if (error.find("UNIQUE constraint failed: public_account_profiles.public_handle") !=
+            std::string::npos)
+            error = "Public handle is already registered.";
+        return CreateAccountResult::Error;
+    }
+    if (!execute(database_, "COMMIT", error)) {
+        std::string ignored;
+        (void)execute(database_, "ROLLBACK", ignored);
+        return CreateAccountResult::Error;
+    }
+    account = std::move(created);
+    return CreateAccountResult::Created;
+}
+
 bool SQLiteAccountAuth::authenticate(
     const LoginIdentity& login,
     const std::string& password,
@@ -314,6 +365,49 @@ bool SQLiteAccountAuth::resolveSession(
     }
     account.value = reinterpret_cast<const char*>(
         sqlite3_column_text(query.get(), 0));
+    error.clear();
+    return true;
+}
+
+bool SQLiteAccountAuth::publicProfile(
+    const AccountIdentity& account,
+    PublicAccountProfile& profile,
+    std::string& error) {
+    Statement query(database_,
+        "SELECT public_handle, display_name FROM public_account_profiles "
+        "WHERE account_id = ?", error);
+    if (query.get() == nullptr || !bindText(query.get(), 1, account.value)) {
+        if (error.empty()) error = sqlite3_errmsg(database_);
+        return false;
+    }
+    const int result = sqlite3_step(query.get());
+    if (result != SQLITE_ROW) {
+        error = result == SQLITE_DONE ? "Public account profile is unavailable."
+                                      : sqlite3_errmsg(database_);
+        return false;
+    }
+    profile.handle.value = reinterpret_cast<const char*>(
+        sqlite3_column_text(query.get(), 0));
+    profile.displayName = reinterpret_cast<const char*>(
+        sqlite3_column_text(query.get(), 1));
+    error.clear();
+    return true;
+}
+
+bool SQLiteAccountAuth::invalidateSession(
+    const AuthSessionToken& token,
+    std::string& error) {
+    Statement remove(database_,
+        "DELETE FROM auth_sessions WHERE session_token = ?", error);
+    if (remove.get() == nullptr || !bindText(remove.get(), 1, token.value) ||
+        sqlite3_step(remove.get()) != SQLITE_DONE) {
+        if (error.empty()) error = sqlite3_errmsg(database_);
+        return false;
+    }
+    if (sqlite3_changes(database_) != 1) {
+        error = "Invalid or expired authentication session.";
+        return false;
+    }
     error.clear();
     return true;
 }

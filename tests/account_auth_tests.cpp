@@ -4,6 +4,8 @@
 #include <string>
 
 #include "AccountAuth.hpp"
+#include "AccountAuthProtocol.hpp"
+#include "NetworkWireCodec.hpp"
 
 using namespace basilisk::game::server;
 
@@ -74,4 +76,64 @@ int main() {
     now += SQLiteAccountAuth::defaultSessionLifetime.count();
     assert(!auth->resolveSession(session, resolved, error));
     assert(error == "Invalid or expired authentication session.");
+
+    now = 1'000'000;
+    AccountAuthProtocol protocol{auth};
+    using namespace basilisk::game::network;
+    const basilisk::game::PublicAccountProfile profile{
+        basilisk::game::PublicProfileHandle{"mara-voss"}, "Mara Voss"};
+    WireBytes requestBytes;
+    WireBytes responseBytes;
+    AuthenticationResponse response;
+    assert(encodeWire(AuthenticationRequest{
+        kProtocolVersion,
+        CreateAccountRequest{
+            "mara2@example.test", "another correct horse battery staple",
+            profile}}, requestBytes, error));
+    assert(protocol.process(requestBytes, responseBytes, error));
+    assert(decodeAuthenticationResponse(responseBytes, response, error));
+    const auto* createdResponse =
+        std::get_if<AuthenticationSuccess>(&response.payload);
+    assert(createdResponse != nullptr);
+    assert(createdResponse->profile == profile);
+    const std::string createdSession = createdResponse->sessionToken;
+
+    assert(encodeWire(AuthenticationRequest{
+        kProtocolVersion,
+        LoginRequest{"mara2@example.test",
+                     "another correct horse battery staple"}},
+        requestBytes, error));
+    assert(protocol.process(requestBytes, responseBytes, error));
+    assert(decodeAuthenticationResponse(responseBytes, response, error));
+    const auto* loginResponse =
+        std::get_if<AuthenticationSuccess>(&response.payload);
+    assert(loginResponse != nullptr);
+    assert(loginResponse->profile == profile);
+
+    assert(encodeWire(AuthenticationRequest{
+        kProtocolVersion, AuthenticateSessionRequest{createdSession}},
+        requestBytes, error));
+    assert(protocol.process(requestBytes, responseBytes, error));
+    assert(decodeAuthenticationResponse(responseBytes, response, error));
+    const auto* authenticated =
+        std::get_if<AuthenticationSuccess>(&response.payload);
+    assert(authenticated != nullptr);
+    assert(authenticated->sessionToken == createdSession);
+    assert(authenticated->profile == profile);
+
+    assert(encodeWire(AuthenticationRequest{
+        kProtocolVersion,
+        LoginRequest{"mara2@example.test", "wrong password"}},
+        requestBytes, error));
+    assert(protocol.process(requestBytes, responseBytes, error));
+    assert(decodeAuthenticationResponse(responseBytes, response, error));
+    assert(std::holds_alternative<AuthenticationFailure>(response.payload));
+
+    assert(encodeWire(AuthenticationRequest{
+        kProtocolVersion, LogoutRequest{createdSession}}, requestBytes, error));
+    assert(protocol.process(requestBytes, responseBytes, error));
+    assert(decodeAuthenticationResponse(responseBytes, response, error));
+    assert(std::holds_alternative<LogoutSuccess>(response.payload));
+    assert(!auth->resolveSession(
+        AuthSessionToken{createdSession}, resolved, error));
 }
