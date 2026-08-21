@@ -9,7 +9,9 @@
 #include <vector>
 
 #include <ixwebsocket/IXGetFreePort.h>
+#include <ixwebsocket/IXWebSocketServer.h>
 
+#include "AuthoritativeInMemoryMatch.hpp"
 #include "LocalWebSocketMatchServer.hpp"
 #include "WebSocketNetworkSession.hpp"
 
@@ -68,6 +70,52 @@ std::string url(const LocalWebSocketMatchServer& server) {
     return "ws://127.0.0.1:" + std::to_string(server.port());
 }
 
+struct IncompatibleServer {
+    std::unique_ptr<ix::WebSocketServer> socket;
+    std::uint16_t port{};
+
+    ~IncompatibleServer() {
+        if (socket != nullptr) socket->stop();
+    }
+};
+
+std::unique_ptr<IncompatibleServer> startIncompatibleServer() {
+    std::string error;
+    auto match = AuthoritativeInMemoryMatch::create(
+        MapSeed{20260816}, MatchSeed{424242}, profiles(), error);
+    assert(match != nullptr);
+    auto endpoint = match->connect(PlayerId{1}, error);
+    assert(endpoint != nullptr);
+    auto frame = endpoint->takeNextServerFrame();
+    assert(frame.has_value() && frame->size() > 8);
+    (*frame)[8] = 2; // V1's big-endian version header becomes unsupported V2.
+
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        const auto port = static_cast<std::uint16_t>(ix::getFreePort());
+        auto socket = std::make_unique<ix::WebSocketServer>(
+            port, "127.0.0.1", 5, 1);
+        socket->disablePerMessageDeflate();
+        socket->setOnClientMessageCallback(
+            [bytes = *frame](std::shared_ptr<ix::ConnectionState>,
+                             ix::WebSocket& client,
+                             const ix::WebSocketMessagePtr& message) {
+                if (message->type != ix::WebSocketMessageType::Open) return;
+                const std::string payload(
+                    reinterpret_cast<const char*>(bytes.data()), bytes.size());
+                (void)client.sendBinary(payload);
+            });
+        const auto listening = socket->listen();
+        if (!listening.first) continue;
+        socket->start();
+        auto result = std::make_unique<IncompatibleServer>();
+        result->socket = std::move(socket);
+        result->port = port;
+        return result;
+    }
+    assert(false && "Unable to reserve an incompatible-server test port");
+    return nullptr;
+}
+
 void twoRealWebSocketsAdvanceOneAuthoritativeRound() {
     auto server = startServer();
     std::string error;
@@ -109,16 +157,20 @@ void invalidAndDuplicateTokensAreRejected() {
 
     auto duplicate = WebSocketNetworkSession::connect(
         url(*server), "test-p1", error);
-    auto invalid = WebSocketNetworkSession::connect(
-        url(*server), "not-a-token", error);
-    assert(duplicate != nullptr && invalid != nullptr);
+    assert(duplicate != nullptr);
     assert(waitUntil([&] {
         duplicate->pump();
-        invalid->pump();
-        return duplicate->state() == NetworkConnectionState::Disconnected &&
-               invalid->state() == NetworkConnectionState::Disconnected;
+        return duplicate->state() == NetworkConnectionState::Error;
     }));
     assert(duplicate->controller() == nullptr);
+
+    auto invalid = WebSocketNetworkSession::connect(
+        url(*server), "not-a-token", error);
+    assert(invalid != nullptr);
+    assert(waitUntil([&] {
+        invalid->pump();
+        return invalid->state() == NetworkConnectionState::Error;
+    }));
     assert(invalid->controller() == nullptr);
 }
 
@@ -141,10 +193,93 @@ void disconnectUsesExistingMatchLifecycle() {
     assert(p1->controller()->displayedSnapshot()->alive);
 }
 
+void incompatibleProtocolIsReportedExplicitly() {
+    auto server = startIncompatibleServer();
+    std::string error;
+    auto session = WebSocketNetworkSession::connect(
+        "ws://127.0.0.1:" + std::to_string(server->port), "test-p1", error);
+    assert(session != nullptr);
+    assert(waitUntil([&] {
+        session->pump();
+        return session->state() == NetworkConnectionState::Error;
+    }));
+    assert(session->controller() == nullptr);
+    assert(session->error() ==
+           "Protocol compatibility error: Unsupported Basilisk network "
+           "protocol version.");
+}
+
+void unavailableServerIsAnInitialConnectionFailure() {
+    const auto unusedPort = static_cast<std::uint16_t>(ix::getFreePort());
+    std::string error;
+    auto session = WebSocketNetworkSession::connect(
+        "ws://127.0.0.1:" + std::to_string(unusedPort), "test-p1", error);
+    assert(session != nullptr);
+    assert(waitUntil([&] {
+        session->pump();
+        return session->state() == NetworkConnectionState::Error;
+    }));
+    assert(session->controller() == nullptr);
+    assert(session->error().starts_with(
+        "Unable to connect to the Basilisk server:"));
+}
+
+void establishedSessionReportsConnectionLoss() {
+    auto server = startServer();
+    std::string error;
+    auto session = WebSocketNetworkSession::connect(
+        url(*server), "test-p1", error);
+    assert(session != nullptr);
+    assert(waitUntil([&] {
+        session->pump();
+        return session->controller() != nullptr;
+    }));
+    const ClientSessionController* controller = session->controller();
+
+    server->stop();
+    assert(waitUntil([&] {
+        session->pump();
+        return session->state() == NetworkConnectionState::Disconnected;
+    }));
+    assert(session->controller() == controller);
+    assert(session->error().starts_with(
+        "Connection to the Basilisk server was lost:"));
+}
+
+void callbacksAfterClientCloseAreIgnored() {
+    auto server = startServer();
+    std::string error;
+    auto session = WebSocketNetworkSession::connect(
+        url(*server), "test-p1", error);
+    assert(session != nullptr);
+    assert(waitUntil([&] {
+        session->pump();
+        return session->controller() != nullptr;
+    }));
+    const ClientSessionController* controller = session->controller();
+    const RoundNumber round = controller->displayedSnapshot()->round;
+
+    session->close();
+    const std::string closedError = session->error();
+    server->stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    session->pump();
+
+    assert(session->state() == NetworkConnectionState::Disconnected);
+    assert(session->error() == closedError);
+    assert(session->error() == "Connection closed by client.");
+    assert(session->controller() == controller);
+    assert(controller->displayedSnapshot()->round == round);
+}
+
 } // namespace
 
 int main() {
     twoRealWebSocketsAdvanceOneAuthoritativeRound();
     invalidAndDuplicateTokensAreRejected();
     disconnectUsesExistingMatchLifecycle();
+    incompatibleProtocolIsReportedExplicitly();
+    unavailableServerIsAnInitialConnectionFailure();
+    establishedSessionReportsConnectionLoss();
+    callbacksAfterClientCloseAreIgnored();
 }

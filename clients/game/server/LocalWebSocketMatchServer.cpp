@@ -97,10 +97,15 @@ public:
             std::lock_guard lock(mutex_);
             if (stopped_) return;
             stopped_ = true;
+            for (auto& [socket, client] : clients_) {
+                (void)socket;
+                disconnectClient(client);
+            }
         }
         server_.stop();
         std::lock_guard lock(mutex_);
         clients_.clear();
+        usedPlayers_.clear();
     }
 
     std::uint16_t port() { return static_cast<std::uint16_t>(server_.getPort()); }

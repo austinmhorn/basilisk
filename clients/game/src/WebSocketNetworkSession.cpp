@@ -52,6 +52,9 @@ struct SharedSocketState {
     std::string error;
     std::deque<network::WireBytes> frames;
     std::function<bool(std::span<const std::uint8_t>)> sendBinary;
+    bool sessionEstablished{false};
+    bool closed{false};
+    bool shutdownRequested{false};
 };
 
 class WebSocketClientTransport final : public network::ClientTransport {
@@ -63,14 +66,11 @@ public:
         network::WireBytes bytes;
         std::string error;
         if (!network::encodeWire(command, bytes, error)) return false;
-        std::function<bool(std::span<const std::uint8_t>)> sender;
-        {
-            std::lock_guard lock(socket_->mutex);
-            if (socket_->state != NetworkConnectionState::Connected ||
-                !socket_->sendBinary) return false;
-            sender = socket_->sendBinary;
-        }
-        return sender(bytes);
+        std::lock_guard lock(socket_->mutex);
+        if (socket_->closed ||
+            socket_->state != NetworkConnectionState::Connected ||
+            !socket_->sendBinary) return false;
+        return socket_->sendBinary(bytes);
     }
 
 private:
@@ -132,42 +132,121 @@ public:
     }
 
     void stop() {
+        {
+            std::lock_guard lock(socketState_->mutex);
+            if (!socketState_->closed) {
+                socketState_->closed = true;
+                socketState_->state = NetworkConnectionState::Disconnected;
+                socketState_->error = "Connection closed by client.";
+                socketState_->frames.clear();
+                socketState_->sendBinary = {};
+            }
+        }
+        shutdownSocket();
+    }
+
+    void shutdownSocket() {
+        if (socketStopped_) return;
+        socketStopped_ = true;
 #if defined(__EMSCRIPTEN__)
         if (socket_ > 0) {
+            emscripten_websocket_set_onopen_callback(socket_, nullptr, nullptr);
+            emscripten_websocket_set_onmessage_callback(socket_, nullptr, nullptr);
+            emscripten_websocket_set_onerror_callback(socket_, nullptr, nullptr);
+            emscripten_websocket_set_onclose_callback(socket_, nullptr, nullptr);
             emscripten_websocket_close(socket_, 1000, "Client shutdown");
             emscripten_websocket_delete(socket_);
             socket_ = 0;
         }
 #else
+        socket_.setOnMessageCallback(
+            [](const ix::WebSocketMessagePtr&) {});
         socket_.stop();
 #endif
     }
 
     void pump() {
         std::deque<network::WireBytes> frames;
+        bool shutdownRequested = false;
         {
             std::lock_guard lock(socketState_->mutex);
+            if (socketState_->closed) {
+                socketState_->frames.clear();
+                if (socketState_->state == NetworkConnectionState::Error ||
+                    socketState_->state == NetworkConnectionState::Disconnected)
+                    socketState_->shutdownRequested = true;
+            }
+            shutdownRequested = socketState_->shutdownRequested;
             frames.swap(socketState_->frames);
+        }
+        if (shutdownRequested) {
+            shutdownSocket();
+            return;
         }
         for (network::WireBytes& frame : frames) {
             std::string decodeError;
             if (adapter_ == nullptr) {
                 network::ServerBootstrap bootstrap;
                 if (!network::decodeServerBootstrap(frame, bootstrap, decodeError)) {
-                    fail("Invalid server bootstrap: " + decodeError);
+                    if (decodeError ==
+                        "Unsupported Basilisk network protocol version.") {
+                        fail("Protocol compatibility error: " + decodeError);
+                    } else {
+                        fail("Invalid server bootstrap: " + decodeError);
+                    }
+                    shutdownSocket();
                     return;
                 }
-                adapter_ = NetworkGameSessionAdapter::create(
+                auto adapter = NetworkGameSessionAdapter::create(
                     std::move(bootstrap), transport_, decodeError);
-                if (adapter_ == nullptr) {
-                    fail("Rejected server bootstrap: " + decodeError);
+                if (adapter == nullptr) {
+                    if (decodeError ==
+                        "Unsupported Basilisk network protocol version.") {
+                        fail("Protocol compatibility error: " + decodeError);
+                    } else {
+                        fail("Rejected server bootstrap: " + decodeError);
+                    }
+                    shutdownSocket();
+                    return;
+                }
+                bool accepted = false;
+                {
+                    std::lock_guard lock(socketState_->mutex);
+                    if (!socketState_->closed) {
+                        adapter_ = std::move(adapter);
+                        accepted = true;
+                    }
+                    if (accepted)
+                        socketState_->sessionEstablished = true;
+                }
+                if (!accepted) {
+                    shutdownSocket();
                     return;
                 }
             } else {
                 network::ServerUpdate update;
-                if (!network::decodeServerUpdate(frame, update, decodeError) ||
-                    !adapter_->ingest(std::move(update), decodeError)) {
-                    fail("Invalid server update: " + decodeError);
+                bool ingested = false;
+                if (network::decodeServerUpdate(frame, update, decodeError)) {
+                    std::lock_guard lock(socketState_->mutex);
+                    if (socketState_->closed) {
+                        shutdownRequested = true;
+                    } else {
+                        ingested = adapter_->ingest(
+                            std::move(update), decodeError);
+                    }
+                }
+                if (shutdownRequested) {
+                    shutdownSocket();
+                    return;
+                }
+                if (!ingested) {
+                    if (decodeError ==
+                        "Unsupported Basilisk network protocol version.") {
+                        fail("Protocol compatibility error: " + decodeError);
+                    } else {
+                        fail("Invalid server update: " + decodeError);
+                    }
+                    shutdownSocket();
                     return;
                 }
             }
@@ -191,21 +270,55 @@ public:
 private:
     void fail(std::string message) {
         std::lock_guard lock(socketState_->mutex);
+        if (socketState_->closed) return;
         socketState_->state = NetworkConnectionState::Error;
         socketState_->error = std::move(message);
+        socketState_->closed = true;
+        socketState_->frames.clear();
+        socketState_->sendBinary = {};
+        socketState_->shutdownRequested = true;
     }
 
     void opened() {
         std::lock_guard lock(socketState_->mutex);
+        if (socketState_->closed) return;
         socketState_->state = NetworkConnectionState::Connected;
+    }
+
+    void transportFailed(std::string reason) {
+        std::lock_guard lock(socketState_->mutex);
+        if (socketState_->closed) return;
+        if (socketState_->sessionEstablished) {
+            socketState_->state = NetworkConnectionState::Disconnected;
+            socketState_->error =
+                "Connection to the Basilisk server was lost: " + reason;
+        } else {
+            socketState_->state = NetworkConnectionState::Error;
+            socketState_->error =
+                "Unable to connect to the Basilisk server: " + reason;
+        }
+        socketState_->closed = true;
+        socketState_->frames.clear();
+        socketState_->sendBinary = {};
+        socketState_->shutdownRequested = true;
     }
 
     void closed(std::string reason) {
         std::lock_guard lock(socketState_->mutex);
-        if (socketState_->state != NetworkConnectionState::Error) {
+        if (socketState_->closed) return;
+        if (socketState_->sessionEstablished) {
             socketState_->state = NetworkConnectionState::Disconnected;
-            socketState_->error = std::move(reason);
+            socketState_->error =
+                "Connection to the Basilisk server was lost: " + reason;
+        } else {
+            socketState_->state = NetworkConnectionState::Error;
+            socketState_->error =
+                "Unable to establish a Basilisk session: " + reason;
         }
+        socketState_->closed = true;
+        socketState_->frames.clear();
+        socketState_->sendBinary = {};
+        socketState_->shutdownRequested = true;
     }
 
     void receive(const std::uint8_t* data, std::size_t size, bool text) {
@@ -219,6 +332,7 @@ private:
         }
         network::WireBytes frame(data, data + size);
         std::lock_guard lock(socketState_->mutex);
+        if (socketState_->closed) return;
         socketState_->frames.push_back(std::move(frame));
     }
 
@@ -234,7 +348,7 @@ private:
         return true;
     }
     static bool onError(int, const EmscriptenWebSocketErrorEvent*, void* userData) {
-        static_cast<Impl*>(userData)->fail("Browser WebSocket error.");
+        static_cast<Impl*>(userData)->transportFailed("Browser WebSocket error.");
         return true;
     }
     static bool onClose(
@@ -257,7 +371,7 @@ private:
                 message->str.size(), !message->binary);
             break;
         case ix::WebSocketMessageType::Error:
-            fail("WebSocket error: " + message->errorInfo.reason);
+            transportFailed("WebSocket error: " + message->errorInfo.reason);
             break;
         case ix::WebSocketMessageType::Close:
             closed("WebSocket closed: " + message->closeInfo.reason);
@@ -272,6 +386,7 @@ private:
     std::shared_ptr<WebSocketClientTransport> transport_;
     std::unique_ptr<NetworkGameSessionAdapter> adapter_;
     std::string url_;
+    bool socketStopped_{false};
 };
 
 WebSocketNetworkSession::WebSocketNetworkSession(std::unique_ptr<Impl> impl)
@@ -294,6 +409,7 @@ std::unique_ptr<WebSocketNetworkSession> WebSocketNetworkSession::connect(
 }
 
 void WebSocketNetworkSession::pump() { impl_->pump(); }
+void WebSocketNetworkSession::close() { impl_->stop(); }
 NetworkConnectionState WebSocketNetworkSession::state() const noexcept {
     return impl_->state();
 }

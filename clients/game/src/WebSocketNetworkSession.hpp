@@ -31,6 +31,8 @@ public:
 
     // Process frames on the application's main thread.
     void pump();
+    // Idempotently close the transport and ignore any later callbacks.
+    void close();
     [[nodiscard]] NetworkConnectionState state() const noexcept;
     [[nodiscard]] std::string error() const;
     [[nodiscard]] ClientSessionController* controller() noexcept;
