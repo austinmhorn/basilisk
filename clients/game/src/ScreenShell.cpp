@@ -1289,7 +1289,22 @@ bool drawSidebar(
     }
     y += 146.0F * scale;
 
-    const SDL_FRect actions{x, y, width, 228.0F * scale};
+    const float remainingHeight = std::max(
+        0.0F,
+        sidebar.y + sidebar.h - 18.0F * scale - y);
+    const float waitingSpace =
+        actionSelection.waitingForOtherHunter() ? 13.0F * scale : 0.0F;
+    const float rowsHeight = 37.0F * scale *
+        static_cast<float>(snapshot.availableActions.size());
+    const float desiredHeight = std::max(
+        228.0F * scale,
+        86.0F * scale + waitingSpace + rowsHeight);
+    const SDL_FRect actions{
+        x,
+        y,
+        width,
+        std::min(desiredHeight, remainingHeight),
+    };
     return drawAvailableActions(
         context,
         snapshot,
