@@ -90,11 +90,13 @@ class AuthoritativeInMemoryMatchState {
 public:
     AuthoritativeInMemoryMatchState(
         MatchState match,
-        std::vector<client::PublicPlayerProfile> profiles)
+        std::vector<client::PublicPlayerProfile> profiles,
+        std::optional<TrophyScoringContext> trophyScoring)
         : match_(std::move(match)),
           coordinator_(match_),
           metadata_(PublicMatchMetadataSystem::build(match_)),
-          profiles_(std::move(profiles)) {
+          profiles_(std::move(profiles)),
+          trophyScoring_(std::move(trophyScoring)) {
 
         const PlayerMapView physicalMap = fullPhysicalMap(match_);
         fullLayout_.update(physicalMap);
@@ -166,6 +168,7 @@ public:
         const RoundNumber priorRound = match_.round;
         coordinator_.advanceTime(elapsedMs);
         if (match_.round != priorRound) ++resolvedRoundCount_;
+        recordTrophyEvents(coordinator_.authoritativeEvents());
         refreshContexts();
         publishAll(coordinator_.authoritativeEvents());
     }
@@ -214,6 +217,7 @@ private:
             error = "Coordinator rejected action lock.";
             return false;
         }
+        recordTrophyEvents(coordinator_.authoritativeEvents());
         if (match_.round != priorRound) {
             ++resolvedRoundCount_;
             refreshContexts();
@@ -255,6 +259,7 @@ private:
             return false;
         }
         coordinator_.disconnect(authenticatedPlayer);
+        recordTrophyEvents(coordinator_.authoritativeEvents());
         refreshContexts();
         publishAll(coordinator_.authoritativeEvents());
         error.clear();
@@ -288,6 +293,17 @@ private:
             if (survivor != match_.players.end())
                 context.spectatablePlayer = survivor->id;
         }
+    }
+
+    void recordTrophyEvents(const std::vector<GameEvent>& events) {
+        if (!trophyScoring_.has_value()) return;
+        trophyEvents_.insert(trophyEvents_.end(), events.begin(), events.end());
+        if (match_.result.status != MatchStatus::Completed) return;
+        (void)trophyScoring_->ledger->scoreMatch(
+            trophyScoring_->match,
+            trophyScoring_->accounts,
+            match_.result,
+            trophyEvents_);
     }
 
     void publishAll(const std::vector<GameEvent>& events) {
@@ -334,6 +350,8 @@ private:
     std::map<PlayerId, client::ClientViewContext> viewContexts_;
     std::map<PlayerId, std::weak_ptr<InMemoryMatchEndpoint>> endpoints_;
     std::size_t resolvedRoundCount_{0};
+    std::optional<TrophyScoringContext> trophyScoring_;
+    std::vector<GameEvent> trophyEvents_;
 };
 
 InMemoryMatchEndpoint::InMemoryMatchEndpoint(
@@ -381,7 +399,8 @@ AuthoritativeInMemoryMatch::create(
     MapSeed mapSeed,
     MatchSeed matchSeed,
     std::vector<client::PublicPlayerProfile> profiles,
-    std::string& error) {
+    std::string& error,
+    std::optional<TrophyScoringContext> trophyScoring) {
 
     error.clear();
     MatchState match = MapGenerator::generate(mapSeed, matchSeed);
@@ -402,8 +421,24 @@ AuthoritativeInMemoryMatch::create(
         error = "One public profile is required for each player.";
         return nullptr;
     }
+    if (trophyScoring.has_value()) {
+        if (trophyScoring->match.value.empty() ||
+            trophyScoring->ledger == nullptr ||
+            trophyScoring->accounts.size() != players.size()) {
+            error = "Trophy scoring requires a match ID, ledger, and one account per player.";
+            return nullptr;
+        }
+        std::set<AccountIdentity> uniqueAccounts;
+        for (const auto& [player, account] : trophyScoring->accounts) {
+            if (!players.contains(player) || account.value.empty() ||
+                !uniqueAccounts.insert(account).second) {
+                error = "Trophy accounts must uniquely match authoritative players.";
+                return nullptr;
+            }
+        }
+    }
     auto state = std::make_shared<AuthoritativeInMemoryMatchState>(
-        std::move(match), std::move(profiles));
+        std::move(match), std::move(profiles), std::move(trophyScoring));
     return std::unique_ptr<AuthoritativeInMemoryMatch>(
         new AuthoritativeInMemoryMatch(std::move(state)));
 }

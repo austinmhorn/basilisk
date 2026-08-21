@@ -120,6 +120,7 @@ endif()
 
 add_library(BasiliskAuthoritativeNetworkSession STATIC EXCLUDE_FROM_ALL
     server/AuthoritativeInMemoryMatch.cpp
+    server/TrophyScoring.cpp
 )
 add_library(
     Basilisk::AuthoritativeNetworkSession
