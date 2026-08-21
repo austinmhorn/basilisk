@@ -32,6 +32,7 @@ struct MainMenuGeometry {
     TextRenderer& text,
     const MainMenuState& menu,
     std::optional<std::int64_t> trophyTotal,
+    const std::optional<PublicAccountProfile>& authenticatedProfile,
     const std::optional<network::LeaderboardPageResponse>& leaderboard,
     MainMenuGeometry& geometry,
     int outputWidth,

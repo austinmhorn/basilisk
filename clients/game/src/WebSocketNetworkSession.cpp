@@ -94,11 +94,20 @@ public:
           socketState_(std::make_shared<SharedSocketState>()),
           transport_(std::make_shared<WebSocketClientTransport>(socketState_)),
           url_(authenticatedUrl(std::move(url), token)) {}
+    Impl(std::string url, std::unique_ptr<NativeNetworkRuntime> networkRuntime)
+        : networkRuntime_(std::move(networkRuntime)),
+          socketState_(std::make_shared<SharedSocketState>()),
+          transport_(std::make_shared<WebSocketClientTransport>(socketState_)),
+          url_(std::move(url)), authenticationMode_(true) {}
 #else
     Impl(std::string url, std::string token)
         : socketState_(std::make_shared<SharedSocketState>()),
           transport_(std::make_shared<WebSocketClientTransport>(socketState_)),
           url_(authenticatedUrl(std::move(url), token)) {}
+    explicit Impl(std::string url)
+        : socketState_(std::make_shared<SharedSocketState>()),
+          transport_(std::make_shared<WebSocketClientTransport>(socketState_)),
+          url_(std::move(url)), authenticationMode_(true) {}
 #endif
 
     ~Impl() { stop(); }
@@ -200,6 +209,22 @@ public:
         }
         for (network::WireBytes& frame : frames) {
             std::string decodeError;
+            if (authenticationMode_ && !authenticated_) {
+                network::AuthenticationResponse response;
+                if (!network::decodeAuthenticationResponse(
+                        frame, response, decodeError)) {
+                    fail("Invalid authentication response: " + decodeError);
+                    shutdownSocket();
+                    return;
+                }
+                authenticationResponse_ = std::move(response);
+                awaitingAuthentication_ = false;
+                if (std::holds_alternative<network::AuthenticationSuccess>(
+                        authenticationResponse_->payload)) {
+                    authenticated_ = true;
+                }
+                continue;
+            }
             if (adapter_ == nullptr) {
                 network::ServerBootstrap bootstrap;
                 if (!network::decodeServerBootstrap(frame, bootstrap, decodeError)) {
@@ -308,6 +333,24 @@ public:
         static const std::optional<network::LeaderboardPageResponse> empty;
         return adapter_ == nullptr ? empty : adapter_->leaderboardPage();
     }
+
+    bool authenticate(const network::AuthenticationRequest& request) {
+        network::WireBytes bytes;
+        std::string encodeError;
+        if (!authenticationMode_ || awaitingAuthentication_ || authenticated_ ||
+            !network::encodeWire(request, bytes, encodeError)) return false;
+        std::lock_guard lock(socketState_->mutex);
+        if (socketState_->closed ||
+            socketState_->state != NetworkConnectionState::Connected ||
+            !socketState_->sendBinary || !socketState_->sendBinary(bytes))
+            return false;
+        authenticationResponse_.reset();
+        awaitingAuthentication_ = true;
+        return true;
+    }
+
+    const std::optional<network::AuthenticationResponse>&
+    authenticationResponse() const noexcept { return authenticationResponse_; }
 
 private:
     void fail(std::string message) {
@@ -431,6 +474,10 @@ private:
     std::shared_ptr<WebSocketClientTransport> transport_;
     std::unique_ptr<NetworkGameSessionAdapter> adapter_;
     std::string url_;
+    std::optional<network::AuthenticationResponse> authenticationResponse_;
+    bool authenticationMode_{false};
+    bool awaitingAuthentication_{false};
+    bool authenticated_{false};
     bool socketStopped_{false};
 };
 
@@ -460,6 +507,26 @@ std::unique_ptr<WebSocketNetworkSession> WebSocketNetworkSession::connect(
         new WebSocketNetworkSession(std::move(impl)));
 }
 
+std::unique_ptr<WebSocketNetworkSession>
+WebSocketNetworkSession::connectForAuthentication(
+    std::string url, std::string& error) {
+    if (url.empty()) {
+        error = "--connect requires a non-empty value.";
+        return nullptr;
+    }
+#if defined(_WIN32)
+    auto networkRuntime = NativeNetworkRuntime::acquire(error);
+    if (networkRuntime == nullptr) return nullptr;
+    auto impl = std::make_unique<Impl>(
+        std::move(url), std::move(networkRuntime));
+#else
+    auto impl = std::make_unique<Impl>(std::move(url));
+#endif
+    if (!impl->start(error)) return nullptr;
+    return std::unique_ptr<WebSocketNetworkSession>(
+        new WebSocketNetworkSession(std::move(impl)));
+}
+
 void WebSocketNetworkSession::pump() { impl_->pump(); }
 void WebSocketNetworkSession::close() { impl_->stop(); }
 NetworkConnectionState WebSocketNetworkSession::state() const noexcept {
@@ -480,6 +547,14 @@ bool WebSocketNetworkSession::requestLeaderboard(
 const std::optional<network::LeaderboardPageResponse>&
 WebSocketNetworkSession::leaderboardPage() const noexcept {
     return impl_->leaderboardPage();
+}
+bool WebSocketNetworkSession::authenticate(
+    const network::AuthenticationRequest& request) {
+    return impl_->authenticate(request);
+}
+const std::optional<network::AuthenticationResponse>&
+WebSocketNetworkSession::authenticationResponse() const noexcept {
+    return impl_->authenticationResponse();
 }
 
 } // namespace basilisk::game

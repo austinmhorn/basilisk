@@ -1,10 +1,23 @@
 #include <cassert>
 
 #include "MainMenu.hpp"
+#include "AuthScreen.hpp"
 
 using namespace basilisk::game;
 
 int main() {
+    AuthScreenState auth;
+    assert(auth.mode() == AuthMode::SignIn);
+    auth.append("hunter@example.test");
+    auth.nextField();
+    auth.append("secret");
+    network::AuthenticationRequest authRequest;
+    assert(auth.request(authRequest));
+    assert(std::holds_alternative<network::LoginRequest>(authRequest.payload));
+    auth.setWaiting(false);
+    auth.switchMode();
+    assert(auth.mode() == AuthMode::CreateAccount);
+
     MainMenuState menu;
     assert(menu.page() == MainMenuPage::Main);
     assert(menu.selectedAction() == MainMenuAction::StartGame);

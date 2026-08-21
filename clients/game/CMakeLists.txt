@@ -38,6 +38,7 @@ target_link_libraries(BasiliskGameAssets PUBLIC Basilisk::ClientMetadata)
 target_compile_features(BasiliskGameAssets PUBLIC cxx_std_20)
 
 add_library(BasiliskGameActions STATIC
+    src/AuthScreen.cpp
     src/ActionCommands.cpp
     src/ActionPresentation.cpp
     src/ActionSelection.cpp
@@ -387,6 +388,7 @@ configure_file(
 unset(_font_name)
 
 add_library(BasiliskGameRuntime STATIC
+    src/AuthScreenRenderer.cpp
     src/DemoActionCommandSink.cpp
     src/DemoMap.cpp
     src/DemoSessionCommandSink.cpp

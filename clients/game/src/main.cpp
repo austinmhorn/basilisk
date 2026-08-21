@@ -13,6 +13,8 @@
 #include <utility>
 
 #include "ActionSelection.hpp"
+#include "AuthScreen.hpp"
+#include "AuthScreenRenderer.hpp"
 #include "ClientLifecycle.hpp"
 #include "ClientSessionController.hpp"
 #include "ConnectionStatusPresentation.hpp"
@@ -38,6 +40,7 @@
 namespace {
 
 enum class AppView {
+    Authentication,
     MainMenu,
     Gameplay,
 };
@@ -53,6 +56,10 @@ struct AppState {
     bool autoLockSelectedActions{false};
     std::size_t demoSnapshotStage{0};
     AppView view{AppView::MainMenu};
+    basilisk::game::AuthScreenState authScreen;
+    basilisk::game::AuthScreenGeometry authGeometry;
+    bool authResponseHandled{false};
+    std::optional<basilisk::game::PublicAccountProfile> authenticatedProfile;
     basilisk::game::MainMenuState mainMenu;
     basilisk::game::MainMenuGeometry mainMenuGeometry;
 
@@ -127,6 +134,15 @@ SDL_AppResult handleMainMenuResult(
     return SDL_APP_CONTINUE;
 }
 
+void submitAuthentication(AppState& state) {
+    if (state.networkSession == nullptr || state.authScreen.waiting()) return;
+    basilisk::game::network::AuthenticationRequest request;
+    if (!state.authScreen.request(request)) return;
+    state.authResponseHandled = false;
+    if (!state.networkSession->authenticate(request))
+        state.authScreen.setError("Unable to send authentication request.");
+}
+
 } // namespace
 
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
@@ -153,14 +169,26 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         if (argument == "--connect") connectUrl = argv[++index];
         else connectToken = argv[++index];
     }
-    if (connectUrl.has_value() != connectToken.has_value()) {
-        SDL_Log("--connect and --token must be provided together");
+    if (connectToken.has_value() && !connectUrl.has_value()) {
+        SDL_Log("--token requires --connect");
         return SDL_APP_FAILURE;
     }
+    bool developmentLaunch = false;
+    for (int index = 1; index < argc; ++index) {
+        if (argv != nullptr && argv[index] != nullptr &&
+            (std::string_view{argv[index]} == "--demo-map" ||
+             std::string_view{argv[index]} == "--local-game"))
+            developmentLaunch = true;
+    }
+    if (!developmentLaunch && !connectUrl.has_value())
+        connectUrl = "ws://127.0.0.1:8765";
     if (connectUrl.has_value()) {
         std::string error;
-        state->networkSession = basilisk::game::WebSocketNetworkSession::connect(
-            *connectUrl, *connectToken, error);
+        state->networkSession = connectToken.has_value()
+            ? basilisk::game::WebSocketNetworkSession::connect(
+                *connectUrl, *connectToken, error)
+            : basilisk::game::WebSocketNetworkSession::connectForAuthentication(
+                *connectUrl, error);
         if (state->networkSession == nullptr) {
             SDL_Log("Unable to connect network session: %s", error.c_str());
             return SDL_APP_FAILURE;
@@ -168,11 +196,12 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         state->ownedSession.reset();
         state->session = nullptr;
         state->screenShellEnabled = true;
-        state->view = AppView::Gameplay;
+        state->view = connectToken.has_value()
+            ? AppView::Gameplay : AppView::Authentication;
         SDL_Log("Connecting to Basilisk server at %s", connectUrl->c_str());
     }
 
-    for (int index = connectUrl.has_value() ? argc : 1; index < argc; ++index) {
+    for (int index = 1; index < argc; ++index) {
         if (argv != nullptr && argv[index] != nullptr &&
             std::string_view{argv[index]} == "--demo-map") {
             state->ownedSession =
@@ -261,6 +290,8 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         SDL_Log("SDL_CreateWindowAndRenderer failed: %s", SDL_GetError());
         return SDL_APP_FAILURE;
     }
+    if (state->view == AppView::Authentication)
+        (void)SDL_StartTextInput(state->window);
 
     int logicalWidth = 0;
     int logicalHeight = 0;
@@ -318,6 +349,40 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     auto* state = static_cast<AppState*>(appstate);
     if (event->type == SDL_EVENT_QUIT) {
         return SDL_APP_SUCCESS;
+    }
+
+    if (state != nullptr && state->view == AppView::Authentication) {
+        if (event->type == SDL_EVENT_TEXT_INPUT) {
+            state->authScreen.append(event->text.text);
+            return SDL_APP_CONTINUE;
+        }
+        if (event->type == SDL_EVENT_KEY_DOWN && !event->key.repeat) {
+            if (event->key.key == SDLK_BACKSPACE) state->authScreen.backspace();
+            else if (event->key.key == SDLK_TAB) state->authScreen.nextField();
+            else if (event->key.key == SDLK_RETURN ||
+                     event->key.key == SDLK_KP_ENTER) submitAuthentication(*state);
+            else if (event->key.key == SDLK_ESCAPE) return SDL_APP_SUCCESS;
+            return SDL_APP_CONTINUE;
+        }
+        if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+            event->button.button == SDL_BUTTON_LEFT) {
+            if (!SDL_ConvertEventToRenderCoordinates(state->renderer, event))
+                return SDL_APP_FAILURE;
+            const basilisk::game::PresentationPoint point{
+                event->button.x, event->button.y};
+            for (const auto& field : state->authGeometry.fields) {
+                if (basilisk::game::hitTest(field.bounds, point)) {
+                    state->authScreen.focus(field.field);
+                    return SDL_APP_CONTINUE;
+                }
+            }
+            if (basilisk::game::hitTest(state->authGeometry.submit, point))
+                submitAuthentication(*state);
+            else if (basilisk::game::hitTest(
+                         state->authGeometry.switchMode, point))
+                state->authScreen.switchMode();
+        }
+        return SDL_APP_CONTINUE;
     }
 
     if (state != nullptr && state->view == AppView::MainMenu) {
@@ -764,6 +829,25 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
     if (state->networkSession != nullptr) {
         state->networkSession->pump();
         state->session = state->networkSession->controller();
+        if (state->view == AppView::Authentication &&
+            !state->authResponseHandled &&
+            state->networkSession->authenticationResponse().has_value()) {
+            state->authResponseHandled = true;
+            const auto& response =
+                *state->networkSession->authenticationResponse();
+            if (const auto* success = std::get_if<
+                    basilisk::game::network::AuthenticationSuccess>(
+                        &response.payload)) {
+                state->authenticatedProfile = success->profile;
+                state->authScreen.setWaiting(false);
+                state->view = AppView::MainMenu;
+                (void)SDL_StopTextInput(state->window);
+            } else if (const auto* failure = std::get_if<
+                    basilisk::game::network::AuthenticationFailure>(
+                        &response.payload)) {
+                state->authScreen.setError(failure->message);
+            }
+        }
         if (!state->networkFailureLogged &&
             (state->networkSession->state() ==
                  basilisk::game::NetworkConnectionState::Error ||
@@ -771,6 +855,8 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                  basilisk::game::NetworkConnectionState::Disconnected)) {
             SDL_Log("Network session ended: %s",
                 state->networkSession->error().c_str());
+            if (state->view == AppView::Authentication)
+                state->authScreen.setError(state->networkSession->error());
             state->networkFailureLogged = true;
         }
     }
@@ -782,7 +868,15 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
     int outputWidth = 0;
     int outputHeight = 0;
     if (SDL_GetRenderOutputSize(state->renderer, &outputWidth, &outputHeight)) {
-        if (state->view == AppView::MainMenu) {
+        if (state->view == AppView::Authentication) {
+            std::string authError;
+            if (!basilisk::game::renderAuthScreen(
+                    state->renderer, *state->textRenderer, state->authScreen,
+                    state->authGeometry, outputWidth, outputHeight, authError)) {
+                SDL_Log("Authentication rendering failed: %s", authError.c_str());
+                return SDL_APP_FAILURE;
+            }
+        } else if (state->view == AppView::MainMenu) {
             std::string menuError;
             const std::optional<std::int64_t> trophies =
                 state->networkSession == nullptr || state->session == nullptr
@@ -799,6 +893,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     *state->textRenderer,
                     state->mainMenu,
                     trophies,
+                    state->authenticatedProfile,
                     leaderboard,
                     state->mainMenuGeometry,
                     outputWidth,

@@ -77,6 +77,7 @@ bool renderMainMenu(
     TextRenderer& text,
     const MainMenuState& menu,
     std::optional<std::int64_t> trophyTotal,
+    const std::optional<PublicAccountProfile>& authenticatedProfile,
     const std::optional<network::LeaderboardPageResponse>& leaderboard,
     MainMenuGeometry& geometry,
     int outputWidth,
@@ -109,6 +110,14 @@ bool renderMainMenu(
         !label(text, pageTitle(menu.page()), FontWeight::SemiBold,
             static_cast<float>(17.0 * scale), ui::Theme::text,
             left, shell.y + 125.0 * scale, error)) return false;
+    if (authenticatedProfile.has_value()) {
+        const std::string identity = authenticatedProfile->displayName +
+            "  @" + authenticatedProfile->handle.value;
+        if (!label(text, identity, FontWeight::Medium,
+                static_cast<float>(10.0 * scale), ui::Theme::mutedBright,
+                shell.x + shell.width - 300.0 * scale,
+                shell.y + 50.0 * scale, error)) return false;
+    }
 
     geometry.buttons.clear();
     double buttonY = shell.y + 180.0 * scale;

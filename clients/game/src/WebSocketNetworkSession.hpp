@@ -24,6 +24,8 @@ public:
         std::string url,
         std::string token,
         std::string& error);
+    [[nodiscard]] static std::unique_ptr<WebSocketNetworkSession>
+    connectForAuthentication(std::string url, std::string& error);
 
     ~WebSocketNetworkSession();
     WebSocketNetworkSession(WebSocketNetworkSession&&) noexcept;
@@ -44,6 +46,9 @@ public:
         std::uint32_t limit);
     [[nodiscard]] const std::optional<network::LeaderboardPageResponse>&
     leaderboardPage() const noexcept;
+    [[nodiscard]] bool authenticate(const network::AuthenticationRequest& request);
+    [[nodiscard]] const std::optional<network::AuthenticationResponse>&
+    authenticationResponse() const noexcept;
 
 private:
     class Impl;
