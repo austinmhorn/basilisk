@@ -31,6 +31,8 @@ constexpr std::array hostLobbyActions{
 constexpr std::array joinLobbyActions{
     MainMenuAction::SubmitLobbyCode, MainMenuAction::Back};
 constexpr std::array matchReadyActions{MainMenuAction::Back};
+constexpr std::array findMatchActions{
+    MainMenuAction::CancelFindMatch, MainMenuAction::Back};
 
 } // namespace
 
@@ -45,6 +47,7 @@ std::span<const MainMenuAction> MainMenuState::actions() const noexcept {
         case MainMenuPage::HostLobby: return hostLobbyActions;
         case MainMenuPage::JoinLobby: return joinLobbyActions;
         case MainMenuPage::MatchReady: return matchReadyActions;
+        case MainMenuPage::FindMatch: return findMatchActions;
     }
     return mainActions;
 }
@@ -98,8 +101,11 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
         case MainMenuAction::Back:
             if (page_ == MainMenuPage::HostLobby && lobbyWaiting_)
                 return MainMenuResult::RequestCancelLobby;
+            if (page_ == MainMenuPage::FindMatch && lobbyWaiting_)
+                return MainMenuResult::RequestCancelFindMatch;
             setPage(page_ == MainMenuPage::JoinLobby ||
-                    page_ == MainMenuPage::MatchReady
+                    page_ == MainMenuPage::MatchReady ||
+                    page_ == MainMenuPage::FindMatch
                 ? MainMenuPage::StartGame : MainMenuPage::Main);
             break;
         case MainMenuAction::PreviousPage:
@@ -114,7 +120,9 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
         case MainMenuAction::Logout:
             return MainMenuResult::Logout;
         case MainMenuAction::FindGame:
-            break;
+            lobbyCode_.clear(); lobbyError_.clear(); lobbyWaiting_ = true;
+            setPage(MainMenuPage::FindMatch);
+            return MainMenuResult::RequestFindMatch;
         case MainMenuAction::HostGame:
             lobbyCode_.clear();
             lobbyError_.clear();
@@ -137,6 +145,8 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
             return MainMenuResult::RequestJoinLobby;
         case MainMenuAction::CancelLobby:
             return MainMenuResult::RequestCancelLobby;
+        case MainMenuAction::CancelFindMatch:
+            return MainMenuResult::RequestCancelFindMatch;
     }
     return MainMenuResult::None;
 }
@@ -144,9 +154,12 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
 MainMenuResult MainMenuState::back() noexcept {
     if (page_ == MainMenuPage::HostLobby && lobbyWaiting_)
         return MainMenuResult::RequestCancelLobby;
+    if (page_ == MainMenuPage::FindMatch && lobbyWaiting_)
+        return MainMenuResult::RequestCancelFindMatch;
     if (page_ != MainMenuPage::Main)
         setPage(page_ == MainMenuPage::JoinLobby ||
-                page_ == MainMenuPage::MatchReady
+                page_ == MainMenuPage::MatchReady ||
+                page_ == MainMenuPage::FindMatch
             ? MainMenuPage::StartGame : MainMenuPage::Main);
     return MainMenuResult::None;
 }
@@ -181,6 +194,10 @@ void MainMenuState::lobbyCancelled() {
 void MainMenuState::lobbyFailed(std::string error) {
     lobbyWaiting_ = false;
     lobbyError_ = std::move(error);
+}
+void MainMenuState::matchmakingCancelled() {
+    lobbyCode_.clear(); lobbyError_.clear(); lobbyWaiting_ = false;
+    setPage(MainMenuPage::StartGame);
 }
 
 void MainMenuState::setPage(MainMenuPage page) noexcept {

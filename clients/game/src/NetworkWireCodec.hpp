@@ -22,6 +22,8 @@ enum class WireMessageType : std::uint8_t {
     LobbyMatchAssigned = 8,
     LobbyCancelled = 9,
     LobbyFailure = 10,
+    MatchmakingQueued = 11,
+    MatchmakingCancelled = 12,
     SubmitAction = 16,
     LockAction = 17,
     WatchRemainingHunter = 18,
@@ -34,6 +36,8 @@ enum class WireMessageType : std::uint8_t {
     HostLobby = 36,
     JoinLobby = 37,
     CancelHostedLobby = 38,
+    FindMatch = 39,
+    CancelFindMatch = 40,
 };
 
 [[nodiscard]] bool inspectWireMessageType(

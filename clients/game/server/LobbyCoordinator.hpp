@@ -1,8 +1,10 @@
 #pragma once
 
 #include <functional>
+#include <deque>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -39,6 +41,12 @@ public:
         std::string& error);
     // Connection cleanup: cancel any lobby still waiting for this host.
     void cancelHostedBy(const AccountIdentity& account);
+    [[nodiscard]] bool findMatch(
+        const AccountIdentity& account,
+        std::optional<LobbyMatchAssignment>& assignment,
+        std::string& error);
+    [[nodiscard]] bool cancelFindMatch(
+        const AccountIdentity& account, std::string& error);
 
 private:
     [[nodiscard]] std::string generateCode();
@@ -47,6 +55,8 @@ private:
     std::map<LobbyCode, AccountIdentity> waiting_;
     std::set<LobbyCode> consumed_;
     std::set<AccountIdentity> waitingHosts_;
+    std::deque<AccountIdentity> matchmakingQueue_;
+    std::set<AccountIdentity> queuedAccounts_;
     std::mutex mutex_;
 };
 

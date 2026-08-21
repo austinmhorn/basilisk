@@ -70,4 +70,22 @@ int main() {
     assert(deliveries.size() == 1);
     assert(network::decodeLobbyResponse(deliveries[0].bytes, response, error));
     assert(std::holds_alternative<network::LobbyFailure>(response.payload));
+
+    LobbyCoordinator matchmaking{[] { return std::string{"FIFO12"}; }};
+    LobbyProtocolService matchmakingProtocol{matchmaking};
+    assert(network::encodeWire(network::LobbyRequest{
+        network::kProtocolVersion, network::FindMatchRequest{}}, request, error));
+    assert(matchmakingProtocol.process(host, request, deliveries, error));
+    assert(deliveries.size() == 1);
+    assert(network::decodeLobbyResponse(deliveries[0].bytes, response, error));
+    assert(std::holds_alternative<network::MatchmakingQueued>(response.payload));
+    assert(matchmakingProtocol.process(guest, request, deliveries, error));
+    assert(deliveries.size() == 2);
+    assert(deliveries[0].recipient == host && deliveries[1].recipient == guest);
+    assert(network::decodeLobbyResponse(deliveries[0].bytes, response, error));
+    assert(std::get<network::LobbyMatchAssigned>(response.payload).role ==
+           network::LobbyAssignmentRole::Host);
+    assert(network::decodeLobbyResponse(deliveries[1].bytes, response, error));
+    assert(std::get<network::LobbyMatchAssigned>(response.payload).role ==
+           network::LobbyAssignmentRole::Guest);
 }

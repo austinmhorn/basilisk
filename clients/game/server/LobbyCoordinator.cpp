@@ -1,5 +1,6 @@
 #include "LobbyCoordinator.hpp"
 
+#include <algorithm>
 #include <array>
 #include <random>
 #include <utility>
@@ -102,6 +103,63 @@ void LobbyCoordinator::cancelHostedBy(const AccountIdentity& account) {
         waitingHosts_.erase(account);
         return;
     }
+}
+
+bool LobbyCoordinator::findMatch(
+    const AccountIdentity& account,
+    std::optional<LobbyMatchAssignment>& assignment,
+    std::string& error) {
+    if (account.value.empty()) {
+        error = "An authenticated account is required.";
+        return false;
+    }
+    std::lock_guard lock(mutex_);
+    if (queuedAccounts_.contains(account)) {
+        error = "Account is already queued for matchmaking.";
+        return false;
+    }
+    assignment.reset();
+    if (matchmakingQueue_.empty()) {
+        matchmakingQueue_.push_back(account);
+        queuedAccounts_.insert(account);
+        error.clear();
+        return true;
+    }
+    const AccountIdentity first = matchmakingQueue_.front();
+    matchmakingQueue_.pop_front();
+    queuedAccounts_.erase(first);
+    LobbyCode matchCode;
+    for (int attempt = 0; attempt < 128; ++attempt) {
+        LobbyCode candidate{generateCode()};
+        if (candidate.value.empty() || waiting_.contains(candidate) ||
+            consumed_.contains(candidate)) continue;
+        matchCode = std::move(candidate);
+        consumed_.insert(matchCode);
+        break;
+    }
+    if (matchCode.value.empty()) {
+        matchmakingQueue_.push_front(first);
+        queuedAccounts_.insert(first);
+        error = "Unable to allocate a matchmaking assignment.";
+        return false;
+    }
+    assignment = LobbyMatchAssignment{std::move(matchCode), first, account};
+    error.clear();
+    return true;
+}
+
+bool LobbyCoordinator::cancelFindMatch(
+    const AccountIdentity& account, std::string& error) {
+    std::lock_guard lock(mutex_);
+    if (!queuedAccounts_.erase(account)) {
+        error = "Account is not queued for matchmaking.";
+        return false;
+    }
+    const auto found = std::find(
+        matchmakingQueue_.begin(), matchmakingQueue_.end(), account);
+    if (found != matchmakingQueue_.end()) matchmakingQueue_.erase(found);
+    error.clear();
+    return true;
 }
 
 std::string LobbyCoordinator::generateCode() { return codeGenerator_(); }

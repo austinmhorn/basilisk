@@ -42,13 +42,36 @@ bool LobbyProtocolService::process(
                        network::LobbyMatchAssigned{
                            assignment.lobby.value,
                            network::LobbyAssignmentRole::Guest}});
-        } else {
+        } else if constexpr (
+            std::is_same_v<T, network::CancelHostedLobbyRequest>) {
             if (!coordinator_.cancel(
                     account, LobbyCode{payload.lobbyCode}, error))
                 return deliver(account, {network::kProtocolVersion,
                     network::LobbyFailure{error}});
             return deliver(account, {network::kProtocolVersion,
                 network::LobbyCancelled{payload.lobbyCode}});
+        } else if constexpr (std::is_same_v<T, network::FindMatchRequest>) {
+            std::optional<LobbyMatchAssignment> assignment;
+            if (!coordinator_.findMatch(account, assignment, error))
+                return deliver(account, {network::kProtocolVersion,
+                    network::LobbyFailure{error}});
+            if (!assignment.has_value())
+                return deliver(account, {network::kProtocolVersion,
+                    network::MatchmakingQueued{}});
+            return deliver(assignment->host, {network::kProtocolVersion,
+                       network::LobbyMatchAssigned{
+                           assignment->lobby.value,
+                           network::LobbyAssignmentRole::Host}}) &&
+                   deliver(assignment->guest, {network::kProtocolVersion,
+                       network::LobbyMatchAssigned{
+                           assignment->lobby.value,
+                           network::LobbyAssignmentRole::Guest}});
+        } else {
+            if (!coordinator_.cancelFindMatch(account, error))
+                return deliver(account, {network::kProtocolVersion,
+                    network::LobbyFailure{error}});
+            return deliver(account, {network::kProtocolVersion,
+                network::MatchmakingCancelled{}});
         }
     }, request.payload);
 }

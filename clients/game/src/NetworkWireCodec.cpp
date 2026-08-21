@@ -766,6 +766,8 @@ bool readHeader(
         case WireMessageType::LobbyMatchAssigned:
         case WireMessageType::LobbyCancelled:
         case WireMessageType::LobbyFailure:
+        case WireMessageType::MatchmakingQueued:
+        case WireMessageType::MatchmakingCancelled:
         case WireMessageType::SubmitAction:
         case WireMessageType::LockAction:
         case WireMessageType::WatchRemainingHunter:
@@ -778,6 +780,8 @@ bool readHeader(
         case WireMessageType::HostLobby:
         case WireMessageType::JoinLobby:
         case WireMessageType::CancelHostedLobby:
+        case WireMessageType::FindMatch:
+        case WireMessageType::CancelFindMatch:
             break;
         default:
             return reader.fail("Unknown wire message type.");
@@ -841,6 +845,8 @@ bool inspectWireMessageType(
         case WireMessageType::LobbyMatchAssigned:
         case WireMessageType::LobbyCancelled:
         case WireMessageType::LobbyFailure:
+        case WireMessageType::MatchmakingQueued:
+        case WireMessageType::MatchmakingCancelled:
         case WireMessageType::SubmitAction:
         case WireMessageType::LockAction:
         case WireMessageType::WatchRemainingHunter:
@@ -853,6 +859,8 @@ bool inspectWireMessageType(
         case WireMessageType::HostLobby:
         case WireMessageType::JoinLobby:
         case WireMessageType::CancelHostedLobby:
+        case WireMessageType::FindMatch:
+        case WireMessageType::CancelFindMatch:
             type = candidate;
             return true;
     }
@@ -1045,12 +1053,18 @@ bool encodeWire(const LobbyRequest& message, WireBytes& bytes, std::string& erro
             return WireMessageType::HostLobby;
         if constexpr (std::is_same_v<T, JoinLobbyRequest>)
             return WireMessageType::JoinLobby;
-        return WireMessageType::CancelHostedLobby;
+        if constexpr (std::is_same_v<T, CancelHostedLobbyRequest>)
+            return WireMessageType::CancelHostedLobby;
+        if constexpr (std::is_same_v<T, FindMatchRequest>)
+            return WireMessageType::FindMatch;
+        return WireMessageType::CancelFindMatch;
     }, message.payload);
     writeHeader(writer, type, message.protocolVersion);
     const bool written = std::visit([&](const auto& request) {
         using T = std::decay_t<decltype(request)>;
-        if constexpr (std::is_same_v<T, HostLobbyRequest>) return true;
+        if constexpr (std::is_same_v<T, HostLobbyRequest> ||
+                      std::is_same_v<T, FindMatchRequest> ||
+                      std::is_same_v<T, CancelFindMatchRequest>) return true;
         else return !request.lobbyCode.empty() && writer.string(request.lobbyCode);
     }, message.payload);
     if (!written || !writer.finish()) return false;
@@ -1067,6 +1081,8 @@ bool encodeWire(const LobbyResponse& message, WireBytes& bytes, std::string& err
         if constexpr (std::is_same_v<T, LobbyHosted>) return WireMessageType::LobbyHosted;
         if constexpr (std::is_same_v<T, LobbyMatchAssigned>) return WireMessageType::LobbyMatchAssigned;
         if constexpr (std::is_same_v<T, LobbyCancelled>) return WireMessageType::LobbyCancelled;
+        if constexpr (std::is_same_v<T, MatchmakingQueued>) return WireMessageType::MatchmakingQueued;
+        if constexpr (std::is_same_v<T, MatchmakingCancelled>) return WireMessageType::MatchmakingCancelled;
         return WireMessageType::LobbyFailure;
     }, message.payload);
     writeHeader(writer, type, message.protocolVersion);
@@ -1079,8 +1095,11 @@ bool encodeWire(const LobbyResponse& message, WireBytes& bytes, std::string& err
             return true;
         } else if constexpr (std::is_same_v<T, LobbyFailure>) {
             return !response.message.empty() && writer.string(response.message);
-        } else {
+        } else if constexpr (std::is_same_v<T, LobbyHosted> ||
+                             std::is_same_v<T, LobbyCancelled>) {
             return !response.lobbyCode.empty() && writer.string(response.lobbyCode);
+        } else {
+            return true;
         }
     }, message.payload);
     if (!written || !writer.finish()) return false;
@@ -1347,12 +1366,17 @@ bool decodeLobbyRequest(std::span<const std::uint8_t> bytes,
     WireMessageType type{};
     if (!inspectWireMessageType(bytes, type, error)) return false;
     if (type != WireMessageType::HostLobby && type != WireMessageType::JoinLobby &&
-        type != WireMessageType::CancelHostedLobby)
+        type != WireMessageType::CancelHostedLobby &&
+        type != WireMessageType::FindMatch &&
+        type != WireMessageType::CancelFindMatch)
         return (error = "Unexpected wire message type."), false;
     Reader reader(bytes, error);
     LobbyRequest decoded;
     if (!readHeader(reader, type, decoded.protocolVersion)) return false;
     if (type == WireMessageType::HostLobby) decoded.payload = HostLobbyRequest{};
+    else if (type == WireMessageType::FindMatch) decoded.payload = FindMatchRequest{};
+    else if (type == WireMessageType::CancelFindMatch)
+        decoded.payload = CancelFindMatchRequest{};
     else {
         std::string code;
         if (!reader.string(code) || code.empty())
@@ -1373,11 +1397,22 @@ bool decodeLobbyResponse(std::span<const std::uint8_t> bytes,
     if (type != WireMessageType::LobbyHosted &&
         type != WireMessageType::LobbyMatchAssigned &&
         type != WireMessageType::LobbyCancelled &&
-        type != WireMessageType::LobbyFailure)
+        type != WireMessageType::LobbyFailure &&
+        type != WireMessageType::MatchmakingQueued &&
+        type != WireMessageType::MatchmakingCancelled)
         return (error = "Unexpected wire message type."), false;
     Reader reader(bytes, error);
     LobbyResponse decoded;
     if (!readHeader(reader, type, decoded.protocolVersion)) return false;
+    if (type == WireMessageType::MatchmakingQueued ||
+        type == WireMessageType::MatchmakingCancelled) {
+        decoded.payload = type == WireMessageType::MatchmakingQueued
+            ? LobbyResponsePayload{MatchmakingQueued{}}
+            : LobbyResponsePayload{MatchmakingCancelled{}};
+        if (!finishRead(reader)) return false;
+        message = std::move(decoded);
+        return true;
+    }
     std::string value;
     if (!reader.string(value) || value.empty()) return reader.fail("Invalid lobby response.");
     if (type == WireMessageType::LobbyHosted) decoded.payload = LobbyHosted{std::move(value)};

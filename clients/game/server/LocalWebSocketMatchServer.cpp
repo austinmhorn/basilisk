@@ -296,6 +296,10 @@ private:
             (void)socket.sendBinary(payload);
             if (found->second.account.has_value())
                 lobbies_.cancelHostedBy(*found->second.account);
+            if (found->second.account.has_value()) {
+                std::string ignored;
+                (void)lobbies_.cancelFindMatch(*found->second.account, ignored);
+            }
             usedPlayers_.erase(found->second.player);
             disconnectClient(found->second);
             clients_.erase(found);
@@ -307,7 +311,9 @@ private:
             network::inspectWireMessageType(bytes, type, error) &&
             (type == network::WireMessageType::HostLobby ||
              type == network::WireMessageType::JoinLobby ||
-             type == network::WireMessageType::CancelHostedLobby)) {
+             type == network::WireMessageType::CancelHostedLobby ||
+             type == network::WireMessageType::FindMatch ||
+             type == network::WireMessageType::CancelFindMatch)) {
             std::vector<LobbyProtocolDelivery> deliveries;
             if (!lobbyProtocol_.process(
                     *found->second.account, bytes, deliveries, error)) {
@@ -332,6 +338,8 @@ private:
                          const ix::WebSocketMessage& message) {
         if (!message.binary || message.str.size() > kMaximumFrameBytes) {
             lobbies_.cancelHostedBy(account);
+            std::string ignored;
+            (void)lobbies_.cancelFindMatch(account, ignored);
             authenticatedPreMatch_.erase(&socket);
             socket.close(message.binary ? 1009 : 1003,
                 message.binary ? "Frame exceeds 1 MiB limit" : "Binary frames required");
@@ -361,7 +369,9 @@ private:
         }
         if (type != network::WireMessageType::HostLobby &&
             type != network::WireMessageType::JoinLobby &&
-            type != network::WireMessageType::CancelHostedLobby) {
+            type != network::WireMessageType::CancelHostedLobby &&
+            type != network::WireMessageType::FindMatch &&
+            type != network::WireMessageType::CancelFindMatch) {
             socket.close(1008, "Unexpected pre-match message type");
             return;
         }
@@ -467,12 +477,18 @@ private:
         const auto preMatch = authenticatedPreMatch_.find(&socket);
         if (preMatch != authenticatedPreMatch_.end()) {
             lobbies_.cancelHostedBy(preMatch->second);
+            std::string ignored;
+            (void)lobbies_.cancelFindMatch(preMatch->second, ignored);
             authenticatedPreMatch_.erase(preMatch);
         }
         const auto found = clients_.find(&socket);
         if (found == clients_.end()) return;
         if (found->second.account.has_value())
             lobbies_.cancelHostedBy(*found->second.account);
+        if (found->second.account.has_value()) {
+            std::string ignored;
+            (void)lobbies_.cancelFindMatch(*found->second.account, ignored);
+        }
         disconnectClient(found->second);
         clients_.erase(found);
         drainAll();

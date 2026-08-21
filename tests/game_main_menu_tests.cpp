@@ -25,7 +25,12 @@ int main() {
     assert(menu.activateSelected() == MainMenuResult::None);
     assert(menu.page() == MainMenuPage::StartGame);
     assert(menu.actions().size() == 4);
-    assert(menu.activate(MainMenuAction::FindGame) == MainMenuResult::None);
+    assert(menu.activate(MainMenuAction::FindGame) ==
+           MainMenuResult::RequestFindMatch);
+    assert(menu.page() == MainMenuPage::FindMatch);
+    assert(menu.activate(MainMenuAction::CancelFindMatch) ==
+           MainMenuResult::RequestCancelFindMatch);
+    menu.matchmakingCancelled();
     assert(menu.page() == MainMenuPage::StartGame);
     assert(menu.activate(MainMenuAction::HostGame) ==
            MainMenuResult::RequestHostLobby);

@@ -15,6 +15,7 @@ enum class MainMenuPage {
     HostLobby,
     JoinLobby,
     MatchReady,
+    FindMatch,
 };
 
 enum class MainMenuAction {
@@ -30,6 +31,7 @@ enum class MainMenuAction {
     NextPage,
     SubmitLobbyCode,
     CancelLobby,
+    CancelFindMatch,
     Logout,
 };
 
@@ -40,6 +42,8 @@ enum class MainMenuResult {
     RequestHostLobby,
     RequestJoinLobby,
     RequestCancelLobby,
+    RequestFindMatch,
+    RequestCancelFindMatch,
     Logout,
 };
 
@@ -67,6 +71,7 @@ public:
     void lobbyAssigned(std::string code);
     void lobbyCancelled();
     void lobbyFailed(std::string error);
+    void matchmakingCancelled();
 
 private:
     void setPage(MainMenuPage page) noexcept;

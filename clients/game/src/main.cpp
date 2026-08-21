@@ -185,6 +185,20 @@ SDL_AppResult handleMainMenuResult(
                 state.mainMenu.lobbyFailed("Unable to cancel lobby.");
         }
     }
+    if (result == basilisk::game::MainMenuResult::RequestFindMatch &&
+        state.networkSession != nullptr) {
+        if (!state.networkSession->requestLobby({
+                basilisk::game::network::kProtocolVersion,
+                basilisk::game::network::FindMatchRequest{}}))
+            state.mainMenu.lobbyFailed("Unable to enter matchmaking.");
+    }
+    if (result == basilisk::game::MainMenuResult::RequestCancelFindMatch &&
+        state.networkSession != nullptr) {
+        if (!state.networkSession->requestLobby({
+                basilisk::game::network::kProtocolVersion,
+                basilisk::game::network::CancelFindMatchRequest{}}))
+            state.mainMenu.lobbyFailed("Unable to cancel matchmaking.");
+    }
     return SDL_APP_CONTINUE;
 }
 
@@ -926,6 +940,14 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                            basilisk::game::network::LobbyCancelled>(
                                response.payload)) {
                 state->mainMenu.lobbyCancelled();
+            } else if (std::holds_alternative<
+                           basilisk::game::network::MatchmakingQueued>(
+                               response.payload)) {
+                // The menu is already showing its FIFO waiting state.
+            } else if (std::holds_alternative<
+                           basilisk::game::network::MatchmakingCancelled>(
+                               response.payload)) {
+                state->mainMenu.matchmakingCancelled();
             } else if (const auto* failure = std::get_if<
                     basilisk::game::network::LobbyFailure>(
                         &response.payload)) {

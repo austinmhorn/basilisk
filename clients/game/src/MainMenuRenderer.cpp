@@ -50,6 +50,7 @@ std::string_view actionLabel(MainMenuAction action) {
         case MainMenuAction::Logout: return "LOG OUT";
         case MainMenuAction::SubmitLobbyCode: return "JOIN";
         case MainMenuAction::CancelLobby: return "CANCEL";
+        case MainMenuAction::CancelFindMatch: return "CANCEL";
     }
     return {};
 }
@@ -63,6 +64,7 @@ std::string_view pageTitle(MainMenuPage page) {
         case MainMenuPage::HostLobby: return "HOST GAME";
         case MainMenuPage::JoinLobby: return "JOIN GAME";
         case MainMenuPage::MatchReady: return "MATCH READY";
+        case MainMenuPage::FindMatch: return "FIND GAME";
     }
     return {};
 }
@@ -221,6 +223,14 @@ bool renderMainMenu(
                 static_cast<float>(11.0 * scale), ui::Theme::mutedBright,
                 left, buttonY + 78.0 * scale, error)) return false;
         buttonY += 126.0 * scale;
+    } else if (menu.page() == MainMenuPage::FindMatch) {
+        if (!label(text, "Searching for another hunter...", FontWeight::Medium,
+                static_cast<float>(15.0 * scale), ui::Theme::text,
+                left, buttonY, error) ||
+            !label(text, "Waiting in matchmaking queue.", FontWeight::Regular,
+                static_cast<float>(11.0 * scale), ui::Theme::mutedBright,
+                left, buttonY + 38.0 * scale, error)) return false;
+        buttonY += 100.0 * scale;
     }
 
     const auto actions = menu.actions();

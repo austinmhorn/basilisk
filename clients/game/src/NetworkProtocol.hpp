@@ -64,8 +64,11 @@ struct AuthenticationResponse {
 struct HostLobbyRequest {};
 struct JoinLobbyRequest { std::string lobbyCode; };
 struct CancelHostedLobbyRequest { std::string lobbyCode; };
+struct FindMatchRequest {};
+struct CancelFindMatchRequest {};
 using LobbyRequestPayload = std::variant<
-    HostLobbyRequest, JoinLobbyRequest, CancelHostedLobbyRequest>;
+    HostLobbyRequest, JoinLobbyRequest, CancelHostedLobbyRequest,
+    FindMatchRequest, CancelFindMatchRequest>;
 struct LobbyRequest {
     std::uint32_t protocolVersion{kProtocolVersion};
     LobbyRequestPayload payload;
@@ -79,8 +82,11 @@ struct LobbyMatchAssigned {
 };
 struct LobbyCancelled { std::string lobbyCode; };
 struct LobbyFailure { std::string message; };
+struct MatchmakingQueued {};
+struct MatchmakingCancelled {};
 using LobbyResponsePayload = std::variant<
-    LobbyHosted, LobbyMatchAssigned, LobbyCancelled, LobbyFailure>;
+    LobbyHosted, LobbyMatchAssigned, LobbyCancelled, LobbyFailure,
+    MatchmakingQueued, MatchmakingCancelled>;
 struct LobbyResponse {
     std::uint32_t protocolVersion{kProtocolVersion};
     LobbyResponsePayload payload;
