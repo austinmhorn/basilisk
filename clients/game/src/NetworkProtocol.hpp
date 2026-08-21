@@ -14,7 +14,7 @@
 
 namespace basilisk::game::network {
 
-inline constexpr std::uint32_t kProtocolVersion{1};
+inline constexpr std::uint32_t kProtocolVersion{2};
 
 // Initial player-safe state supplied after an online session is established.
 struct ServerBootstrap {
@@ -24,6 +24,8 @@ struct ServerBootstrap {
     client::ClientViewContext viewContext;
     PlayerRoundSnapshot initialSnapshot;
     PlayerFixedMapGeometry initialMapGeometry;
+    // Read-only, connection-bound total supplied by the authoritative server.
+    std::int64_t trophyTotal{};
 };
 
 // A complete player-safe snapshot update. View context is present only when
@@ -33,6 +35,8 @@ struct ServerUpdate {
     PlayerRoundSnapshot snapshot;
     PlayerFixedMapGeometry mapGeometry;
     std::optional<client::ClientViewContext> viewContext;
+    // Refreshed from server persistence; clients never calculate or mutate it.
+    std::int64_t trophyTotal{};
 };
 
 struct SubmitActionCommand {

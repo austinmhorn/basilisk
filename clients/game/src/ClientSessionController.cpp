@@ -29,9 +29,17 @@ const client::ClientViewContext& ClientSessionController::viewContext() const no
     return viewContext_;
 }
 
+std::int64_t ClientSessionController::trophyTotal() const noexcept {
+    return trophyTotal_;
+}
+
 void ClientSessionController::setViewContext(
     client::ClientViewContext viewContext) noexcept {
     viewContext_ = viewContext;
+}
+
+void ClientSessionController::setTrophyTotal(std::int64_t trophyTotal) noexcept {
+    trophyTotal_ = trophyTotal;
 }
 
 bool ClientSessionController::ingestSnapshot(PlayerRoundSnapshot snapshot) {

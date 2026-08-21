@@ -52,6 +52,10 @@ public:
         u32(static_cast<std::uint32_t>(static_cast<std::int32_t>(value)));
     }
 
+    void i64(std::int64_t value) {
+        u64(std::bit_cast<std::uint64_t>(value));
+    }
+
     void u64(std::uint64_t value) {
         for (int shift = 56; shift >= 0; shift -= 8)
             u8(static_cast<std::uint8_t>(value >> shift));
@@ -137,6 +141,13 @@ public:
             decoded > std::numeric_limits<int>::max())
             return fail("Integer is outside host range.");
         value = static_cast<int>(decoded);
+        return true;
+    }
+
+    bool i64(std::int64_t& value) {
+        std::uint64_t encoded{};
+        if (!u64(encoded)) return false;
+        value = std::bit_cast<std::int64_t>(encoded);
         return true;
     }
 
@@ -753,6 +764,7 @@ bool encodeWire(
         !writeViewContext(writer, message.viewContext) ||
         !writeSnapshot(writer, message.initialSnapshot) ||
         !writeGeometry(writer, message.initialMapGeometry)) return false;
+    writer.i64(message.trophyTotal);
     if (!writer.finish()) return false;
     ServerBootstrap validated;
     return decodeServerBootstrap(bytes, validated, error);
@@ -773,6 +785,7 @@ bool encodeWire(
             [&](const client::ClientViewContext& context) {
                 return writeViewContext(writer, context);
             })) return false;
+    writer.i64(message.trophyTotal);
     if (!writer.finish()) return false;
     ServerUpdate validated;
     return decodeServerUpdate(bytes, validated, error);
@@ -827,6 +840,7 @@ bool decodeServerBootstrap(
         !readGeometry(reader, decoded.initialMapGeometry) ||
         !validateGeometryForSnapshot(
             reader, decoded.initialSnapshot, decoded.initialMapGeometry) ||
+        !reader.i64(decoded.trophyTotal) ||
         !finishRead(reader)) return false;
     const std::set<PlayerId> players = [&] {
         std::set<PlayerId> result;
@@ -869,6 +883,7 @@ bool decodeServerUpdate(
             [&](client::ClientViewContext& context) {
                 return readViewContext(reader, context);
             }) ||
+        !reader.i64(decoded.trophyTotal) ||
         !finishRead(reader)) return false;
     message = std::move(decoded);
     return true;

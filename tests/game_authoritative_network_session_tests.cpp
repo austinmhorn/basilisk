@@ -179,7 +179,7 @@ void spoofedMalformedAndForgedCommandsAreRejected() {
 
     command = ClientCommand{kProtocolVersion, QuitCommand{PlayerId{1}}};
     assert(encodeWire(command, bytes, error));
-    bytes[8] = 0x02;
+    bytes[8] = 0x03;
     assert(!p1.endpoint->sendBytes(bytes, error));
 
     assert(host->authoritativeRound() == RoundNumber{1});

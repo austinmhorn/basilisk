@@ -141,6 +141,8 @@ public:
         bootstrap.initialMapGeometry =
             playerGeometry(match_, fullLayout_, snapshot);
         bootstrap.initialSnapshot = std::move(snapshot);
+        refreshTrophyTotal(player);
+        bootstrap.trophyTotal = trophyTotals_.at(player);
         network::WireBytes frame;
         if (!network::encodeWire(bootstrap, frame, error)) return false;
         endpoint.enqueue(std::move(frame));
@@ -318,6 +320,25 @@ private:
         }
     }
 
+    void refreshTrophyTotal(PlayerId player) {
+        auto& total = trophyTotals_[player];
+        if (!trophyScoring_.has_value()) return;
+        const auto account = trophyScoring_->accounts.find(player);
+        if (account == trophyScoring_->accounts.end()) return;
+        std::string error;
+        std::int64_t refreshed{};
+        if (trophyScoring_->ledger->trophyTotal(
+                account->second, refreshed, error)) {
+            total = refreshed;
+            return;
+        }
+        if (!trophyScoringError_.has_value()) {
+            trophyScoringError_ = error.empty()
+                ? "Unable to read persisted trophy total."
+                : "Unable to read persisted trophy total: " + error;
+        }
+    }
+
     void publishAll(const std::vector<GameEvent>& events) {
         for (auto it = endpoints_.begin(); it != endpoints_.end();) {
             if (auto endpoint = it->second.lock()) {
@@ -348,6 +369,8 @@ private:
         update.mapGeometry = playerGeometry(match_, fullLayout_, snapshot);
         update.snapshot = std::move(snapshot);
         if (includeContext) update.viewContext = context;
+        refreshTrophyTotal(localPlayer);
+        update.trophyTotal = trophyTotals_.at(localPlayer);
         network::WireBytes frame;
         std::string error;
         if (network::encodeWire(update, frame, error))
@@ -360,6 +383,7 @@ private:
     std::vector<client::PublicPlayerProfile> profiles_;
     PlayerMapLayout fullLayout_;
     std::map<PlayerId, client::ClientViewContext> viewContexts_;
+    std::map<PlayerId, std::int64_t> trophyTotals_;
     std::map<PlayerId, std::weak_ptr<InMemoryMatchEndpoint>> endpoints_;
     std::size_t resolvedRoundCount_{0};
     std::optional<TrophyScoringContext> trophyScoring_;

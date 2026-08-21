@@ -95,6 +95,7 @@ NetworkGameSessionAdapter::create(
         bootstrap.viewContext,
         std::move(actionCommands),
         std::move(sessionCommands));
+    controller->setTrophyTotal(bootstrap.trophyTotal);
     if (!controller->ingestSnapshot(
             std::move(bootstrap.initialSnapshot),
             std::move(bootstrap.initialMapGeometry))) {
@@ -132,6 +133,7 @@ bool NetworkGameSessionAdapter::ingest(
     if (update.viewContext.has_value()) {
         controller_->setViewContext(*update.viewContext);
     }
+    controller_->setTrophyTotal(update.trophyTotal);
     return true;
 }
 

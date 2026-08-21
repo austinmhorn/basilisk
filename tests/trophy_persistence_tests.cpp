@@ -318,6 +318,7 @@ void persistenceFailureDoesNotCorruptTerminalGameplayState() {
 struct DirectClient {
     std::shared_ptr<InMemoryMatchEndpoint> endpoint;
     PlayerRoundSnapshot snapshot;
+    std::int64_t trophyTotal{};
 
     void ingest() {
         std::string error;
@@ -325,6 +326,7 @@ struct DirectClient {
             network::ServerUpdate update;
             assert(network::decodeServerUpdate(*frame, update, error));
             snapshot = std::move(update.snapshot);
+            trophyTotal = update.trophyTotal;
         }
     }
 };
@@ -340,7 +342,11 @@ DirectClient connectDirect(
     assert(frame.has_value());
     network::ServerBootstrap bootstrap;
     assert(network::decodeServerBootstrap(*frame, bootstrap, error));
-    return {std::move(endpoint), std::move(bootstrap.initialSnapshot)};
+    return {
+        std::move(endpoint),
+        std::move(bootstrap.initialSnapshot),
+        bootstrap.trophyTotal,
+    };
 }
 
 std::vector<CaveId> shortestPhysicalPath(
@@ -483,6 +489,14 @@ void realAuthoritativeWinnerPersistsAwardsForDurableAccounts() {
         *mirror.result.winner == PlayerId{1} ? PlayerId{2} : PlayerId{1});
     assert(total(*open(database), winner.value) >= 2);
     assert(total(*open(database), loser.value) == -1);
+    const DirectClient& winnerClient = *mirror.result.winner == PlayerId{1}
+        ? p1
+        : p2;
+    const DirectClient& loserClient = *mirror.result.winner == PlayerId{1}
+        ? p2
+        : p1;
+    assert(winnerClient.trophyTotal == total(*open(database), winner.value));
+    assert(loserClient.trophyTotal == -1);
 
     TrophyLedger reopened(open(database));
     assert(reopened.scoreMatch(

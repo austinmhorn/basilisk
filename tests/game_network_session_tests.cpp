@@ -38,7 +38,19 @@ concept HasHiddenTopology = requires(T value) { value.topology; };
 template <typename T>
 concept HasDebugTruth = requires(T value) { value.debugTruth; };
 
-static_assert(kProtocolVersion == 1);
+template <typename T>
+concept HasAccountId = requires(T value) { value.accountId; };
+
+template <typename T>
+concept HasAuthToken = requires(T value) { value.authToken; };
+
+template <typename T>
+concept HasLedgerRows = requires(T value) { value.ledgerRows; };
+
+template <typename T>
+concept HasTrophyMatchId = requires(T value) { value.trophyMatchId; };
+
+static_assert(kProtocolVersion == 2);
 static_assert(std::variant_size_v<ClientCommandPayload> == 4);
 static_assert(!HasWorld<ServerBootstrap>);
 static_assert(!HasAuthoritativeState<ServerBootstrap>);
@@ -47,6 +59,10 @@ static_assert(!HasMapSeed<ServerBootstrap>);
 static_assert(!HasMatchSeed<ServerBootstrap>);
 static_assert(!HasHiddenTopology<ServerBootstrap>);
 static_assert(!HasDebugTruth<ServerBootstrap>);
+static_assert(!HasAccountId<ServerBootstrap>);
+static_assert(!HasAuthToken<ServerBootstrap>);
+static_assert(!HasLedgerRows<ServerBootstrap>);
+static_assert(!HasTrophyMatchId<ServerBootstrap>);
 static_assert(!HasWorld<ServerUpdate>);
 static_assert(!HasAuthoritativeState<ServerUpdate>);
 static_assert(!HasEvents<ServerUpdate>);
@@ -54,6 +70,10 @@ static_assert(!HasMapSeed<ServerUpdate>);
 static_assert(!HasMatchSeed<ServerUpdate>);
 static_assert(!HasHiddenTopology<ServerUpdate>);
 static_assert(!HasDebugTruth<ServerUpdate>);
+static_assert(!HasAccountId<ServerUpdate>);
+static_assert(!HasAuthToken<ServerUpdate>);
+static_assert(!HasLedgerRows<ServerUpdate>);
+static_assert(!HasTrophyMatchId<ServerUpdate>);
 static_assert(!HasWorld<ClientCommand>);
 static_assert(!HasAuthoritativeState<ClientCommand>);
 static_assert(!HasEvents<ClientCommand>);
@@ -236,6 +256,7 @@ ServerBootstrap representativeBootstrap() {
     ServerBootstrap bootstrap = bootstrapFor();
     bootstrap.initialSnapshot = representativeSnapshot();
     bootstrap.initialMapGeometry = representativeGeometry();
+    bootstrap.trophyTotal = -7;
     return bootstrap;
 }
 
@@ -262,7 +283,8 @@ void allServerFieldsRoundTripExactly() {
     assert(encodeWire(source, bytes, error));
     ServerBootstrap decoded;
     assert(decodeServerBootstrap(bytes, decoded, error));
-    assert(decoded.protocolVersion == 1);
+    assert(decoded.protocolVersion == kProtocolVersion);
+    assert(decoded.trophyTotal == -7);
     assert(decoded.matchMetadata.totalCaves == 40);
     assert(decoded.matchMetadata.players.size() == 2);
     assert(decoded.matchMetadata.players[1].slot == PlayerSlot::P2);
@@ -322,7 +344,13 @@ void allServerFieldsRoundTripExactly() {
     update.viewContext = client::ClientViewContext{
         PlayerId{2}, PlayerId{1}, client::ClientViewMode::Spectating,
         std::nullopt};
+    update.trophyTotal = 19;
     assertStableRoundTrip(update, decodeServerUpdate);
+    WireBytes updateBytes;
+    assert(encodeWire(update, updateBytes, error));
+    ServerUpdate decodedUpdate;
+    assert(decodeServerUpdate(updateBytes, decodedUpdate, error));
+    assert(decodedUpdate.trophyTotal == 19);
 }
 
 void everyClientCommandRoundTrips() {
@@ -368,7 +396,7 @@ void goldenFixtureIsStable() {
     const WireBytes expected{
         0x42, 0x53, 0x4b, 0x31,
         0x13,
-        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x02,
         0x00, 0x00, 0x00, 0x2a,
     };
     assert(bytes == expected);
@@ -399,7 +427,7 @@ void malformedWireIsRejected() {
     assert(!decodeClientCommand(malformed, command, error));
 
     malformed = valid;
-    malformed[8] = 0x02;
+    malformed[8] = 0x03;
     assert(!decodeClientCommand(malformed, command, error));
 
     PlayerAction action;
@@ -422,13 +450,14 @@ void malformedWireIsRejected() {
     WireBytes malformedBootstrap = bootstrapBytes;
     malformedBootstrap.pop_back();
     assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
+    assert(error.find("Truncated") != std::string::npos);
 
     malformedBootstrap = bootstrapBytes;
     malformedBootstrap.push_back(0xff);
     assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
 
     malformedBootstrap = bootstrapBytes;
-    malformedBootstrap[8] = 0x02;
+    malformedBootstrap[8] = 0x03;
     assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
 
     malformedBootstrap = bootstrapBytes;
@@ -480,6 +509,7 @@ void byteTransportAndDecodedServerDataReachController() {
     sourceUpdate.snapshot.round = RoundNumber{28};
     sourceUpdate.snapshot.health = 61;
     sourceUpdate.mapGeometry = representativeGeometry();
+    sourceUpdate.trophyTotal = 11;
     WireBytes updateFrame;
     assert(encodeWire(sourceUpdate, updateFrame, error));
     ServerUpdate decodedUpdate;
@@ -487,6 +517,7 @@ void byteTransportAndDecodedServerDataReachController() {
     assert(adapter->ingest(std::move(decodedUpdate), error));
     assert(adapter->controller().displayedSnapshot()->round == RoundNumber{28});
     assert(adapter->controller().displayedSnapshot()->health == 61);
+    assert(adapter->controller().trophyTotal() == 11);
     assert(adapter->controller().displayedMapGeometry()
                ->unknownExitEndpoints.contains(
                    MapExitKey{CaveId{7}, TunnelId{2}}));
@@ -517,6 +548,7 @@ void bootstrapCreatesUsableController() {
     assert(controller.displayedMapGeometry() != nullptr);
     assert(controller.displayedMapGeometry()->discoveredCaves.at(CaveId{7}) ==
            (LogicalPoint{-2.0, 0.0}));
+    assert(controller.trophyTotal() == 0);
     assert(controller.canSubmitActions());
     assert(transport->commands.empty());
 }
@@ -610,6 +642,7 @@ void inboundUpdatesReachController() {
             std::move(update),
             geometryFor(CaveId{12}, 4.0),
             context,
+            -3,
         },
         error));
     assert(error.empty());
@@ -620,6 +653,7 @@ void inboundUpdatesReachController() {
            (LogicalPoint{4.0, 0.0}));
     assert(adapter->controller().viewContext().mode ==
            client::ClientViewMode::Playing);
+    assert(adapter->controller().trophyTotal() == -3);
     assert(transport->commands.empty());
 }
 

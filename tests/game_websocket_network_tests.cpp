@@ -115,7 +115,7 @@ std::unique_ptr<IncompatibleServer> startIncompatibleServer() {
     assert(endpoint != nullptr);
     auto frame = endpoint->takeNextServerFrame();
     assert(frame.has_value() && frame->size() > 8);
-    (*frame)[8] = 2; // V1's big-endian version header becomes unsupported V2.
+    (*frame)[8] = 3; // V2's big-endian version header becomes unsupported V3.
 
     for (int attempt = 0; attempt < 10; ++attempt) {
         const auto port = static_cast<std::uint16_t>(ix::getFreePort());
@@ -338,11 +338,19 @@ void serverQueriesUseDurableAccountsAndSQLiteSurvivesRestart() {
         auto client = WebSocketNetworkSession::connect(
             url(*server), "test-p1", error);
         assert(client != nullptr);
+        auto secondClient = WebSocketNetworkSession::connect(
+            url(*server), "test-p2", error);
+        assert(secondClient != nullptr);
         assert(waitUntil([&] {
             client->pump();
-            return client->controller() != nullptr;
+            secondClient->pump();
+            return client->controller() != nullptr &&
+                secondClient->controller() != nullptr;
         }));
         assert(client->controller()->viewContext().localPlayer == PlayerId{1});
+        assert(secondClient->controller()->viewContext().localPlayer == PlayerId{2});
+        assert(client->controller()->trophyTotal() == 2);
+        assert(secondClient->controller()->trophyTotal() == -1);
         server->stop();
     }
 
@@ -355,6 +363,14 @@ void serverQueriesUseDurableAccountsAndSQLiteSurvivesRestart() {
     std::int64_t total = 0;
     assert(reopened->trophyTotal(AccountIdentity{"durable-p1"}, total, error));
     assert(total == 2);
+    auto reconnected = WebSocketNetworkSession::connect(
+        url(*reopened), "test-p1", error);
+    assert(reconnected != nullptr);
+    assert(waitUntil([&] {
+        reconnected->pump();
+        return reconnected->controller() != nullptr;
+    }));
+    assert(reconnected->controller()->trophyTotal() == 2);
 }
 
 } // namespace
