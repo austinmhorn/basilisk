@@ -150,6 +150,29 @@ target_compile_features(
 
 if(NOT EMSCRIPTEN)
     FetchContent_Declare(
+        argon2_reference
+        GIT_REPOSITORY https://github.com/P-H-C/phc-winner-argon2.git
+        GIT_TAG 20190702
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(argon2_reference)
+
+    add_library(BasiliskArgon2 STATIC EXCLUDE_FROM_ALL
+        ${argon2_reference_SOURCE_DIR}/src/argon2.c
+        ${argon2_reference_SOURCE_DIR}/src/core.c
+        ${argon2_reference_SOURCE_DIR}/src/encoding.c
+        ${argon2_reference_SOURCE_DIR}/src/ref.c
+        ${argon2_reference_SOURCE_DIR}/src/blake2/blake2b.c
+    )
+    target_include_directories(BasiliskArgon2 SYSTEM PUBLIC
+        ${argon2_reference_SOURCE_DIR}/include
+    )
+    target_include_directories(BasiliskArgon2 PRIVATE
+        ${argon2_reference_SOURCE_DIR}/src
+    )
+    target_compile_definitions(BasiliskArgon2 PRIVATE ARGON2_NO_THREADS)
+
+    FetchContent_Declare(
         sqlite_amalgamation
         URL https://www.sqlite.org/2025/sqlite-amalgamation-3500400.zip
         URL_HASH SHA256=1d3049dd0f830a025a53105fc79fd2ab9431aea99e137809d064d8ee8356b032
@@ -187,6 +210,24 @@ if(NOT EMSCRIPTEN)
     )
     target_compile_features(BasiliskTrophyPersistenceSQLite PUBLIC cxx_std_20)
 
+    add_library(BasiliskAccountAuth STATIC EXCLUDE_FROM_ALL
+        server/AccountAuth.cpp
+    )
+    add_library(Basilisk::AccountAuth ALIAS BasiliskAccountAuth)
+    target_include_directories(BasiliskAccountAuth PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/server
+    )
+    target_link_libraries(BasiliskAccountAuth
+        PUBLIC Basilisk::AuthoritativeNetworkSession
+        PRIVATE BasiliskSQLite3 BasiliskArgon2
+    )
+    if(APPLE)
+        target_link_libraries(BasiliskAccountAuth PRIVATE "-framework Security")
+    elseif(WIN32)
+        target_link_libraries(BasiliskAccountAuth PRIVATE bcrypt)
+    endif()
+    target_compile_features(BasiliskAccountAuth PUBLIC cxx_std_20)
+
     add_library(BasiliskWebSocketMatchServer STATIC EXCLUDE_FROM_ALL
         server/LocalWebSocketMatchServer.cpp
     )
@@ -203,6 +244,7 @@ if(NOT EMSCRIPTEN)
             Basilisk::AuthoritativeNetworkSession
         PRIVATE
             Basilisk::TrophyPersistenceSQLite
+            Basilisk::AccountAuth
             ixwebsocket
     )
     target_compile_features(BasiliskWebSocketMatchServer PUBLIC cxx_std_20)

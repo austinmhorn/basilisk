@@ -76,7 +76,9 @@ public:
         std::unique_ptr<AuthoritativeInMemoryMatch> match,
         std::shared_ptr<TrophyLedger> trophyLedger,
         std::uint16_t port,
-        std::map<std::string, PlayerId> tokens
+        std::map<std::string, PlayerId> tokens,
+        std::shared_ptr<AccountSessionResolver> authentication,
+        std::map<AccountIdentity, PlayerId> authenticatedAccounts
 #if defined(_WIN32)
         , std::unique_ptr<NativeNetworkRuntime> networkRuntime
 #endif
@@ -89,7 +91,9 @@ public:
 #endif
           trophyLedger_(std::move(trophyLedger)),
           server_(port, "127.0.0.1", 5, 2),
-          tokens_(std::move(tokens)) {}
+          tokens_(std::move(tokens)),
+          authentication_(std::move(authentication)),
+          authenticatedAccounts_(std::move(authenticatedAccounts)) {}
 
     bool start(std::string& error) {
         server_.disablePerMessageDeflate();
@@ -214,23 +218,35 @@ private:
 
     void authenticate(ix::WebSocket& socket, const std::string& uri) {
         const auto token = tokenFromUri(uri);
-        const auto tokenIt = token.has_value() ? tokens_.find(*token) : tokens_.end();
-        if (tokenIt == tokens_.end()) {
+        std::optional<PlayerId> player;
+        if (token.has_value() && authentication_ != nullptr) {
+            AccountIdentity account;
+            std::string error;
+            if (authentication_->resolveSession(
+                    AuthSessionToken{*token}, account, error)) {
+                const auto found = authenticatedAccounts_.find(account);
+                if (found != authenticatedAccounts_.end()) player = found->second;
+            }
+        } else if (token.has_value()) {
+            const auto found = tokens_.find(*token);
+            if (found != tokens_.end()) player = found->second;
+        }
+        if (!player.has_value()) {
             socket.close(1008, "Invalid authentication token");
             return;
         }
-        if (usedPlayers_.contains(tokenIt->second)) {
+        if (usedPlayers_.contains(*player)) {
             socket.close(1008, "Token is already in use");
             return;
         }
         std::string error;
-        auto endpoint = match_->connect(tokenIt->second, error);
+        auto endpoint = match_->connect(*player, error);
         if (endpoint == nullptr) {
             socket.close(1008, error);
             return;
         }
-        clients_.emplace(&socket, Client{tokenIt->second, std::move(endpoint), true});
-        usedPlayers_.insert(tokenIt->second);
+        clients_.emplace(&socket, Client{*player, std::move(endpoint), true});
+        usedPlayers_.insert(*player);
         drainAll();
     }
 
@@ -313,6 +329,8 @@ private:
     std::shared_ptr<TrophyLedger> trophyLedger_;
     ix::WebSocketServer server_;
     std::map<std::string, PlayerId> tokens_;
+    std::shared_ptr<AccountSessionResolver> authentication_;
+    std::map<AccountIdentity, PlayerId> authenticatedAccounts_;
     std::set<PlayerId> usedPlayers_;
     std::map<ix::WebSocket*, Client> clients_;
     mutable std::mutex mutex_;
@@ -328,8 +346,17 @@ LocalWebSocketMatchServer::~LocalWebSocketMatchServer() { stop(); }
 
 std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
     LocalWebSocketServerConfig config, std::string& error) {
-    if (config.p1Token.empty() || config.p2Token.empty() ||
-        config.p1Token == config.p2Token) {
+    const bool accountAuthentication = config.authentication != nullptr;
+    if (accountAuthentication != config.p1AuthenticatedAccount.has_value() ||
+        accountAuthentication != config.p2AuthenticatedAccount.has_value() ||
+        (accountAuthentication &&
+         config.p1AuthenticatedAccount == config.p2AuthenticatedAccount)) {
+        error = "Account authentication requires two distinct account bindings.";
+        return nullptr;
+    }
+    if (!accountAuthentication &&
+        (config.p1Token.empty() || config.p2Token.empty() ||
+         config.p1Token == config.p2Token)) {
         error = "P1 and P2 tokens must be non-empty and distinct.";
         return nullptr;
     }
@@ -422,7 +449,14 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
         std::map<std::string, PlayerId>{
             {std::move(config.p1Token), PlayerId{1}},
             {std::move(config.p2Token), PlayerId{2}},
-        }
+        },
+        std::move(config.authentication),
+        accountAuthentication
+            ? std::map<AccountIdentity, PlayerId>{
+                {*config.p1AuthenticatedAccount, PlayerId{1}},
+                {*config.p2AuthenticatedAccount, PlayerId{2}},
+              }
+            : std::map<AccountIdentity, PlayerId>{}
 #if defined(_WIN32)
         , std::move(networkRuntime)
 #endif

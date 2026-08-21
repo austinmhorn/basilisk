@@ -43,6 +43,7 @@ int main(int argc, char** argv) {
     config.p2Token = "basilisk-p2-local";
     config.profiles = profiles();
     std::optional<std::string> trophyDatabase;
+    std::optional<std::string> authenticationDatabase;
     std::optional<std::string> trophyMatch;
     std::optional<std::string> p1Account;
     std::optional<std::string> p2Account;
@@ -55,6 +56,7 @@ int main(int argc, char** argv) {
         if (argument != "--port" && argument != "--p1-token" &&
             argument != "--p2-token" && argument != "--map-seed" &&
             argument != "--trophy-db" && argument != "--match-id" &&
+            argument != "--auth-db" &&
             argument != "--p1-account" && argument != "--p2-account" &&
             argument != "--p1-handle" && argument != "--p2-handle" &&
             argument != "--p1-display-name" &&
@@ -70,6 +72,7 @@ int main(int argc, char** argv) {
         if (argument == "--p1-token") config.p1Token = argv[index];
         else if (argument == "--p2-token") config.p2Token = argv[index];
         else if (argument == "--trophy-db") trophyDatabase = argv[index];
+        else if (argument == "--auth-db") authenticationDatabase = argv[index];
         else if (argument == "--match-id") trophyMatch = argv[index];
         else if (argument == "--p1-account") p1Account = argv[index];
         else if (argument == "--p2-account") p2Account = argv[index];
@@ -90,9 +93,15 @@ int main(int argc, char** argv) {
         }
     }
     const bool trophiesRequested = trophyDatabase.has_value() ||
-        trophyMatch.has_value() || p1Account.has_value() || p2Account.has_value() ||
-        p1PublicHandle.has_value() || p2PublicHandle.has_value() ||
-        p1DisplayName.has_value() || p2DisplayName.has_value();
+        trophyMatch.has_value() || p1PublicHandle.has_value() ||
+        p2PublicHandle.has_value() || p1DisplayName.has_value() ||
+        p2DisplayName.has_value();
+    if ((p1Account.has_value() || p2Account.has_value()) &&
+        !trophiesRequested && !authenticationDatabase.has_value()) {
+        std::fprintf(stderr,
+            "Player account bindings require --auth-db or trophy persistence.\n");
+        return 2;
+    }
     if (trophiesRequested) {
         if (!trophyMatch.has_value() || !p1Account.has_value() ||
             !p2Account.has_value()) {
@@ -116,8 +125,8 @@ int main(int argc, char** argv) {
         }
         config.trophies = basilisk::game::server::LocalServerTrophyConfig{
             basilisk::game::server::TrophyMatchId{std::move(*trophyMatch)},
-            basilisk::game::server::AccountIdentity{std::move(*p1Account)},
-            basilisk::game::server::AccountIdentity{std::move(*p2Account)},
+            basilisk::game::server::AccountIdentity{*p1Account},
+            basilisk::game::server::AccountIdentity{*p2Account},
             trophyDatabase.has_value() ? std::move(*trophyDatabase) : std::string{},
         };
         if (completePublicProfiles) {
@@ -134,6 +143,27 @@ int main(int argc, char** argv) {
                     std::move(*p2DisplayName),
                 };
         }
+    }
+
+    if (authenticationDatabase.has_value()) {
+        if (!p1Account.has_value() || !p2Account.has_value()) {
+            std::fprintf(stderr,
+                "--auth-db requires --p1-account and --p2-account bindings.\n");
+            return 2;
+        }
+        std::string authError;
+        config.authentication =
+            basilisk::game::server::SQLiteAccountAuth::open(
+                *authenticationDatabase, authError);
+        if (config.authentication == nullptr) {
+            std::fprintf(stderr, "Unable to open account database: %s\n",
+                authError.c_str());
+            return 1;
+        }
+        config.p1AuthenticatedAccount =
+            basilisk::game::server::AccountIdentity{*p1Account};
+        config.p2AuthenticatedAccount =
+            basilisk::game::server::AccountIdentity{*p2Account};
     }
 
     std::string error;

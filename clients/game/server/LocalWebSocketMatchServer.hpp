@@ -8,6 +8,7 @@
 
 #include "TrophyScoring.hpp"
 #include "PublicAccountProfiles.hpp"
+#include "AccountAuth.hpp"
 #include "basilisk/Types.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
 
@@ -32,6 +33,11 @@ struct LocalWebSocketServerConfig {
     MatchSeed matchSeed{424242};
     std::vector<client::PublicPlayerProfile> profiles;
     std::optional<LocalServerTrophyConfig> trophies;
+    // When present, URL tokens are short-lived sessions resolved to these
+    // private accounts. The fixed token fields remain the development fallback.
+    std::shared_ptr<AccountSessionResolver> authentication;
+    std::optional<AccountIdentity> p1AuthenticatedAccount;
+    std::optional<AccountIdentity> p2AuthenticatedAccount;
 };
 
 // Native-only localhost WebSocket shell around one authoritative match.
