@@ -460,6 +460,98 @@ void authenticatedUnboundAccountCanHostLobby() {
         client->lobbyResponse()->payload));
 }
 
+void authenticatedAssignmentLaunchesAuthoritativeGameplay() {
+    TemporaryTrophyDatabase database;
+    std::string error;
+    auto auth = SQLiteAccountAuth::open(database.path(), error);
+    assert(auth != nullptr && error.empty());
+    AccountIdentity hostAccount;
+    AccountIdentity guestAccount;
+    assert(auth->createAccount(
+        LoginIdentity{"assigned-host@example.test"},
+        "correct horse battery staple",
+        PublicAccountProfile{PublicProfileHandle{"assigned-host"}, "Match Host"},
+        hostAccount, error) == CreateAccountResult::Created);
+    assert(auth->createAccount(
+        LoginIdentity{"assigned-guest@example.test"},
+        "correct horse battery staple",
+        PublicAccountProfile{PublicProfileHandle{"assigned-guest"}, "Match Guest"},
+        guestAccount, error) == CreateAccountResult::Created);
+    AuthSessionToken hostToken;
+    AuthSessionToken guestToken;
+    assert(auth->authenticate(LoginIdentity{"assigned-host@example.test"},
+                              "correct horse battery staple", hostToken, error));
+    assert(auth->authenticate(LoginIdentity{"assigned-guest@example.test"},
+                              "correct horse battery staple", guestToken, error));
+
+    LocalWebSocketServerConfig config;
+    config.port = static_cast<std::uint16_t>(ix::getFreePort());
+    config.authentication = auth;
+    config.profiles = profiles();
+    auto server = LocalWebSocketMatchServer::start(std::move(config), error);
+    assert(server != nullptr && error.empty());
+    auto host = WebSocketNetworkSession::connectForAuthentication(
+        url(*server), error);
+    auto guest = WebSocketNetworkSession::connectForAuthentication(
+        url(*server), error);
+    assert(host != nullptr && guest != nullptr);
+    assert(waitUntil([&] {
+        host->pump();
+        guest->pump();
+        return host->state() == NetworkConnectionState::Connected &&
+            guest->state() == NetworkConnectionState::Connected;
+    }));
+    assert(host->authenticate({network::kProtocolVersion,
+        network::AuthenticateSessionRequest{hostToken.value}}));
+    assert(guest->authenticate({network::kProtocolVersion,
+        network::AuthenticateSessionRequest{guestToken.value}}));
+    assert(waitUntil([&] {
+        host->pump();
+        guest->pump();
+        return host->authenticationResponse().has_value() &&
+            guest->authenticationResponse().has_value();
+    }));
+
+    assert(host->requestLobby({network::kProtocolVersion,
+        network::HostLobbyRequest{}}));
+    assert(waitUntil([&] {
+        host->pump();
+        return host->lobbyResponse().has_value() &&
+            std::holds_alternative<network::LobbyHosted>(
+                host->lobbyResponse()->payload);
+    }));
+    const std::string lobbyCode = std::get<network::LobbyHosted>(
+        host->lobbyResponse()->payload).lobbyCode;
+    assert(guest->requestLobby({network::kProtocolVersion,
+        network::JoinLobbyRequest{lobbyCode}}));
+    assert(waitUntil([&] {
+        host->pump();
+        guest->pump();
+        return host->controller() != nullptr && guest->controller() != nullptr &&
+            host->lobbyResponse().has_value() &&
+            guest->lobbyResponse().has_value() &&
+            std::holds_alternative<network::LobbyMatchAssigned>(
+                host->lobbyResponse()->payload) &&
+            std::holds_alternative<network::LobbyMatchAssigned>(
+                guest->lobbyResponse()->payload);
+    }));
+    assert(host->controller()->viewContext().localPlayer == PlayerId{1});
+    assert(guest->controller()->viewContext().localPlayer == PlayerId{2});
+    const RoundNumber initialRound =
+        host->controller()->displayedSnapshot()->round;
+    assert(guest->controller()->displayedSnapshot()->round == initialRound);
+
+    assert(host->controller()->submitAndLock(searchAction(*host->controller())));
+    assert(guest->controller()->submitAndLock(searchAction(*guest->controller())));
+    assert(waitUntil([&] {
+        host->pump();
+        guest->pump();
+        return host->controller()->displayedSnapshot()->round > initialRound &&
+            guest->controller()->displayedSnapshot()->round ==
+                host->controller()->displayedSnapshot()->round;
+    }));
+}
+
 } // namespace
 
 int main() {
@@ -478,4 +570,5 @@ int main() {
     serverQueriesUseDurableAccountsAndSQLiteSurvivesRestart();
     serverPersistsPublicProfilesAndRejectsDuplicateHandles();
     authenticatedUnboundAccountCanHostLobby();
+    authenticatedAssignmentLaunchesAuthoritativeGameplay();
 }

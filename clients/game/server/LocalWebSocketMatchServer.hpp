@@ -40,7 +40,8 @@ struct LocalWebSocketServerConfig {
     std::optional<AccountIdentity> p2AuthenticatedAccount;
 };
 
-// Native-only localhost WebSocket shell around one authoritative match.
+// Native-only localhost WebSocket shell for fixed development and assigned
+// authenticated authoritative matches.
 class LocalWebSocketMatchServer {
 public:
     [[nodiscard]] static std::unique_ptr<LocalWebSocketMatchServer> start(

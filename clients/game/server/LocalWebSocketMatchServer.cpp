@@ -6,6 +6,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <random>
 #include <set>
 #include <span>
 #include <string_view>
@@ -77,6 +78,7 @@ public:
     Impl(
         std::unique_ptr<AuthoritativeInMemoryMatch> match,
         std::shared_ptr<TrophyLedger> trophyLedger,
+        std::shared_ptr<PublicTrophyReadModel> publicLeaderboard,
         std::uint16_t port,
         std::map<std::string, PlayerId> tokens,
         std::shared_ptr<SQLiteAccountAuth> authentication,
@@ -92,6 +94,7 @@ public:
         : match_(std::move(match)),
 #endif
           trophyLedger_(std::move(trophyLedger)),
+          publicLeaderboard_(std::move(publicLeaderboard)),
           server_(port, "127.0.0.1", 5, 2),
           tokens_(std::move(tokens)),
           authentication_(std::move(authentication)),
@@ -128,6 +131,7 @@ public:
         server_.stop();
         std::lock_guard lock(mutex_);
         clients_.clear();
+        assignedMatches_.clear();
         pendingAuthentication_.clear();
         authenticatedPreMatch_.clear();
         usedPlayers_.clear();
@@ -161,6 +165,10 @@ public:
         std::lock_guard lock(mutex_);
         if (stopped_) return;
         match_->advanceTime(elapsedMs);
+        for (auto& [id, assigned] : assignedMatches_) {
+            (void)id;
+            assigned.match->advanceTime(elapsedMs);
+        }
         reportTrophyError();
         drainAll();
     }
@@ -200,7 +208,19 @@ private:
         PlayerId player{};
         std::shared_ptr<InMemoryMatchEndpoint> endpoint;
         std::optional<AccountIdentity> account;
+        std::optional<std::string> assignedMatch;
         bool active{true};
+    };
+
+    struct PreMatchClient {
+        AccountIdentity account;
+        PublicAccountProfile profile;
+    };
+
+    struct AssignedMatch {
+        std::unique_ptr<AuthoritativeInMemoryMatch> match;
+        std::size_t connectedPlayers{2};
+        bool trophyErrorReported{false};
     };
 
     void handle(ix::WebSocket& socket, const ix::WebSocketMessagePtr& message) {
@@ -251,7 +271,8 @@ private:
             socket.close(1008, error);
             return;
         }
-        clients_.emplace(&socket, Client{*player, std::move(endpoint), std::nullopt, true});
+        clients_.emplace(&socket, Client{*player, std::move(endpoint), std::nullopt,
+                                         std::nullopt, true});
         usedPlayers_.insert(*player);
         drainAll();
     }
@@ -260,7 +281,7 @@ private:
         const auto found = clients_.find(&socket);
         const auto preMatch = authenticatedPreMatch_.find(&socket);
         if (found == clients_.end() && preMatch != authenticatedPreMatch_.end()) {
-            receivePreMatch(socket, preMatch->second, message);
+            receivePreMatch(socket, preMatch->second.account, message);
             return;
         }
         if (found == clients_.end() && pendingAuthentication_.contains(&socket)) {
@@ -320,9 +341,7 @@ private:
                 reject(socket, found->second, 1008, error);
                 return;
             }
-            for (const LobbyProtocolDelivery& delivery : deliveries) {
-                deliverLobby(delivery);
-            }
+            handleLobbyDeliveries(deliveries);
             return;
         }
         if (!found->second.endpoint->sendBytes(
@@ -380,16 +399,114 @@ private:
             socket.close(1008, error);
             return;
         }
+        handleLobbyDeliveries(deliveries);
+    }
+
+    void handleLobbyDeliveries(
+        const std::vector<LobbyProtocolDelivery>& deliveries) {
+        if (deliveries.size() == 2) {
+            network::LobbyResponse first;
+            network::LobbyResponse second;
+            std::string error;
+            if (network::decodeLobbyResponse(deliveries[0].bytes, first, error) &&
+                network::decodeLobbyResponse(deliveries[1].bytes, second, error)) {
+                const auto* firstAssignment =
+                    std::get_if<network::LobbyMatchAssigned>(&first.payload);
+                const auto* secondAssignment =
+                    std::get_if<network::LobbyMatchAssigned>(&second.payload);
+                if (firstAssignment != nullptr && secondAssignment != nullptr &&
+                    firstAssignment->lobbyCode == secondAssignment->lobbyCode) {
+                    if (launchAssignedMatch(deliveries, *firstAssignment,
+                                            *secondAssignment, error)) return;
+                    std::fprintf(stderr, "Unable to launch assigned match: %s\n",
+                                 error.c_str());
+                    return;
+                }
+            }
+        }
         for (const LobbyProtocolDelivery& delivery : deliveries)
             deliverLobby(delivery);
+    }
+
+    bool launchAssignedMatch(
+        const std::vector<LobbyProtocolDelivery>& deliveries,
+        const network::LobbyMatchAssigned& first,
+        const network::LobbyMatchAssigned& second,
+        std::string& error) {
+        const auto accountForRole = [&](network::LobbyAssignmentRole role)
+            -> std::optional<AccountIdentity> {
+            if (first.role == role) return deliveries[0].recipient;
+            if (second.role == role) return deliveries[1].recipient;
+            return std::nullopt;
+        };
+        const auto host = accountForRole(network::LobbyAssignmentRole::Host);
+        const auto guest = accountForRole(network::LobbyAssignmentRole::Guest);
+        if (!host.has_value() || !guest.has_value() || *host == *guest) {
+            error = "Match assignment must contain distinct host and guest accounts.";
+            return false;
+        }
+        const auto findConnection = [&](const AccountIdentity& account) {
+            return std::find_if(authenticatedPreMatch_.begin(),
+                authenticatedPreMatch_.end(), [&](const auto& entry) {
+                    return entry.second.account == account;
+                });
+        };
+        auto hostConnection = findConnection(*host);
+        auto guestConnection = findConnection(*guest);
+        if (hostConnection == authenticatedPreMatch_.end() ||
+            guestConnection == authenticatedPreMatch_.end()) {
+            error = "Assigned player is no longer connected.";
+            return false;
+        }
+
+        std::vector<client::PublicPlayerProfile> profiles{
+            {PlayerId{1}, hostConnection->second.profile.displayName,
+             client::CallingCardId{"default"}, client::EmblemId{"default"}},
+            {PlayerId{2}, guestConnection->second.profile.displayName,
+             client::CallingCardId{"default"}, client::EmblemId{"default"}},
+        };
+        const std::string matchId = "assigned-" +
+            std::to_string(++nextMatchId_) + "-" + std::to_string(random_());
+        std::optional<TrophyScoringContext> trophyScoring;
+        if (trophyLedger_ != nullptr) {
+            trophyScoring = TrophyScoringContext{
+                TrophyMatchId{matchId},
+                {{PlayerId{1}, *host}, {PlayerId{2}, *guest}},
+                trophyLedger_,
+            };
+        }
+        auto match = AuthoritativeInMemoryMatch::create(
+            MapSeed{random_()}, MatchSeed{random_()}, std::move(profiles), error,
+            std::move(trophyScoring), publicLeaderboard_);
+        if (match == nullptr) return false;
+        auto p1 = match->connect(PlayerId{1}, error);
+        if (p1 == nullptr) return false;
+        auto p2 = match->connect(PlayerId{2}, error);
+        if (p2 == nullptr) return false;
+
+        for (const LobbyProtocolDelivery& delivery : deliveries)
+            deliverLobby(delivery);
+        ix::WebSocket* hostSocket = hostConnection->first;
+        ix::WebSocket* guestSocket = guestConnection->first;
+        authenticatedPreMatch_.erase(hostConnection);
+        authenticatedPreMatch_.erase(guestConnection);
+        clients_.emplace(hostSocket, Client{PlayerId{1}, std::move(p1), *host,
+                                            matchId, true});
+        clients_.emplace(guestSocket, Client{PlayerId{2}, std::move(p2), *guest,
+                                             matchId, true});
+        assignedMatches_.emplace(matchId,
+            AssignedMatch{std::move(match), 2, false});
+        drainAll();
+        return true;
     }
 
     void deliverLobby(const LobbyProtocolDelivery& delivery) {
         const std::string payload(
             reinterpret_cast<const char*>(delivery.bytes.data()),
             delivery.bytes.size());
-        for (auto& [socket, account] : authenticatedPreMatch_) {
-            if (account == delivery.recipient) (void)socket->sendBinary(payload);
+        for (auto& [socket, client] : authenticatedPreMatch_) {
+            if (client.account == delivery.recipient)
+                (void)socket->sendBinary(payload);
         }
         for (auto& [socket, client] : clients_) {
             if (client.active && client.account.has_value() &&
@@ -433,7 +550,15 @@ private:
         if (!authentication_->resolveSession(
                 AuthSessionToken{success->sessionToken}, account, error)) return;
         for (const auto& [existingSocket, existing] : authenticatedPreMatch_) {
-            if (existing == account && existingSocket != &socket) {
+            if (existing.account == account && existingSocket != &socket) {
+                socket.close(1008, "Account is already connected");
+                pendingAuthentication_.erase(&socket);
+                return;
+            }
+        }
+        for (const auto& [existingSocket, existing] : clients_) {
+            if (existing.active && existing.account == account &&
+                existingSocket != &socket) {
                 socket.close(1008, "Account is already connected");
                 pendingAuthentication_.erase(&socket);
                 return;
@@ -442,7 +567,8 @@ private:
         const auto bound = authenticatedAccounts_.find(account);
         pendingAuthentication_.erase(&socket);
         if (bound == authenticatedAccounts_.end()) {
-            authenticatedPreMatch_.emplace(&socket, account);
+            authenticatedPreMatch_.emplace(
+                &socket, PreMatchClient{account, success->profile});
             return;
         }
         if (usedPlayers_.contains(bound->second)) {
@@ -457,7 +583,8 @@ private:
             return;
         }
         clients_.emplace(
-            &socket, Client{bound->second, std::move(endpoint), account, true});
+            &socket, Client{bound->second, std::move(endpoint), account,
+                            std::nullopt, true});
         usedPlayers_.insert(bound->second);
         drainAll();
     }
@@ -476,9 +603,9 @@ private:
         pendingAuthentication_.erase(&socket);
         const auto preMatch = authenticatedPreMatch_.find(&socket);
         if (preMatch != authenticatedPreMatch_.end()) {
-            lobbies_.cancelHostedBy(preMatch->second);
+            lobbies_.cancelHostedBy(preMatch->second.account);
             std::string ignored;
-            (void)lobbies_.cancelFindMatch(preMatch->second, ignored);
+            (void)lobbies_.cancelFindMatch(preMatch->second.account, ignored);
             authenticatedPreMatch_.erase(preMatch);
         }
         const auto found = clients_.find(&socket);
@@ -502,14 +629,32 @@ private:
             network::QuitCommand{client.player},
         })) ++processedDisconnectCount_;
         reportTrophyError();
+        if (client.assignedMatch.has_value()) {
+            const auto found = assignedMatches_.find(*client.assignedMatch);
+            if (found != assignedMatches_.end() &&
+                --found->second.connectedPlayers == 0)
+                assignedMatches_.erase(found);
+        }
     }
 
     void reportTrophyError() {
-        if (trophyErrorReported_) return;
-        const auto error = match_->trophyScoringError();
-        if (!error.has_value()) return;
-        std::fprintf(stderr, "Basilisk trophy scoring error: %s\n", error->c_str());
-        trophyErrorReported_ = true;
+        if (!trophyErrorReported_) {
+            const auto error = match_->trophyScoringError();
+            if (error.has_value()) {
+                std::fprintf(stderr, "Basilisk trophy scoring error: %s\n",
+                             error->c_str());
+                trophyErrorReported_ = true;
+            }
+        }
+        for (auto& [id, assigned] : assignedMatches_) {
+            (void)id;
+            if (assigned.trophyErrorReported) continue;
+            const auto error = assigned.match->trophyScoringError();
+            if (!error.has_value()) continue;
+            std::fprintf(stderr, "Basilisk trophy scoring error: %s\n",
+                         error->c_str());
+            assigned.trophyErrorReported = true;
+        }
     }
 
     void drainAll() {
@@ -528,6 +673,7 @@ private:
 #endif
     std::unique_ptr<AuthoritativeInMemoryMatch> match_;
     std::shared_ptr<TrophyLedger> trophyLedger_;
+    std::shared_ptr<PublicTrophyReadModel> publicLeaderboard_;
     ix::WebSocketServer server_;
     std::map<std::string, PlayerId> tokens_;
     std::shared_ptr<SQLiteAccountAuth> authentication_;
@@ -537,8 +683,11 @@ private:
     LobbyProtocolService lobbyProtocol_{lobbies_};
     std::set<PlayerId> usedPlayers_;
     std::set<ix::WebSocket*> pendingAuthentication_;
-    std::map<ix::WebSocket*, AccountIdentity> authenticatedPreMatch_;
+    std::map<ix::WebSocket*, PreMatchClient> authenticatedPreMatch_;
     std::map<ix::WebSocket*, Client> clients_;
+    std::map<std::string, AssignedMatch> assignedMatches_;
+    std::mt19937_64 random_{std::random_device{}()};
+    std::uint64_t nextMatchId_{0};
     mutable std::mutex mutex_;
     bool stopped_{false};
     bool trophyErrorReported_{false};
@@ -644,7 +793,7 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
     }
     auto match = AuthoritativeInMemoryMatch::create(
         config.mapSeed, config.matchSeed, std::move(config.profiles), error,
-        std::move(trophyScoring), std::move(publicLeaderboard));
+        std::move(trophyScoring), publicLeaderboard);
     if (match == nullptr) return nullptr;
     if (config.port == 0) {
         error = "WebSocket server port must be non-zero.";
@@ -655,7 +804,8 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
     if (networkRuntime == nullptr) return nullptr;
 #endif
     auto impl = std::make_unique<Impl>(
-        std::move(match), std::move(trophyLedger), config.port,
+        std::move(match), std::move(trophyLedger), std::move(publicLeaderboard),
+        config.port,
         std::map<std::string, PlayerId>{
             {std::move(config.p1Token), PlayerId{1}},
             {std::move(config.p2Token), PlayerId{2}},

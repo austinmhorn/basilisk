@@ -954,6 +954,13 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 state->mainMenu.lobbyFailed(failure->message);
             }
         }
+        if (state->view == AppView::MainMenu &&
+            state->mainMenu.page() == basilisk::game::MainMenuPage::MatchReady &&
+            state->session != nullptr &&
+            state->session->displayedSnapshot() != nullptr) {
+            state->view = AppView::Gameplay;
+            state->screenShellEnabled = true;
+        }
         if (state->view == AppView::Authentication &&
             !state->storedSessionAttempted &&
             state->networkSession->state() ==
