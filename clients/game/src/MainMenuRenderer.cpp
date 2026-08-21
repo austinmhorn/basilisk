@@ -47,6 +47,7 @@ std::string_view actionLabel(MainMenuAction action) {
         case MainMenuAction::Back: return "BACK";
         case MainMenuAction::PreviousPage: return "PREVIOUS";
         case MainMenuAction::NextPage: return "NEXT";
+        case MainMenuAction::Logout: return "LOG OUT";
     }
     return {};
 }

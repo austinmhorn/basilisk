@@ -23,7 +23,7 @@ constexpr std::array leaderboardActions{
     MainMenuAction::NextPage,
     MainMenuAction::Back,
 };
-constexpr std::array settingsActions{MainMenuAction::Back};
+constexpr std::array settingsActions{MainMenuAction::Logout, MainMenuAction::Back};
 
 } // namespace
 
@@ -94,6 +94,8 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
         case MainMenuAction::NextPage:
             leaderboardOffset_ += leaderboardPageSize;
             return MainMenuResult::RequestLeaderboard;
+        case MainMenuAction::Logout:
+            return MainMenuResult::Logout;
         case MainMenuAction::FindGame:
         case MainMenuAction::HostGame:
         case MainMenuAction::JoinGame:

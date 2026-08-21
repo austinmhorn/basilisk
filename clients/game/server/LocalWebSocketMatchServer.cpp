@@ -286,11 +286,11 @@ private:
             const std::string payload(
                 reinterpret_cast<const char*>(response.data()), response.size());
             (void)socket.sendBinary(payload);
+            usedPlayers_.erase(found->second.player);
             disconnectClient(found->second);
             clients_.erase(found);
-            pendingAuthentication_.erase(&socket);
+            pendingAuthentication_.insert(&socket);
             drainAll();
-            socket.close(1000, "Logged out");
             return;
         }
         if (!found->second.endpoint->sendBytes(

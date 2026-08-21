@@ -396,6 +396,7 @@ add_library(BasiliskGameRuntime STATIC
     src/MainMenuRenderer.cpp
     src/MapRenderer.cpp
     src/SvgTextureManager.cpp
+    src/SessionTokenStorage.cpp
     src/TextRenderer.cpp
 )
 

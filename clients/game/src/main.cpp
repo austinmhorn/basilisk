@@ -27,6 +27,7 @@
 #include "MapActionMenu.hpp"
 #include "MapPresentation.hpp"
 #include "ScreenShell.hpp"
+#include "SessionTokenStorage.hpp"
 #include "SvgTextureManager.hpp"
 #include "TextRenderer.hpp"
 #include "WebSocketNetworkSession.hpp"
@@ -59,7 +60,10 @@ struct AppState {
     basilisk::game::AuthScreenState authScreen;
     basilisk::game::AuthScreenGeometry authGeometry;
     bool authResponseHandled{false};
+    bool storedSessionAttempted{false};
+    bool restoringSession{false};
     std::optional<basilisk::game::PublicAccountProfile> authenticatedProfile;
+    std::optional<std::string> authenticatedSessionToken;
     basilisk::game::MainMenuState mainMenu;
     basilisk::game::MainMenuGeometry mainMenuGeometry;
 
@@ -123,6 +127,27 @@ SDL_AppResult handleMainMenuResult(
 
     if (result == basilisk::game::MainMenuResult::Exit)
         return SDL_APP_SUCCESS;
+    if (result == basilisk::game::MainMenuResult::Logout &&
+        state.networkSession != nullptr &&
+        state.authenticatedSessionToken.has_value()) {
+        if (!state.networkSession->logout(*state.authenticatedSessionToken)) {
+            SDL_Log("Logout request could not be sent");
+            return SDL_APP_CONTINUE;
+        }
+        std::string storageError;
+        if (!basilisk::game::SessionTokenStorage::clear(storageError))
+            SDL_Log("Unable to clear saved session: %s", storageError.c_str());
+        state.authenticatedSessionToken.reset();
+        state.authenticatedProfile.reset();
+        state.authScreen = basilisk::game::AuthScreenState{};
+        state.authScreen.setWaiting(true);
+        state.authResponseHandled = false;
+        state.storedSessionAttempted = true;
+        state.restoringSession = false;
+        state.view = AppView::Authentication;
+        (void)SDL_StartTextInput(state.window);
+        return SDL_APP_CONTINUE;
+    }
     if (result == basilisk::game::MainMenuResult::RequestLeaderboard &&
         state.networkSession != nullptr && state.session != nullptr) {
         if (!state.networkSession->requestLeaderboard(
@@ -830,6 +855,26 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         state->networkSession->pump();
         state->session = state->networkSession->controller();
         if (state->view == AppView::Authentication &&
+            !state->storedSessionAttempted &&
+            state->networkSession->state() ==
+                basilisk::game::NetworkConnectionState::Connected) {
+            state->storedSessionAttempted = true;
+            state->authenticatedSessionToken =
+                basilisk::game::SessionTokenStorage::load();
+            if (state->authenticatedSessionToken.has_value()) {
+                state->restoringSession = true;
+                state->authScreen.setWaiting(true);
+                state->authResponseHandled = false;
+                if (!state->networkSession->authenticate({
+                        basilisk::game::network::kProtocolVersion,
+                        basilisk::game::network::AuthenticateSessionRequest{
+                            *state->authenticatedSessionToken}})) {
+                    state->authScreen.setError(
+                        "Unable to restore the saved session.");
+                }
+            }
+        }
+        if (state->view == AppView::Authentication &&
             !state->authResponseHandled &&
             state->networkSession->authenticationResponse().has_value()) {
             state->authResponseHandled = true;
@@ -839,13 +884,32 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     basilisk::game::network::AuthenticationSuccess>(
                         &response.payload)) {
                 state->authenticatedProfile = success->profile;
+                state->authenticatedSessionToken = success->sessionToken;
+                std::string storageError;
+                if (!basilisk::game::SessionTokenStorage::save(
+                        success->sessionToken, storageError))
+                    SDL_Log("Unable to save session: %s", storageError.c_str());
+                state->restoringSession = false;
                 state->authScreen.setWaiting(false);
                 state->view = AppView::MainMenu;
                 (void)SDL_StopTextInput(state->window);
             } else if (const auto* failure = std::get_if<
                     basilisk::game::network::AuthenticationFailure>(
                         &response.payload)) {
-                state->authScreen.setError(failure->message);
+                if (state->restoringSession) {
+                    std::string ignored;
+                    (void)basilisk::game::SessionTokenStorage::clear(ignored);
+                    state->authenticatedSessionToken.reset();
+                    state->restoringSession = false;
+                    state->authScreen.setError(
+                        "Your session expired. Sign in again.");
+                } else {
+                    state->authScreen.setError(failure->message);
+                }
+            } else if (std::holds_alternative<
+                           basilisk::game::network::LogoutSuccess>(
+                               response.payload)) {
+                state->authScreen.setWaiting(false);
             }
         }
         if (!state->networkFailureLogged &&

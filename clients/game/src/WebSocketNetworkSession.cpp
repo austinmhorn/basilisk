@@ -271,7 +271,17 @@ public:
                     shutdownSocket();
                     return;
                 }
-                if (type == network::WireMessageType::LeaderboardPageResponse) {
+                if (type == network::WireMessageType::LogoutSuccess) {
+                    network::AuthenticationResponse response;
+                    if (network::decodeAuthenticationResponse(
+                            frame, response, decodeError)) {
+                        authenticationResponse_ = std::move(response);
+                        authenticated_ = false;
+                        awaitingAuthentication_ = false;
+                        adapter_.reset();
+                        continue;
+                    }
+                } else if (type == network::WireMessageType::LeaderboardPageResponse) {
                     network::LeaderboardPageResponse response;
                     if (network::decodeLeaderboardPageResponse(
                             frame, response, decodeError)) {
@@ -344,6 +354,23 @@ public:
             socketState_->state != NetworkConnectionState::Connected ||
             !socketState_->sendBinary || !socketState_->sendBinary(bytes))
             return false;
+        authenticationResponse_.reset();
+        awaitingAuthentication_ = true;
+        return true;
+    }
+
+    bool logout(const std::string& sessionToken) {
+        if (!authenticationMode_ || !authenticated_ || sessionToken.empty())
+            return false;
+        network::WireBytes bytes;
+        std::string encodeError;
+        if (!network::encodeWire(network::AuthenticationRequest{
+                network::kProtocolVersion,
+                network::LogoutRequest{sessionToken}}, bytes, encodeError))
+            return false;
+        std::lock_guard lock(socketState_->mutex);
+        if (socketState_->closed || !socketState_->sendBinary ||
+            !socketState_->sendBinary(bytes)) return false;
         authenticationResponse_.reset();
         awaitingAuthentication_ = true;
         return true;
@@ -551,6 +578,9 @@ WebSocketNetworkSession::leaderboardPage() const noexcept {
 bool WebSocketNetworkSession::authenticate(
     const network::AuthenticationRequest& request) {
     return impl_->authenticate(request);
+}
+bool WebSocketNetworkSession::logout(const std::string& sessionToken) {
+    return impl_->logout(sessionToken);
 }
 const std::optional<network::AuthenticationResponse>&
 WebSocketNetworkSession::authenticationResponse() const noexcept {

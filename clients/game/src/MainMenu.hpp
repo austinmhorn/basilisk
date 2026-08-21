@@ -24,12 +24,14 @@ enum class MainMenuAction {
     Back,
     PreviousPage,
     NextPage,
+    Logout,
 };
 
 enum class MainMenuResult {
     None,
     Exit,
     RequestLeaderboard,
+    Logout,
 };
 
 class MainMenuState {

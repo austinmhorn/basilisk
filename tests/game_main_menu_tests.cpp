@@ -43,6 +43,11 @@ int main() {
     assert(menu.activate(MainMenuAction::PreviousPage) == MainMenuResult::None);
 
     (void)menu.back();
+    assert(menu.activate(MainMenuAction::Settings) == MainMenuResult::None);
+    assert(menu.selectedAction() == MainMenuAction::Logout);
+    assert(menu.activateSelected() == MainMenuResult::Logout);
+
+    (void)menu.back();
     menu.moveSelection(-1);
     assert(menu.selectedAction() == MainMenuAction::Exit);
     assert(menu.activateSelected() == MainMenuResult::Exit);

@@ -47,6 +47,7 @@ public:
     [[nodiscard]] const std::optional<network::LeaderboardPageResponse>&
     leaderboardPage() const noexcept;
     [[nodiscard]] bool authenticate(const network::AuthenticationRequest& request);
+    [[nodiscard]] bool logout(const std::string& sessionToken);
     [[nodiscard]] const std::optional<network::AuthenticationResponse>&
     authenticationResponse() const noexcept;
 
