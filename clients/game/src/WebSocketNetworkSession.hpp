@@ -1,9 +1,11 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "ClientSessionController.hpp"
+#include "NetworkProtocol.hpp"
 
 namespace basilisk::game {
 
@@ -37,6 +39,11 @@ public:
     [[nodiscard]] std::string error() const;
     [[nodiscard]] ClientSessionController* controller() noexcept;
     [[nodiscard]] const ClientSessionController* controller() const noexcept;
+    [[nodiscard]] bool requestLeaderboard(
+        std::uint32_t offset,
+        std::uint32_t limit);
+    [[nodiscard]] const std::optional<network::LeaderboardPageResponse>&
+    leaderboardPage() const noexcept;
 
 private:
     class Impl;

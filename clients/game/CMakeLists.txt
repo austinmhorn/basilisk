@@ -43,6 +43,7 @@ add_library(BasiliskGameActions STATIC
     src/ActionSelection.cpp
     src/ClientLifecycle.cpp
     src/ClientSessionController.cpp
+    src/MainMenu.cpp
     src/MapActionMenu.cpp
     src/SnapshotPresentation.cpp
 )
@@ -347,6 +348,7 @@ add_library(BasiliskGameRuntime STATIC
     src/DemoMap.cpp
     src/DemoSessionCommandSink.cpp
     src/DemoUi.cpp
+    src/MainMenuRenderer.cpp
     src/MapRenderer.cpp
     src/SvgTextureManager.cpp
     src/TextRenderer.cpp

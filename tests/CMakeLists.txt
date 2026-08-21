@@ -108,6 +108,16 @@ if(TARGET BasiliskGameDebugLocalSession)
 endif()
 
 if(TARGET BasiliskGameActions)
+    add_executable(BasiliskGameMainMenuTests
+        game_main_menu_tests.cpp
+    )
+    target_link_libraries(
+        BasiliskGameMainMenuTests
+        PRIVATE
+            Basilisk::GameActions
+    )
+    add_test(NAME BasiliskGameMainMenuTests COMMAND BasiliskGameMainMenuTests)
+
     add_executable(BasiliskGameActionTests
         game_action_tests.cpp
     )

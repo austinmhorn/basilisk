@@ -299,6 +299,16 @@ public:
         return adapter_ == nullptr ? nullptr : &adapter_->controller();
     }
 
+    bool requestLeaderboard(std::uint32_t offset, std::uint32_t limit) {
+        return adapter_ != nullptr && adapter_->requestLeaderboard(offset, limit);
+    }
+
+    const std::optional<network::LeaderboardPageResponse>&
+    leaderboardPage() const noexcept {
+        static const std::optional<network::LeaderboardPageResponse> empty;
+        return adapter_ == nullptr ? empty : adapter_->leaderboardPage();
+    }
+
 private:
     void fail(std::string message) {
         std::lock_guard lock(socketState_->mutex);
@@ -461,6 +471,15 @@ ClientSessionController* WebSocketNetworkSession::controller() noexcept {
 }
 const ClientSessionController* WebSocketNetworkSession::controller() const noexcept {
     return impl_->controller();
+}
+bool WebSocketNetworkSession::requestLeaderboard(
+    std::uint32_t offset,
+    std::uint32_t limit) {
+    return impl_->requestLeaderboard(offset, limit);
+}
+const std::optional<network::LeaderboardPageResponse>&
+WebSocketNetworkSession::leaderboardPage() const noexcept {
+    return impl_->leaderboardPage();
 }
 
 } // namespace basilisk::game

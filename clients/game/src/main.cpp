@@ -20,6 +20,8 @@
 #include "DemoUi.hpp"
 #include "LocalGameSessionAdapter.hpp"
 #include "MapRenderer.hpp"
+#include "MainMenu.hpp"
+#include "MainMenuRenderer.hpp"
 #include "MapActionMenu.hpp"
 #include "MapPresentation.hpp"
 #include "ScreenShell.hpp"
@@ -35,6 +37,11 @@
 
 namespace {
 
+enum class AppView {
+    MainMenu,
+    Gameplay,
+};
+
 struct AppState {
     SDL_Window* window{nullptr};
     SDL_Renderer* renderer{nullptr};
@@ -45,6 +52,9 @@ struct AppState {
     bool screenShellEnabled{false};
     bool autoLockSelectedActions{false};
     std::size_t demoSnapshotStage{0};
+    AppView view{AppView::MainMenu};
+    basilisk::game::MainMenuState mainMenu;
+    basilisk::game::MainMenuGeometry mainMenuGeometry;
 
     std::unique_ptr<basilisk::game::ClientSessionController> ownedSession;
     basilisk::game::ClientSessionController* session{nullptr};
@@ -100,6 +110,23 @@ void autoLockSelectedAction(AppState& state) {
     }
 }
 
+SDL_AppResult handleMainMenuResult(
+    AppState& state,
+    basilisk::game::MainMenuResult result) {
+
+    if (result == basilisk::game::MainMenuResult::Exit)
+        return SDL_APP_SUCCESS;
+    if (result == basilisk::game::MainMenuResult::RequestLeaderboard &&
+        state.networkSession != nullptr && state.session != nullptr) {
+        if (!state.networkSession->requestLeaderboard(
+                state.mainMenu.leaderboardOffset(),
+                basilisk::game::MainMenuState::leaderboardPageSize)) {
+            SDL_Log("Leaderboard request could not be sent");
+        }
+    }
+    return SDL_APP_CONTINUE;
+}
+
 } // namespace
 
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
@@ -141,6 +168,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         state->ownedSession.reset();
         state->session = nullptr;
         state->screenShellEnabled = true;
+        state->view = AppView::Gameplay;
         SDL_Log("Connecting to Basilisk server at %s", connectUrl->c_str());
     }
 
@@ -158,6 +186,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
                 basilisk::CaveId{34});
             state->demoMapEnabled = true;
             state->screenShellEnabled = true;
+            state->view = AppView::Gameplay;
             SDL_Log("Development demo map enabled");
             break;
         } else if (argv != nullptr && argv[index] != nullptr &&
@@ -211,6 +240,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
             }
 #endif
             state->screenShellEnabled = true;
+            state->view = AppView::Gameplay;
             state->autoLockSelectedActions = true;
             SDL_Log(
                 "Trusted local Core session enabled (map seed: %llu)",
@@ -288,6 +318,59 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     auto* state = static_cast<AppState*>(appstate);
     if (event->type == SDL_EVENT_QUIT) {
         return SDL_APP_SUCCESS;
+    }
+
+    if (state != nullptr && state->view == AppView::MainMenu) {
+        if (event->type == SDL_EVENT_KEY_DOWN && !event->key.repeat) {
+            if (event->key.key == SDLK_UP) {
+                state->mainMenu.moveSelection(-1);
+                return SDL_APP_CONTINUE;
+            }
+            if (event->key.key == SDLK_DOWN) {
+                state->mainMenu.moveSelection(1);
+                return SDL_APP_CONTINUE;
+            }
+            if (event->key.key == SDLK_RETURN ||
+                event->key.key == SDLK_KP_ENTER) {
+                return handleMainMenuResult(
+                    *state, state->mainMenu.activateSelected());
+            }
+            if (event->key.key == SDLK_ESCAPE) {
+                if (state->mainMenu.page() ==
+                        basilisk::game::MainMenuPage::Main &&
+                    state->session != nullptr &&
+                    state->session->displayedSnapshot() != nullptr) {
+                    state->view = AppView::Gameplay;
+                } else {
+                    (void)state->mainMenu.back();
+                }
+                return SDL_APP_CONTINUE;
+            }
+        }
+        if (event->type == SDL_EVENT_MOUSE_MOTION ||
+            (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+             event->button.button == SDL_BUTTON_LEFT)) {
+            if (!SDL_ConvertEventToRenderCoordinates(state->renderer, event)) {
+                SDL_Log("Unable to convert menu pointer coordinates: %s",
+                    SDL_GetError());
+                return SDL_APP_FAILURE;
+            }
+            const basilisk::game::PresentationPoint pointer =
+                event->type == SDL_EVENT_MOUSE_MOTION
+                ? basilisk::game::PresentationPoint{
+                    event->motion.x, event->motion.y}
+                : basilisk::game::PresentationPoint{
+                    event->button.x, event->button.y};
+            const auto hit = basilisk::game::hitTestMainMenu(
+                state->mainMenuGeometry, pointer);
+            if (hit.has_value()) state->mainMenu.select(*hit);
+            if (hit.has_value() &&
+                event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+                return handleMainMenuResult(
+                    *state, state->mainMenu.activateSelected());
+            }
+        }
+        return SDL_APP_CONTINUE;
     }
 
 #if defined(BASILISK_GAME_DEBUG)
@@ -433,7 +516,12 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 
     if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
         !event->key.repeat && event->key.key == SDLK_ESCAPE) {
-        if (!lifecycleModalActive) state->mapActionMenu.dismiss();
+        if (!lifecycleModalActive && state->mapActionMenu.isOpen()) {
+            state->mapActionMenu.dismiss();
+        } else if (!lifecycleModalActive && state->networkSession != nullptr) {
+            state->view = AppView::MainMenu;
+            (void)state->mainMenu.back();
+        }
         return SDL_APP_CONTINUE;
     }
 
@@ -694,10 +782,36 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
     int outputWidth = 0;
     int outputHeight = 0;
     if (SDL_GetRenderOutputSize(state->renderer, &outputWidth, &outputHeight)) {
-        const basilisk::PlayerRoundSnapshot* snapshot = state->session == nullptr
-            ? nullptr
-            : state->session->displayedSnapshot();
-        if (state->screenShellEnabled) {
+        if (state->view == AppView::MainMenu) {
+            std::string menuError;
+            const std::optional<std::int64_t> trophies =
+                state->networkSession == nullptr || state->session == nullptr
+                ? std::nullopt
+                : std::optional<std::int64_t>{state->session->trophyTotal()};
+            static const std::optional<
+                basilisk::game::network::LeaderboardPageResponse>
+                noLeaderboard;
+            const auto& leaderboard = state->networkSession == nullptr
+                ? noLeaderboard
+                : state->networkSession->leaderboardPage();
+            if (!basilisk::game::renderMainMenu(
+                    state->renderer,
+                    *state->textRenderer,
+                    state->mainMenu,
+                    trophies,
+                    leaderboard,
+                    state->mainMenuGeometry,
+                    outputWidth,
+                    outputHeight,
+                    menuError)) {
+                SDL_Log("Main menu rendering failed: %s", menuError.c_str());
+                return SDL_APP_FAILURE;
+            }
+        } else {
+          const basilisk::PlayerRoundSnapshot* snapshot = state->session == nullptr
+              ? nullptr
+              : state->session->displayedSnapshot();
+          if (state->screenShellEnabled) {
             if (snapshot != nullptr && state->session != nullptr) {
                 state->actionSelection.synchronize(
                     snapshot->round,
@@ -772,7 +886,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     return SDL_APP_FAILURE;
                 }
             }
-        } else if (snapshot != nullptr) {
+          } else if (snapshot != nullptr) {
             if (const auto* fixed = state->session->displayedMapGeometry()) {
                 state->mapLayout.updateFixed(*fixed);
             } else {
@@ -805,6 +919,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 SDL_Log("Map rendering failed: %s", mapError.c_str());
                 return SDL_APP_FAILURE;
             }
+          }
         }
     }
 
