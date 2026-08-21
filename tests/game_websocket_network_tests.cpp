@@ -2,6 +2,7 @@
 #include <cassert>
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -13,6 +14,7 @@
 
 #include "AuthoritativeInMemoryMatch.hpp"
 #include "LocalWebSocketMatchServer.hpp"
+#include "SQLiteTrophyPersistence.hpp"
 #if defined(_WIN32)
 #include "NativeNetworkRuntime.hpp"
 #endif
@@ -53,7 +55,8 @@ const AvailableAction& searchAction(const ClientSessionController& controller) {
     return *found;
 }
 
-std::unique_ptr<LocalWebSocketMatchServer> startServer() {
+std::unique_ptr<LocalWebSocketMatchServer> startServer(
+    std::optional<LocalServerTrophyConfig> trophies = std::nullopt) {
     std::string error;
     for (int attempt = 0; attempt < 10; ++attempt) {
         LocalWebSocketServerConfig config;
@@ -61,6 +64,7 @@ std::unique_ptr<LocalWebSocketMatchServer> startServer() {
         config.p1Token = "test-p1";
         config.p2Token = "test-p2";
         config.profiles = profiles();
+        config.trophies = trophies;
         auto server = LocalWebSocketMatchServer::start(std::move(config), error);
         if (server != nullptr) return server;
     }
@@ -68,6 +72,26 @@ std::unique_ptr<LocalWebSocketMatchServer> startServer() {
     assert(false && "Unable to reserve a loopback WebSocket test port");
     return nullptr;
 }
+
+class TemporaryTrophyDatabase {
+public:
+    TemporaryTrophyDatabase() {
+        const auto suffix = std::chrono::steady_clock::now()
+            .time_since_epoch().count();
+        path_ = std::filesystem::temp_directory_path() /
+            ("basilisk-server-trophies-" + std::to_string(suffix) + ".sqlite3");
+    }
+    ~TemporaryTrophyDatabase() {
+        std::error_code ignored;
+        std::filesystem::remove(path_, ignored);
+        std::filesystem::remove(path_.string() + "-shm", ignored);
+        std::filesystem::remove(path_.string() + "-wal", ignored);
+    }
+    [[nodiscard]] std::string path() const { return path_.string(); }
+
+private:
+    std::filesystem::path path_;
+};
 
 std::string url(const LocalWebSocketMatchServer& server) {
     return "ws://127.0.0.1:" + std::to_string(server.port());
@@ -275,6 +299,64 @@ void callbacksAfterClientCloseAreIgnored() {
     assert(controller->displayedSnapshot()->round == round);
 }
 
+void serverQueriesUseDurableAccountsAndSQLiteSurvivesRestart() {
+    TemporaryTrophyDatabase database;
+    std::string error;
+    auto persistence = SQLiteTrophyPersistence::open(database.path(), error);
+    assert(persistence != nullptr && error.empty());
+    const std::vector<TrophyLedgerEntry> seededEntries{
+        {TrophyMatchId{"prior-match"}, AccountIdentity{"durable-p1"},
+         TrophyReason::Win, 2},
+        {TrophyMatchId{"prior-match"}, AccountIdentity{"durable-p2"},
+         TrophyReason::Loss, -1},
+    };
+    assert(persistence->appendMatch(
+        TrophyMatchId{"prior-match"}, seededEntries, error) ==
+        TrophyAppendResult::Appended);
+    persistence.reset();
+
+    const LocalServerTrophyConfig trophies{
+        TrophyMatchId{"hosted-unfinished"},
+        AccountIdentity{"durable-p1"},
+        AccountIdentity{"durable-p2"},
+        database.path(),
+    };
+    {
+        auto server = startServer(trophies);
+        std::int64_t total = 0;
+        assert(server->trophyTotal(AccountIdentity{"durable-p1"}, total, error));
+        assert(total == 2);
+        assert(server->trophyTotal(AccountIdentity{"test-p1"}, total, error));
+        assert(total == 0); // The opaque authentication token is not an account ID.
+        std::vector<TrophyLeaderboardEntry> leaderboard;
+        assert(server->leaderboard(leaderboard, error));
+        assert(leaderboard.size() == 2);
+        const TrophyLeaderboardEntry expectedLeader{
+            AccountIdentity{"durable-p1"}, 2};
+        assert(leaderboard.front() == expectedLeader);
+
+        auto client = WebSocketNetworkSession::connect(
+            url(*server), "test-p1", error);
+        assert(client != nullptr);
+        assert(waitUntil([&] {
+            client->pump();
+            return client->controller() != nullptr;
+        }));
+        assert(client->controller()->viewContext().localPlayer == PlayerId{1});
+        server->stop();
+    }
+
+    auto reopened = startServer(LocalServerTrophyConfig{
+        TrophyMatchId{"hosted-after-restart"},
+        AccountIdentity{"durable-p1"},
+        AccountIdentity{"durable-p2"},
+        database.path(),
+    });
+    std::int64_t total = 0;
+    assert(reopened->trophyTotal(AccountIdentity{"durable-p1"}, total, error));
+    assert(total == 2);
+}
+
 } // namespace
 
 int main() {
@@ -290,4 +372,5 @@ int main() {
     unavailableServerIsAnInitialConnectionFailure();
     establishedSessionReportsConnectionLoss();
     callbacksAfterClientCloseAreIgnored();
+    serverQueriesUseDurableAccountsAndSQLiteSurvivesRestart();
 }

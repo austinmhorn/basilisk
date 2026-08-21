@@ -96,7 +96,8 @@ public:
         const TrophyMatchId& match,
         const std::map<PlayerId, AccountIdentity>& accounts,
         const MatchResult& result,
-        std::span<const GameEvent> authoritativeEvents);
+        std::span<const GameEvent> authoritativeEvents,
+        std::string* error = nullptr);
 
     [[nodiscard]] bool loadEntries(
         std::vector<TrophyLedgerEntry>& entries,

@@ -200,6 +200,7 @@ if(NOT EMSCRIPTEN)
         PUBLIC
             Basilisk::AuthoritativeNetworkSession
         PRIVATE
+            Basilisk::TrophyPersistenceSQLite
             ixwebsocket
     )
     target_compile_features(BasiliskWebSocketMatchServer PUBLIC cxx_std_20)

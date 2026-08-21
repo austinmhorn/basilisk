@@ -2,13 +2,24 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "TrophyScoring.hpp"
 #include "basilisk/Types.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
 
 namespace basilisk::game::server {
+
+struct LocalServerTrophyConfig {
+    TrophyMatchId match;
+    AccountIdentity p1Account;
+    AccountIdentity p2Account;
+
+    // Empty selects the existing in-memory persistence for tests/development.
+    std::string sqliteDatabasePath;
+};
 
 struct LocalWebSocketServerConfig {
     std::uint16_t port{8765};
@@ -17,6 +28,7 @@ struct LocalWebSocketServerConfig {
     MapSeed mapSeed{20260816};
     MatchSeed matchSeed{424242};
     std::vector<client::PublicPlayerProfile> profiles;
+    std::optional<LocalServerTrophyConfig> trophies;
 };
 
 // Native-only localhost WebSocket shell around one authoritative match.
@@ -34,6 +46,14 @@ public:
     [[nodiscard]] std::size_t processedDisconnectCount() const noexcept;
     [[nodiscard]] RoundNumber authoritativeRound() const noexcept;
     [[nodiscard]] std::size_t resolvedRoundCount() const noexcept;
+    [[nodiscard]] bool trophyTotal(
+        const AccountIdentity& account,
+        std::int64_t& total,
+        std::string& error) const;
+    [[nodiscard]] bool leaderboard(
+        std::vector<TrophyLeaderboardEntry>& entries,
+        std::string& error) const;
+    [[nodiscard]] std::optional<std::string> trophyScoringError() const;
     void advanceTime(std::uint64_t elapsedMs);
     void stop();
 

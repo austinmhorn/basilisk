@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -13,6 +14,7 @@
 #include <ixwebsocket/IXWebSocketServer.h>
 
 #include "AuthoritativeInMemoryMatch.hpp"
+#include "SQLiteTrophyPersistence.hpp"
 #if defined(_WIN32)
 #include "NativeNetworkRuntime.hpp"
 #endif
@@ -72,6 +74,7 @@ class LocalWebSocketMatchServer::Impl {
 public:
     Impl(
         std::unique_ptr<AuthoritativeInMemoryMatch> match,
+        std::shared_ptr<TrophyLedger> trophyLedger,
         std::uint16_t port,
         std::map<std::string, PlayerId> tokens
 #if defined(_WIN32)
@@ -84,6 +87,7 @@ public:
 #else
         : match_(std::move(match)),
 #endif
+          trophyLedger_(std::move(trophyLedger)),
           server_(port, "127.0.0.1", 5, 2),
           tokens_(std::move(tokens)) {}
 
@@ -148,7 +152,38 @@ public:
         std::lock_guard lock(mutex_);
         if (stopped_) return;
         match_->advanceTime(elapsedMs);
+        reportTrophyError();
         drainAll();
+    }
+
+    bool trophyTotal(
+        const AccountIdentity& account,
+        std::int64_t& total,
+        std::string& error) const {
+
+        std::lock_guard lock(mutex_);
+        if (trophyLedger_ == nullptr) {
+            error = "Trophy scoring is not configured.";
+            return false;
+        }
+        return trophyLedger_->trophyTotal(account, total, error);
+    }
+
+    bool leaderboard(
+        std::vector<TrophyLeaderboardEntry>& entries,
+        std::string& error) const {
+
+        std::lock_guard lock(mutex_);
+        if (trophyLedger_ == nullptr) {
+            error = "Trophy scoring is not configured.";
+            return false;
+        }
+        return trophyLedger_->leaderboard(entries, error);
+    }
+
+    std::optional<std::string> trophyScoringError() const {
+        std::lock_guard lock(mutex_);
+        return match_->trophyScoringError();
     }
 
 private:
@@ -220,6 +255,7 @@ private:
             reject(socket, found->second, 1008, error);
             return;
         }
+        reportTrophyError();
         drainAll();
     }
 
@@ -248,6 +284,15 @@ private:
             network::kProtocolVersion,
             network::QuitCommand{client.player},
         })) ++processedDisconnectCount_;
+        reportTrophyError();
+    }
+
+    void reportTrophyError() {
+        if (trophyErrorReported_) return;
+        const auto error = match_->trophyScoringError();
+        if (!error.has_value()) return;
+        std::fprintf(stderr, "Basilisk trophy scoring error: %s\n", error->c_str());
+        trophyErrorReported_ = true;
     }
 
     void drainAll() {
@@ -265,12 +310,14 @@ private:
     std::unique_ptr<NativeNetworkRuntime> networkRuntime_;
 #endif
     std::unique_ptr<AuthoritativeInMemoryMatch> match_;
+    std::shared_ptr<TrophyLedger> trophyLedger_;
     ix::WebSocketServer server_;
     std::map<std::string, PlayerId> tokens_;
     std::set<PlayerId> usedPlayers_;
     std::map<ix::WebSocket*, Client> clients_;
     mutable std::mutex mutex_;
     bool stopped_{false};
+    bool trophyErrorReported_{false};
     std::size_t processedDisconnectCount_{0};
 };
 
@@ -286,8 +333,39 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
         error = "P1 and P2 tokens must be non-empty and distinct.";
         return nullptr;
     }
+    std::shared_ptr<TrophyLedger> trophyLedger;
+    std::optional<TrophyScoringContext> trophyScoring;
+    if (config.trophies.has_value()) {
+        const LocalServerTrophyConfig& trophies = *config.trophies;
+        if (trophies.match.value.empty() || trophies.p1Account.value.empty() ||
+            trophies.p2Account.value.empty() ||
+            trophies.p1Account == trophies.p2Account) {
+            error = "Trophy scoring requires a match ID and two distinct account IDs.";
+            return nullptr;
+        }
+        if (trophies.sqliteDatabasePath.empty()) {
+            trophyLedger = std::make_shared<TrophyLedger>();
+        } else {
+            auto persistence = SQLiteTrophyPersistence::open(
+                trophies.sqliteDatabasePath, error);
+            if (persistence == nullptr) {
+                error = "Unable to open trophy database: " + error;
+                return nullptr;
+            }
+            trophyLedger = std::make_shared<TrophyLedger>(std::move(persistence));
+        }
+        trophyScoring = TrophyScoringContext{
+            trophies.match,
+            {
+                {PlayerId{1}, trophies.p1Account},
+                {PlayerId{2}, trophies.p2Account},
+            },
+            trophyLedger,
+        };
+    }
     auto match = AuthoritativeInMemoryMatch::create(
-        config.mapSeed, config.matchSeed, std::move(config.profiles), error);
+        config.mapSeed, config.matchSeed, std::move(config.profiles), error,
+        std::move(trophyScoring));
     if (match == nullptr) return nullptr;
     if (config.port == 0) {
         error = "WebSocket server port must be non-zero.";
@@ -298,7 +376,7 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
     if (networkRuntime == nullptr) return nullptr;
 #endif
     auto impl = std::make_unique<Impl>(
-        std::move(match), config.port,
+        std::move(match), std::move(trophyLedger), config.port,
         std::map<std::string, PlayerId>{
             {std::move(config.p1Token), PlayerId{1}},
             {std::move(config.p2Token), PlayerId{2}},
@@ -326,6 +404,21 @@ RoundNumber LocalWebSocketMatchServer::authoritativeRound() const noexcept {
 }
 std::size_t LocalWebSocketMatchServer::resolvedRoundCount() const noexcept {
     return impl_->resolvedRoundCount();
+}
+bool LocalWebSocketMatchServer::trophyTotal(
+    const AccountIdentity& account,
+    std::int64_t& total,
+    std::string& error) const {
+    return impl_->trophyTotal(account, total, error);
+}
+bool LocalWebSocketMatchServer::leaderboard(
+    std::vector<TrophyLeaderboardEntry>& entries,
+    std::string& error) const {
+    return impl_->leaderboard(entries, error);
+}
+std::optional<std::string>
+LocalWebSocketMatchServer::trophyScoringError() const {
+    return impl_->trophyScoringError();
 }
 void LocalWebSocketMatchServer::advanceTime(std::uint64_t elapsedMs) {
     impl_->advanceTime(elapsedMs);

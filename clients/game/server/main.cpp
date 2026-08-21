@@ -4,6 +4,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -41,10 +42,16 @@ int main(int argc, char** argv) {
     config.p1Token = "basilisk-p1-local";
     config.p2Token = "basilisk-p2-local";
     config.profiles = profiles();
+    std::optional<std::string> trophyDatabase;
+    std::optional<std::string> trophyMatch;
+    std::optional<std::string> p1Account;
+    std::optional<std::string> p2Account;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument{argv[index]};
         if (argument != "--port" && argument != "--p1-token" &&
-            argument != "--p2-token" && argument != "--map-seed") {
+            argument != "--p2-token" && argument != "--map-seed" &&
+            argument != "--trophy-db" && argument != "--match-id" &&
+            argument != "--p1-account" && argument != "--p2-account") {
             std::fprintf(stderr, "Unknown argument: %s\n", argv[index]);
             return 2;
         }
@@ -55,6 +62,10 @@ int main(int argc, char** argv) {
         }
         if (argument == "--p1-token") config.p1Token = argv[index];
         else if (argument == "--p2-token") config.p2Token = argv[index];
+        else if (argument == "--trophy-db") trophyDatabase = argv[index];
+        else if (argument == "--match-id") trophyMatch = argv[index];
+        else if (argument == "--p1-account") p1Account = argv[index];
+        else if (argument == "--p2-account") p2Account = argv[index];
         else {
             std::uint64_t value = 0;
             if (!parseUnsigned(argv[index], value) ||
@@ -66,6 +77,23 @@ int main(int argc, char** argv) {
             if (argument == "--port") config.port = static_cast<std::uint16_t>(value);
             else config.mapSeed = static_cast<basilisk::MapSeed>(value);
         }
+    }
+    const bool trophiesRequested = trophyDatabase.has_value() ||
+        trophyMatch.has_value() || p1Account.has_value() || p2Account.has_value();
+    if (trophiesRequested) {
+        if (!trophyMatch.has_value() || !p1Account.has_value() ||
+            !p2Account.has_value()) {
+            std::fprintf(stderr,
+                "Trophy scoring requires --match-id, --p1-account, and "
+                "--p2-account. --trophy-db is optional for in-memory use.\n");
+            return 2;
+        }
+        config.trophies = basilisk::game::server::LocalServerTrophyConfig{
+            basilisk::game::server::TrophyMatchId{std::move(*trophyMatch)},
+            basilisk::game::server::AccountIdentity{std::move(*p1Account)},
+            basilisk::game::server::AccountIdentity{std::move(*p2Account)},
+            trophyDatabase.has_value() ? std::move(*trophyDatabase) : std::string{},
+        };
     }
 
     std::string error;

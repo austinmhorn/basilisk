@@ -163,6 +163,9 @@ public:
     [[nodiscard]] std::size_t resolvedRoundCount() const noexcept {
         return resolvedRoundCount_;
     }
+    [[nodiscard]] std::optional<std::string> trophyScoringError() const {
+        return trophyScoringError_;
+    }
 
     void advanceTime(std::uint64_t elapsedMs) {
         const RoundNumber priorRound = match_.round;
@@ -298,12 +301,21 @@ private:
     void recordTrophyEvents(const std::vector<GameEvent>& events) {
         if (!trophyScoring_.has_value()) return;
         trophyEvents_.insert(trophyEvents_.end(), events.begin(), events.end());
-        if (match_.result.status != MatchStatus::Completed) return;
-        (void)trophyScoring_->ledger->scoreMatch(
+        if (match_.result.status != MatchStatus::Completed ||
+            trophyScoringAttempted_) return;
+        trophyScoringAttempted_ = true;
+        std::string error;
+        const TrophyScoreResult result = trophyScoring_->ledger->scoreMatch(
             trophyScoring_->match,
             trophyScoring_->accounts,
             match_.result,
-            trophyEvents_);
+            trophyEvents_,
+            &error);
+        if (result == TrophyScoreResult::PersistenceError) {
+            trophyScoringError_ = error.empty()
+                ? "Unable to persist trophy awards."
+                : "Unable to persist trophy awards: " + error;
+        }
     }
 
     void publishAll(const std::vector<GameEvent>& events) {
@@ -352,6 +364,8 @@ private:
     std::size_t resolvedRoundCount_{0};
     std::optional<TrophyScoringContext> trophyScoring_;
     std::vector<GameEvent> trophyEvents_;
+    bool trophyScoringAttempted_{false};
+    std::optional<std::string> trophyScoringError_;
 };
 
 InMemoryMatchEndpoint::InMemoryMatchEndpoint(
@@ -471,6 +485,11 @@ RoundNumber AuthoritativeInMemoryMatch::authoritativeRound() const noexcept {
 
 std::size_t AuthoritativeInMemoryMatch::resolvedRoundCount() const noexcept {
     return state_->resolvedRoundCount();
+}
+
+std::optional<std::string>
+AuthoritativeInMemoryMatch::trophyScoringError() const {
+    return state_->trophyScoringError();
 }
 
 void AuthoritativeInMemoryMatch::advanceTime(std::uint64_t elapsedMs) {

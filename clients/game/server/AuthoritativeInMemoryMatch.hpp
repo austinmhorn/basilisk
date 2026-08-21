@@ -62,6 +62,7 @@ public:
     // Trusted diagnostics/time input for tests and a future server loop.
     [[nodiscard]] RoundNumber authoritativeRound() const noexcept;
     [[nodiscard]] std::size_t resolvedRoundCount() const noexcept;
+    [[nodiscard]] std::optional<std::string> trophyScoringError() const;
     void advanceTime(std::uint64_t elapsedMs);
 
 private:

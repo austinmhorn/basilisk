@@ -86,8 +86,10 @@ TrophyScoreResult TrophyLedger::scoreMatch(
     const TrophyMatchId& match,
     const std::map<PlayerId, AccountIdentity>& accounts,
     const MatchResult& result,
-    std::span<const GameEvent> authoritativeEvents) {
+    std::span<const GameEvent> authoritativeEvents,
+    std::string* scoringError) {
 
+    if (scoringError != nullptr) scoringError->clear();
     if (result.status != MatchStatus::Completed)
         return TrophyScoreResult::NotTerminal;
     std::vector<TrophyLedgerEntry> entries;
@@ -134,6 +136,7 @@ TrophyScoreResult TrophyLedger::scoreMatch(
     case TrophyAppendResult::DuplicateMatch:
         return TrophyScoreResult::AlreadyScored;
     case TrophyAppendResult::Error:
+        if (scoringError != nullptr) *scoringError = std::move(error);
         return TrophyScoreResult::PersistenceError;
     }
     return TrophyScoreResult::PersistenceError;
