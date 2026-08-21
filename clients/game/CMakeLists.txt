@@ -60,6 +60,7 @@ target_compile_features(BasiliskGameActions PUBLIC cxx_std_20)
 
 add_library(BasiliskGameNetworkSession STATIC
     src/NetworkGameSessionAdapter.cpp
+    src/NetworkWireCodec.cpp
 )
 
 add_library(

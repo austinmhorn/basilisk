@@ -9,6 +9,7 @@
 
 #include "NetworkGameSessionAdapter.hpp"
 #include "NetworkProtocol.hpp"
+#include "NetworkWireCodec.hpp"
 
 using namespace basilisk;
 using namespace basilisk::game;
@@ -72,6 +73,24 @@ public:
     }
 };
 
+// Test-only byte transport: production remains transport and framing agnostic.
+class InMemoryByteTransport final : public ClientTransport {
+public:
+    std::vector<WireBytes> frames;
+    std::vector<ClientCommand> decodedCommands;
+
+    [[nodiscard]] bool send(const ClientCommand& command) override {
+        WireBytes bytes;
+        std::string error;
+        if (!encodeWire(command, bytes, error)) return false;
+        ClientCommand decoded;
+        if (!decodeClientCommand(bytes, decoded, error)) return false;
+        frames.push_back(std::move(bytes));
+        decodedCommands.push_back(std::move(decoded));
+        return true;
+    }
+};
+
 PlayerFixedMapGeometry geometryFor(CaveId cave, double x) {
     PlayerFixedMapGeometry geometry;
     geometry.fullBounds = LogicalBounds{-10.0, -8.0, 10.0, 8.0, true};
@@ -128,6 +147,349 @@ ServerBootstrap bootstrapFor(PlayerId localPlayer = PlayerId{1}) {
         snapshotFor(localPlayer, RoundNumber{1}, CaveId{7});
     bootstrap.initialMapGeometry = geometryFor(CaveId{7}, -2.0);
     return bootstrap;
+}
+
+PlayerRoundSnapshot representativeSnapshot() {
+    PlayerRoundSnapshot snapshot;
+    snapshot.player = PlayerId{1};
+    snapshot.round = RoundNumber{27};
+    snapshot.health = 70;
+    snapshot.maxHealth = 100;
+    snapshot.arrows = 3;
+    snapshot.maxArrows = 5;
+    snapshot.alive = true;
+    snapshot.inventory.items = {
+        ItemType::HealingDraught,
+        ItemType::OldHuntersMap,
+        ItemType::SurveyFragment,
+    };
+    snapshot.inventory.capacity = 4;
+    snapshot.currentCave = CaveId{7};
+    snapshot.map.currentCave = CaveId{7};
+    snapshot.map.caves = {
+        DiscoveredCaveView{
+            CaveId{7},
+            {
+                TunnelView{TunnelId{1}, CaveId{12}, false},
+                TunnelView{TunnelId{2}, std::nullopt, true},
+            }},
+        DiscoveredCaveView{
+            CaveId{12},
+            {TunnelView{TunnelId{1}, CaveId{7}, false}}},
+    };
+    snapshot.looseArrowPresent = true;
+    snapshot.temporarilyRevealedPitCaves = {CaveId{34}};
+
+    AvailableAction moveKnown;
+    moveKnown.type = ActionType::Move;
+    moveKnown.targetCave = CaveId{12};
+    AvailableAction moveUnknown;
+    moveUnknown.type = ActionType::Move;
+    moveUnknown.targetTunnel = TunnelId{2};
+    AvailableAction useSurvey;
+    useSurvey.type = ActionType::UseItem;
+    useSurvey.targetItem = ItemType::SurveyFragment;
+    useSurvey.targetTunnel = TunnelId{2};
+    AvailableAction escape;
+    escape.type = ActionType::Contextual;
+    escape.contextualAction = ContextualActionType::Escape;
+    snapshot.availableActions = {
+        moveKnown,
+        moveUnknown,
+        AvailableAction{ActionType::Search},
+        useSurvey,
+        escape,
+    };
+
+    PlayerObservation observation;
+    observation.type = ObservationType::OldHuntersMapDistance;
+    observation.viewer = PlayerId{1};
+    observation.cave = CaveId{19};
+    observation.otherPlayer = PlayerId{2};
+    observation.amount = -3;
+    observation.basiliskBehavior = BasiliskBehavior::Enraged;
+    observation.itemType = ItemType::OldHuntersMap;
+    observation.tunnel = TunnelId{2};
+    snapshot.observations = {observation};
+    snapshot.recoverableRivalSigilAvailable = true;
+    snapshot.hasHunterSigil = true;
+    snapshot.extractionCave = CaveId{34};
+    snapshot.matchStatus = MatchStatus::Completed;
+    snapshot.matchOutcome = MatchOutcome::EscapedWithSigil;
+    snapshot.winner = PlayerId{1};
+    return snapshot;
+}
+
+PlayerFixedMapGeometry representativeGeometry() {
+    PlayerFixedMapGeometry geometry;
+    geometry.fullBounds = LogicalBounds{-14.5, -8.25, 15.75, 9.5, true};
+    geometry.discoveredCaves.emplace(CaveId{7}, LogicalPoint{-2.5, 1.25});
+    geometry.discoveredCaves.emplace(CaveId{12}, LogicalPoint{4.75, -0.5});
+    geometry.unknownExitEndpoints.emplace(
+        MapExitKey{CaveId{7}, TunnelId{2}}, LogicalPoint{8.5, 3.125});
+    geometry.temporarilyRevealedCaves.emplace(
+        CaveId{34}, LogicalPoint{8.5, 3.125});
+    return geometry;
+}
+
+ServerBootstrap representativeBootstrap() {
+    ServerBootstrap bootstrap = bootstrapFor();
+    bootstrap.initialSnapshot = representativeSnapshot();
+    bootstrap.initialMapGeometry = representativeGeometry();
+    return bootstrap;
+}
+
+template <typename Message, typename Decode>
+void assertStableRoundTrip(const Message& source, Decode decode) {
+    WireBytes encoded;
+    std::string error;
+    assert(encodeWire(source, encoded, error));
+    assert(error.empty());
+    Message decoded;
+    assert(decode(encoded, decoded, error));
+    assert(error.empty());
+    WireBytes reencoded;
+    assert(encodeWire(decoded, reencoded, error));
+    assert(encoded == reencoded);
+}
+
+void allServerFieldsRoundTripExactly() {
+    const ServerBootstrap source = representativeBootstrap();
+    assertStableRoundTrip(source, decodeServerBootstrap);
+
+    WireBytes bytes;
+    std::string error;
+    assert(encodeWire(source, bytes, error));
+    ServerBootstrap decoded;
+    assert(decodeServerBootstrap(bytes, decoded, error));
+    assert(decoded.protocolVersion == 1);
+    assert(decoded.matchMetadata.totalCaves == 40);
+    assert(decoded.matchMetadata.players.size() == 2);
+    assert(decoded.matchMetadata.players[1].slot == PlayerSlot::P2);
+    assert(decoded.profiles[0].displayName == "Mara Voss");
+    assert(decoded.profiles[0].callingCardId.value == "ember-field");
+    assert(decoded.profiles[1].emblemId.value == "ward");
+    assert(decoded.viewContext.mode == client::ClientViewMode::Playing);
+
+    const PlayerRoundSnapshot& snapshot = decoded.initialSnapshot;
+    assert(snapshot.player == PlayerId{1});
+    assert(snapshot.round == RoundNumber{27});
+    assert(snapshot.health == 70 && snapshot.maxHealth == 100);
+    assert(snapshot.arrows == 3 && snapshot.maxArrows == 5);
+    assert(snapshot.alive && snapshot.looseArrowPresent);
+    assert(snapshot.inventory.capacity == 4);
+    assert(snapshot.inventory.items == source.initialSnapshot.inventory.items);
+    assert(snapshot.currentCave == CaveId{7});
+    assert(snapshot.map.caves.size() == 2);
+    assert(snapshot.map.caves[0].exits[0].destination == CaveId{12});
+    assert(snapshot.map.caves[0].exits[1].id == TunnelId{2});
+    assert(!snapshot.map.caves[0].exits[1].destination.has_value());
+    assert(snapshot.map.caves[0].exits[1].strongColdDraft);
+    assert(snapshot.temporarilyRevealedPitCaves ==
+           std::vector<CaveId>{CaveId{34}});
+    assert(snapshot.availableActions.size() == 5);
+    assert(snapshot.availableActions[0].targetCave == CaveId{12});
+    assert(snapshot.availableActions[1].targetTunnel == TunnelId{2});
+    assert(snapshot.availableActions[3].targetItem == ItemType::SurveyFragment);
+    assert(snapshot.availableActions[4].contextualAction ==
+           ContextualActionType::Escape);
+    assert(snapshot.observations.size() == 1);
+    assert(snapshot.observations[0].cave == CaveId{19});
+    assert(snapshot.observations[0].otherPlayer == PlayerId{2});
+    assert(snapshot.observations[0].amount == -3);
+    assert(snapshot.observations[0].basiliskBehavior ==
+           BasiliskBehavior::Enraged);
+    assert(snapshot.observations[0].itemType == ItemType::OldHuntersMap);
+    assert(snapshot.observations[0].tunnel == TunnelId{2});
+    assert(snapshot.recoverableRivalSigilAvailable);
+    assert(snapshot.hasHunterSigil);
+    assert(snapshot.extractionCave == CaveId{34});
+    assert(snapshot.matchStatus == MatchStatus::Completed);
+    assert(snapshot.matchOutcome == MatchOutcome::EscapedWithSigil);
+    assert(snapshot.winner == PlayerId{1});
+
+    const PlayerFixedMapGeometry& geometry = decoded.initialMapGeometry;
+    assert(geometry.fullBounds == source.initialMapGeometry.fullBounds);
+    assert(geometry.discoveredCaves == source.initialMapGeometry.discoveredCaves);
+    assert(geometry.unknownExitEndpoints ==
+           source.initialMapGeometry.unknownExitEndpoints);
+    assert(geometry.temporarilyRevealedCaves ==
+           source.initialMapGeometry.temporarilyRevealedCaves);
+
+    ServerUpdate update;
+    update.snapshot = source.initialSnapshot;
+    update.mapGeometry = source.initialMapGeometry;
+    update.viewContext = client::ClientViewContext{
+        PlayerId{2}, PlayerId{1}, client::ClientViewMode::Spectating,
+        std::nullopt};
+    assertStableRoundTrip(update, decodeServerUpdate);
+}
+
+void everyClientCommandRoundTrips() {
+    PlayerAction action;
+    action.player = PlayerId{7};
+    action.type = ActionType::UseItem;
+    action.targetCave = CaveId{12};
+    action.targetItem = ItemType::SurveyFragment;
+    action.contextualAction = ContextualActionType::Escape;
+    action.targetTunnel = TunnelId{9};
+    const std::vector<ClientCommand> commands{
+        ClientCommand{kProtocolVersion, SubmitActionCommand{action}},
+        ClientCommand{kProtocolVersion, LockActionCommand{PlayerId{7}}},
+        ClientCommand{kProtocolVersion,
+            WatchRemainingHunterCommand{PlayerId{7}, PlayerId{11}}},
+        ClientCommand{kProtocolVersion, QuitCommand{PlayerId{7}}},
+    };
+    for (const ClientCommand& command : commands)
+        assertStableRoundTrip(command, decodeClientCommand);
+
+    WireBytes bytes;
+    std::string error;
+    assert(encodeWire(commands.front(), bytes, error));
+    ClientCommand decoded;
+    assert(decodeClientCommand(bytes, decoded, error));
+    const auto& submitted = std::get<SubmitActionCommand>(decoded.payload).action;
+    assert(submitted.player == action.player);
+    assert(submitted.type == action.type);
+    assert(submitted.targetCave == action.targetCave);
+    assert(submitted.targetItem == action.targetItem);
+    assert(submitted.contextualAction == action.contextualAction);
+    assert(submitted.targetTunnel == action.targetTunnel);
+}
+
+void goldenFixtureIsStable() {
+    const ClientCommand quit{
+        kProtocolVersion,
+        QuitCommand{PlayerId{42}},
+    };
+    WireBytes bytes;
+    std::string error;
+    assert(encodeWire(quit, bytes, error));
+    const WireBytes expected{
+        0x42, 0x53, 0x4b, 0x31,
+        0x13,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x2a,
+    };
+    assert(bytes == expected);
+}
+
+void malformedWireIsRejected() {
+    WireBytes valid;
+    std::string error;
+    assert(encodeWire(
+        ClientCommand{kProtocolVersion, QuitCommand{PlayerId{42}}},
+        valid,
+        error));
+
+    for (std::size_t size = 0; size < valid.size(); ++size) {
+        ClientCommand decoded;
+        assert(!decodeClientCommand(
+            std::span<const std::uint8_t>{valid.data(), size}, decoded, error));
+        assert(!error.empty());
+    }
+
+    WireBytes malformed = valid;
+    malformed.push_back(0xff);
+    ClientCommand command;
+    assert(!decodeClientCommand(malformed, command, error));
+
+    malformed = valid;
+    malformed[4] = 0xff;
+    assert(!decodeClientCommand(malformed, command, error));
+
+    malformed = valid;
+    malformed[8] = 0x02;
+    assert(!decodeClientCommand(malformed, command, error));
+
+    PlayerAction action;
+    action.player = PlayerId{1};
+    WireBytes submitted;
+    assert(encodeWire(
+        ClientCommand{kProtocolVersion, SubmitActionCommand{action}},
+        submitted,
+        error));
+    submitted[13] = 0xff;
+    assert(!decodeClientCommand(submitted, command, error));
+    submitted[13] = static_cast<std::uint8_t>(ActionType::Search);
+    submitted[14] = 0x02;
+    assert(!decodeClientCommand(submitted, command, error));
+
+    WireBytes bootstrapBytes;
+    assert(encodeWire(representativeBootstrap(), bootstrapBytes, error));
+    ServerBootstrap bootstrap;
+
+    WireBytes malformedBootstrap = bootstrapBytes;
+    malformedBootstrap.pop_back();
+    assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
+
+    malformedBootstrap = bootstrapBytes;
+    malformedBootstrap.push_back(0xff);
+    assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
+
+    malformedBootstrap = bootstrapBytes;
+    malformedBootstrap[8] = 0x02;
+    assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
+
+    malformedBootstrap = bootstrapBytes;
+    malformedBootstrap[4] = 0xff;
+    assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
+
+    bootstrapBytes[13] = 0x00;
+    bootstrapBytes[14] = 0x00;
+    bootstrapBytes[15] = 0x40;
+    bootstrapBytes[16] = 0x01;
+    assert(!decodeServerBootstrap(bootstrapBytes, bootstrap, error));
+
+    ServerBootstrap missingRequiredProfile = representativeBootstrap();
+    missingRequiredProfile.profiles.pop_back();
+    assert(!encodeWire(missingRequiredProfile, bootstrapBytes, error));
+
+    ServerUpdate unsafeGeometry;
+    unsafeGeometry.snapshot = representativeSnapshot();
+    unsafeGeometry.mapGeometry = representativeGeometry();
+    unsafeGeometry.mapGeometry.discoveredCaves.emplace(
+        CaveId{999}, LogicalPoint{0.0, 0.0});
+    assert(!encodeWire(unsafeGeometry, bootstrapBytes, error));
+}
+
+void byteTransportAndDecodedServerDataReachController() {
+    WireBytes bootstrapFrame;
+    std::string error;
+    assert(encodeWire(representativeBootstrap(), bootstrapFrame, error));
+    ServerBootstrap decodedBootstrap;
+    assert(decodeServerBootstrap(
+        bootstrapFrame, decodedBootstrap, error));
+
+    auto transport = std::make_shared<InMemoryByteTransport>();
+    auto adapter = NetworkGameSessionAdapter::create(
+        std::move(decodedBootstrap), transport, error);
+    assert(adapter != nullptr);
+    assert(adapter->controller().displayedSnapshot()->round == RoundNumber{27});
+    assert(adapter->controller().submitAndLock(
+        adapter->controller().displayedSnapshot()->availableActions.front()));
+    assert(transport->frames.size() == 2);
+    assert(transport->decodedCommands.size() == 2);
+    assert(std::holds_alternative<SubmitActionCommand>(
+        transport->decodedCommands[0].payload));
+    assert(std::holds_alternative<LockActionCommand>(
+        transport->decodedCommands[1].payload));
+
+    ServerUpdate sourceUpdate;
+    sourceUpdate.snapshot = representativeSnapshot();
+    sourceUpdate.snapshot.round = RoundNumber{28};
+    sourceUpdate.snapshot.health = 61;
+    sourceUpdate.mapGeometry = representativeGeometry();
+    WireBytes updateFrame;
+    assert(encodeWire(sourceUpdate, updateFrame, error));
+    ServerUpdate decodedUpdate;
+    assert(decodeServerUpdate(updateFrame, decodedUpdate, error));
+    assert(adapter->ingest(std::move(decodedUpdate), error));
+    assert(adapter->controller().displayedSnapshot()->round == RoundNumber{28});
+    assert(adapter->controller().displayedSnapshot()->health == 61);
+    assert(adapter->controller().displayedMapGeometry()
+               ->unknownExitEndpoints.contains(
+                   MapExitKey{CaveId{7}, TunnelId{2}}));
 }
 
 std::unique_ptr<NetworkGameSessionAdapter> makeAdapter(
@@ -289,6 +651,11 @@ void protocolMismatchIsRejectedCleanly() {
 } // namespace
 
 int main() {
+    allServerFieldsRoundTripExactly();
+    everyClientCommandRoundTrips();
+    goldenFixtureIsStable();
+    malformedWireIsRejected();
+    byteTransportAndDecodedServerDataReachController();
     bootstrapCreatesUsableController();
     outboundCommandsReachTransportExactly();
     inboundUpdatesReachController();
