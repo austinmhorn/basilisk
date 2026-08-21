@@ -134,6 +134,21 @@ if(TARGET BasiliskGameNetworkSession)
     )
 endif()
 
+if(TARGET BasiliskAuthoritativeNetworkSession)
+    add_executable(BasiliskAuthoritativeNetworkSessionTests
+        game_authoritative_network_session_tests.cpp
+    )
+    target_link_libraries(
+        BasiliskAuthoritativeNetworkSessionTests
+        PRIVATE
+            Basilisk::AuthoritativeNetworkSession
+    )
+    add_test(
+        NAME BasiliskAuthoritativeNetworkSessionTests
+        COMMAND BasiliskAuthoritativeNetworkSessionTests
+    )
+endif()
+
 add_executable(BasiliskSnapshotTests
     snapshot_tests.cpp
 )

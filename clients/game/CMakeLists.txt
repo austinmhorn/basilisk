@@ -80,6 +80,29 @@ target_link_libraries(
 )
 target_compile_features(BasiliskGameNetworkSession PUBLIC cxx_std_20)
 
+add_library(BasiliskAuthoritativeNetworkSession STATIC EXCLUDE_FROM_ALL
+    server/AuthoritativeInMemoryMatch.cpp
+)
+add_library(
+    Basilisk::AuthoritativeNetworkSession
+    ALIAS BasiliskAuthoritativeNetworkSession
+)
+target_include_directories(BasiliskAuthoritativeNetworkSession
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/server
+)
+target_link_libraries(
+    BasiliskAuthoritativeNetworkSession
+    PUBLIC
+        Basilisk::GameNetworkSession
+    PRIVATE
+        Basilisk::Core
+)
+target_compile_features(
+    BasiliskAuthoritativeNetworkSession
+    PUBLIC cxx_std_20
+)
+
 add_library(BasiliskGameLocalSession STATIC
     src/LocalGameSessionAdapter.cpp
 )
