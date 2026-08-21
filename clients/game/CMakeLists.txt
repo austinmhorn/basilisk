@@ -152,6 +152,7 @@ target_compile_features(
 if(NOT EMSCRIPTEN)
     add_library(BasiliskLobbyCoordinator STATIC EXCLUDE_FROM_ALL
         server/LobbyCoordinator.cpp
+        server/LobbyProtocolService.cpp
     )
     add_library(Basilisk::LobbyCoordinator ALIAS BasiliskLobbyCoordinator)
     target_include_directories(BasiliskLobbyCoordinator PUBLIC
@@ -259,6 +260,7 @@ if(NOT EMSCRIPTEN)
         PRIVATE
             Basilisk::TrophyPersistenceSQLite
             Basilisk::AccountAuth
+            Basilisk::LobbyCoordinator
             ixwebsocket
     )
     target_compile_features(BasiliskWebSocketMatchServer PUBLIC cxx_std_20)

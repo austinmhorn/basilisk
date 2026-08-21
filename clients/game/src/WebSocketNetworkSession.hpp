@@ -48,8 +48,11 @@ public:
     leaderboardPage() const noexcept;
     [[nodiscard]] bool authenticate(const network::AuthenticationRequest& request);
     [[nodiscard]] bool logout(const std::string& sessionToken);
+    [[nodiscard]] bool requestLobby(const network::LobbyRequest& request);
     [[nodiscard]] const std::optional<network::AuthenticationResponse>&
     authenticationResponse() const noexcept;
+    [[nodiscard]] const std::optional<network::LobbyResponse>&
+    lobbyResponse() const noexcept;
 
 private:
     class Impl;

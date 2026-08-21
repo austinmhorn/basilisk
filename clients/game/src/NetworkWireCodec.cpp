@@ -762,6 +762,10 @@ bool readHeader(
         case WireMessageType::AuthenticationSuccess:
         case WireMessageType::AuthenticationFailure:
         case WireMessageType::LogoutSuccess:
+        case WireMessageType::LobbyHosted:
+        case WireMessageType::LobbyMatchAssigned:
+        case WireMessageType::LobbyCancelled:
+        case WireMessageType::LobbyFailure:
         case WireMessageType::SubmitAction:
         case WireMessageType::LockAction:
         case WireMessageType::WatchRemainingHunter:
@@ -771,6 +775,9 @@ bool readHeader(
         case WireMessageType::Login:
         case WireMessageType::AuthenticateSession:
         case WireMessageType::LogoutSession:
+        case WireMessageType::HostLobby:
+        case WireMessageType::JoinLobby:
+        case WireMessageType::CancelHostedLobby:
             break;
         default:
             return reader.fail("Unknown wire message type.");
@@ -830,6 +837,10 @@ bool inspectWireMessageType(
         case WireMessageType::AuthenticationSuccess:
         case WireMessageType::AuthenticationFailure:
         case WireMessageType::LogoutSuccess:
+        case WireMessageType::LobbyHosted:
+        case WireMessageType::LobbyMatchAssigned:
+        case WireMessageType::LobbyCancelled:
+        case WireMessageType::LobbyFailure:
         case WireMessageType::SubmitAction:
         case WireMessageType::LockAction:
         case WireMessageType::WatchRemainingHunter:
@@ -839,6 +850,9 @@ bool inspectWireMessageType(
         case WireMessageType::Login:
         case WireMessageType::AuthenticateSession:
         case WireMessageType::LogoutSession:
+        case WireMessageType::HostLobby:
+        case WireMessageType::JoinLobby:
+        case WireMessageType::CancelHostedLobby:
             type = candidate;
             return true;
     }
@@ -1019,6 +1033,59 @@ bool encodeWire(
     if (!writer.finish()) return false;
     AuthenticationResponse validated;
     return decodeAuthenticationResponse(bytes, validated, error);
+}
+
+bool encodeWire(const LobbyRequest& message, WireBytes& bytes, std::string& error) {
+    Writer writer(bytes, error);
+    if (message.protocolVersion != kProtocolVersion)
+        return writer.fail("Unsupported Basilisk network protocol version.");
+    const WireMessageType type = std::visit([](const auto& request) {
+        using T = std::decay_t<decltype(request)>;
+        if constexpr (std::is_same_v<T, HostLobbyRequest>)
+            return WireMessageType::HostLobby;
+        if constexpr (std::is_same_v<T, JoinLobbyRequest>)
+            return WireMessageType::JoinLobby;
+        return WireMessageType::CancelHostedLobby;
+    }, message.payload);
+    writeHeader(writer, type, message.protocolVersion);
+    const bool written = std::visit([&](const auto& request) {
+        using T = std::decay_t<decltype(request)>;
+        if constexpr (std::is_same_v<T, HostLobbyRequest>) return true;
+        else return !request.lobbyCode.empty() && writer.string(request.lobbyCode);
+    }, message.payload);
+    if (!written || !writer.finish()) return false;
+    LobbyRequest validated;
+    return decodeLobbyRequest(bytes, validated, error);
+}
+
+bool encodeWire(const LobbyResponse& message, WireBytes& bytes, std::string& error) {
+    Writer writer(bytes, error);
+    if (message.protocolVersion != kProtocolVersion)
+        return writer.fail("Unsupported Basilisk network protocol version.");
+    const WireMessageType type = std::visit([](const auto& response) {
+        using T = std::decay_t<decltype(response)>;
+        if constexpr (std::is_same_v<T, LobbyHosted>) return WireMessageType::LobbyHosted;
+        if constexpr (std::is_same_v<T, LobbyMatchAssigned>) return WireMessageType::LobbyMatchAssigned;
+        if constexpr (std::is_same_v<T, LobbyCancelled>) return WireMessageType::LobbyCancelled;
+        return WireMessageType::LobbyFailure;
+    }, message.payload);
+    writeHeader(writer, type, message.protocolVersion);
+    const bool written = std::visit([&](const auto& response) {
+        using T = std::decay_t<decltype(response)>;
+        if constexpr (std::is_same_v<T, LobbyMatchAssigned>) {
+            if (response.lobbyCode.empty()) return false;
+            if (!writer.string(response.lobbyCode)) return false;
+            writer.u8(static_cast<std::uint8_t>(response.role));
+            return true;
+        } else if constexpr (std::is_same_v<T, LobbyFailure>) {
+            return !response.message.empty() && writer.string(response.message);
+        } else {
+            return !response.lobbyCode.empty() && writer.string(response.lobbyCode);
+        }
+    }, message.payload);
+    if (!written || !writer.finish()) return false;
+    LobbyResponse validated;
+    return decodeLobbyResponse(bytes, validated, error);
 }
 
 bool decodeServerBootstrap(
@@ -1269,6 +1336,61 @@ bool decodeAuthenticationResponse(
         decoded.payload = std::move(response);
     } else {
         decoded.payload = LogoutSuccess{};
+    }
+    if (!finishRead(reader)) return false;
+    message = std::move(decoded);
+    return true;
+}
+
+bool decodeLobbyRequest(std::span<const std::uint8_t> bytes,
+                        LobbyRequest& message, std::string& error) {
+    WireMessageType type{};
+    if (!inspectWireMessageType(bytes, type, error)) return false;
+    if (type != WireMessageType::HostLobby && type != WireMessageType::JoinLobby &&
+        type != WireMessageType::CancelHostedLobby)
+        return (error = "Unexpected wire message type."), false;
+    Reader reader(bytes, error);
+    LobbyRequest decoded;
+    if (!readHeader(reader, type, decoded.protocolVersion)) return false;
+    if (type == WireMessageType::HostLobby) decoded.payload = HostLobbyRequest{};
+    else {
+        std::string code;
+        if (!reader.string(code) || code.empty())
+            return reader.fail("Invalid lobby code.");
+        if (type == WireMessageType::JoinLobby)
+            decoded.payload = JoinLobbyRequest{std::move(code)};
+        else decoded.payload = CancelHostedLobbyRequest{std::move(code)};
+    }
+    if (!finishRead(reader)) return false;
+    message = std::move(decoded);
+    return true;
+}
+
+bool decodeLobbyResponse(std::span<const std::uint8_t> bytes,
+                         LobbyResponse& message, std::string& error) {
+    WireMessageType type{};
+    if (!inspectWireMessageType(bytes, type, error)) return false;
+    if (type != WireMessageType::LobbyHosted &&
+        type != WireMessageType::LobbyMatchAssigned &&
+        type != WireMessageType::LobbyCancelled &&
+        type != WireMessageType::LobbyFailure)
+        return (error = "Unexpected wire message type."), false;
+    Reader reader(bytes, error);
+    LobbyResponse decoded;
+    if (!readHeader(reader, type, decoded.protocolVersion)) return false;
+    std::string value;
+    if (!reader.string(value) || value.empty()) return reader.fail("Invalid lobby response.");
+    if (type == WireMessageType::LobbyHosted) decoded.payload = LobbyHosted{std::move(value)};
+    else if (type == WireMessageType::LobbyCancelled)
+        decoded.payload = LobbyCancelled{std::move(value)};
+    else if (type == WireMessageType::LobbyFailure)
+        decoded.payload = LobbyFailure{std::move(value)};
+    else {
+        std::uint8_t role{};
+        if (!reader.u8(role) || (role != 1 && role != 2))
+            return reader.fail("Invalid lobby assignment role.");
+        decoded.payload = LobbyMatchAssigned{
+            std::move(value), static_cast<LobbyAssignmentRole>(role)};
     }
     if (!finishRead(reader)) return false;
     message = std::move(decoded);

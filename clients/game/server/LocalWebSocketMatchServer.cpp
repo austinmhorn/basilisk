@@ -15,6 +15,7 @@
 
 #include "AuthoritativeInMemoryMatch.hpp"
 #include "AccountAuthProtocol.hpp"
+#include "LobbyProtocolService.hpp"
 #include "SQLiteTrophyPersistence.hpp"
 #if defined(_WIN32)
 #include "NativeNetworkRuntime.hpp"
@@ -197,6 +198,7 @@ private:
     struct Client {
         PlayerId player{};
         std::shared_ptr<InMemoryMatchEndpoint> endpoint;
+        std::optional<AccountIdentity> account;
         bool active{true};
     };
 
@@ -248,7 +250,7 @@ private:
             socket.close(1008, error);
             return;
         }
-        clients_.emplace(&socket, Client{*player, std::move(endpoint), true});
+        clients_.emplace(&socket, Client{*player, std::move(endpoint), std::nullopt, true});
         usedPlayers_.insert(*player);
         drainAll();
     }
@@ -291,6 +293,29 @@ private:
             clients_.erase(found);
             pendingAuthentication_.insert(&socket);
             drainAll();
+            return;
+        }
+        if (found->second.account.has_value() &&
+            network::inspectWireMessageType(bytes, type, error) &&
+            (type == network::WireMessageType::HostLobby ||
+             type == network::WireMessageType::JoinLobby ||
+             type == network::WireMessageType::CancelHostedLobby)) {
+            std::vector<LobbyProtocolDelivery> deliveries;
+            if (!lobbyProtocol_.process(
+                    *found->second.account, bytes, deliveries, error)) {
+                reject(socket, found->second, 1008, error);
+                return;
+            }
+            for (const LobbyProtocolDelivery& delivery : deliveries) {
+                for (auto& [recipientSocket, recipient] : clients_) {
+                    if (!recipient.active || !recipient.account.has_value() ||
+                        *recipient.account != delivery.recipient) continue;
+                    const std::string payload(
+                        reinterpret_cast<const char*>(delivery.bytes.data()),
+                        delivery.bytes.size());
+                    (void)recipientSocket->sendBinary(payload);
+                }
+            }
             return;
         }
         if (!found->second.endpoint->sendBytes(
@@ -351,7 +376,7 @@ private:
         }
         pendingAuthentication_.erase(&socket);
         clients_.emplace(
-            &socket, Client{bound->second, std::move(endpoint), true});
+            &socket, Client{bound->second, std::move(endpoint), account, true});
         usedPlayers_.insert(bound->second);
         drainAll();
     }
@@ -414,6 +439,8 @@ private:
     std::shared_ptr<SQLiteAccountAuth> authentication_;
     AccountAuthProtocol authenticationProtocol_;
     std::map<AccountIdentity, PlayerId> authenticatedAccounts_;
+    LobbyCoordinator lobbies_;
+    LobbyProtocolService lobbyProtocol_{lobbies_};
     std::set<PlayerId> usedPlayers_;
     std::set<ix::WebSocket*> pendingAuthentication_;
     std::map<ix::WebSocket*, Client> clients_;

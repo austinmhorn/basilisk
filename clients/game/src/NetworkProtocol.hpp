@@ -61,6 +61,31 @@ struct AuthenticationResponse {
     AuthenticationResponsePayload payload;
 };
 
+struct HostLobbyRequest {};
+struct JoinLobbyRequest { std::string lobbyCode; };
+struct CancelHostedLobbyRequest { std::string lobbyCode; };
+using LobbyRequestPayload = std::variant<
+    HostLobbyRequest, JoinLobbyRequest, CancelHostedLobbyRequest>;
+struct LobbyRequest {
+    std::uint32_t protocolVersion{kProtocolVersion};
+    LobbyRequestPayload payload;
+};
+
+enum class LobbyAssignmentRole : std::uint8_t { Host = 1, Guest = 2 };
+struct LobbyHosted { std::string lobbyCode; };
+struct LobbyMatchAssigned {
+    std::string lobbyCode;
+    LobbyAssignmentRole role{LobbyAssignmentRole::Guest};
+};
+struct LobbyCancelled { std::string lobbyCode; };
+struct LobbyFailure { std::string message; };
+using LobbyResponsePayload = std::variant<
+    LobbyHosted, LobbyMatchAssigned, LobbyCancelled, LobbyFailure>;
+struct LobbyResponse {
+    std::uint32_t protocolVersion{kProtocolVersion};
+    LobbyResponsePayload payload;
+};
+
 // Initial player-safe state supplied after an online session is established.
 struct ServerBootstrap {
     std::uint32_t protocolVersion{kProtocolVersion};

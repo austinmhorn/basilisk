@@ -18,6 +18,10 @@ enum class WireMessageType : std::uint8_t {
     AuthenticationSuccess = 4,
     AuthenticationFailure = 5,
     LogoutSuccess = 6,
+    LobbyHosted = 7,
+    LobbyMatchAssigned = 8,
+    LobbyCancelled = 9,
+    LobbyFailure = 10,
     SubmitAction = 16,
     LockAction = 17,
     WatchRemainingHunter = 18,
@@ -27,6 +31,9 @@ enum class WireMessageType : std::uint8_t {
     Login = 33,
     AuthenticateSession = 34,
     LogoutSession = 35,
+    HostLobby = 36,
+    JoinLobby = 37,
+    CancelHostedLobby = 38,
 };
 
 [[nodiscard]] bool inspectWireMessageType(
@@ -46,6 +53,10 @@ enum class WireMessageType : std::uint8_t {
     const AuthenticationResponse& message,
     WireBytes& bytes,
     std::string& error);
+[[nodiscard]] bool encodeWire(
+    const LobbyRequest& message, WireBytes& bytes, std::string& error);
+[[nodiscard]] bool encodeWire(
+    const LobbyResponse& message, WireBytes& bytes, std::string& error);
 [[nodiscard]] bool encodeWire(
     const ServerUpdate& message,
     WireBytes& bytes,
@@ -82,6 +93,12 @@ enum class WireMessageType : std::uint8_t {
 [[nodiscard]] bool decodeAuthenticationResponse(
     std::span<const std::uint8_t> bytes,
     AuthenticationResponse& message,
+    std::string& error);
+[[nodiscard]] bool decodeLobbyRequest(
+    std::span<const std::uint8_t> bytes, LobbyRequest& message,
+    std::string& error);
+[[nodiscard]] bool decodeLobbyResponse(
+    std::span<const std::uint8_t> bytes, LobbyResponse& message,
     std::string& error);
 
 } // namespace basilisk::game::network

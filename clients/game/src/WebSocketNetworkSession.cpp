@@ -271,7 +271,16 @@ public:
                     shutdownSocket();
                     return;
                 }
-                if (type == network::WireMessageType::LogoutSuccess) {
+                if (type == network::WireMessageType::LobbyHosted ||
+                    type == network::WireMessageType::LobbyMatchAssigned ||
+                    type == network::WireMessageType::LobbyCancelled ||
+                    type == network::WireMessageType::LobbyFailure) {
+                    network::LobbyResponse response;
+                    if (network::decodeLobbyResponse(frame, response, decodeError)) {
+                        lobbyResponse_ = std::move(response);
+                        continue;
+                    }
+                } else if (type == network::WireMessageType::LogoutSuccess) {
                     network::AuthenticationResponse response;
                     if (network::decodeAuthenticationResponse(
                             frame, response, decodeError)) {
@@ -376,8 +385,23 @@ public:
         return true;
     }
 
+    bool requestLobby(const network::LobbyRequest& request) {
+        network::WireBytes bytes;
+        std::string encodeError;
+        if (!authenticated_ || !network::encodeWire(request, bytes, encodeError))
+            return false;
+        std::lock_guard lock(socketState_->mutex);
+        if (socketState_->closed || !socketState_->sendBinary ||
+            !socketState_->sendBinary(bytes)) return false;
+        lobbyResponse_.reset();
+        return true;
+    }
+
     const std::optional<network::AuthenticationResponse>&
     authenticationResponse() const noexcept { return authenticationResponse_; }
+    const std::optional<network::LobbyResponse>& lobbyResponse() const noexcept {
+        return lobbyResponse_;
+    }
 
 private:
     void fail(std::string message) {
@@ -502,6 +526,7 @@ private:
     std::unique_ptr<NetworkGameSessionAdapter> adapter_;
     std::string url_;
     std::optional<network::AuthenticationResponse> authenticationResponse_;
+    std::optional<network::LobbyResponse> lobbyResponse_;
     bool authenticationMode_{false};
     bool awaitingAuthentication_{false};
     bool authenticated_{false};
@@ -582,9 +607,17 @@ bool WebSocketNetworkSession::authenticate(
 bool WebSocketNetworkSession::logout(const std::string& sessionToken) {
     return impl_->logout(sessionToken);
 }
+bool WebSocketNetworkSession::requestLobby(
+    const network::LobbyRequest& request) {
+    return impl_->requestLobby(request);
+}
 const std::optional<network::AuthenticationResponse>&
 WebSocketNetworkSession::authenticationResponse() const noexcept {
     return impl_->authenticationResponse();
+}
+const std::optional<network::LobbyResponse>&
+WebSocketNetworkSession::lobbyResponse() const noexcept {
+    return impl_->lobbyResponse();
 }
 
 } // namespace basilisk::game
