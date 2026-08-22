@@ -51,6 +51,7 @@ if(BASILISK_BUILD_GAME AND (APPLE OR WIN32))
             "Basilisk-${PROJECT_VERSION}-macOS-${CMAKE_SYSTEM_PROCESSOR}")
     elseif(WIN32)
         set(CPACK_GENERATOR "ZIP")
+        set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
         set(CPACK_PACKAGE_FILE_NAME
             "Basilisk-${PROJECT_VERSION}-Windows-${CMAKE_SYSTEM_PROCESSOR}")
     endif()

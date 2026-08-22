@@ -84,3 +84,119 @@ jobs:
             build-web/clients/game/BasiliskGame.js
             build-web/clients/game/BasiliskGame.wasm
           if-no-files-found: error
+
+  package-macos:
+    name: Package macOS DMG
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Release package
+        run: >-
+          cmake -S . -B build-package
+          -DCMAKE_BUILD_TYPE=Release
+          -DBASILISK_BUILD_GAME=ON
+          -DBASILISK_BUILD_CLI=OFF
+          -DBASILISK_BUILD_SIM=OFF
+          -DBASILISK_BUILD_TESTS=OFF
+
+      - name: Build DMG
+        run: cmake --build build-package --config Release --target package
+
+      - name: Validate DMG contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="$(find build-package -maxdepth 1 -name 'Basilisk-*-macOS-*.dmg' -type f -print -quit)"
+          test -n "${package}"
+          test -s "${package}"
+
+          mount_point="${RUNNER_TEMP}/basilisk-dmg"
+          mkdir -p "${mount_point}"
+          hdiutil attach -readonly -nobrowse -mountpoint "${mount_point}" "${package}"
+          trap 'hdiutil detach "${mount_point}"' EXIT
+
+          app="${mount_point}/BasiliskGame.app"
+          test -x "${app}/Contents/MacOS/BasiliskGame"
+          test -s "${app}/Contents/Resources/BasiliskGame.icns"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "${app}/Contents/Info.plist")" = "BasiliskGame.icns"
+          test -d "${app}/Contents/Resources/assets/fonts"
+          test -d "${app}/Contents/Resources/assets/ui"
+          test -d "${app}/Contents/Resources/assets/items"
+          test -d "${app}/Contents/Resources/assets/emblems"
+          test -s "${app}/Contents/Resources/assets/fonts/Inter-Regular.ttf"
+          test -s "${app}/Contents/Resources/assets/ui/basilisk-logo.svg"
+          test -s "${app}/Contents/Resources/assets/items/healing-draught.svg"
+          test -s "${app}/Contents/Resources/assets/emblems/circle.svg"
+          test ! -e "${mount_point}/BasiliskGameDebug"
+          test ! -e "${mount_point}/BasiliskServer"
+
+      - name: Upload macOS package
+        uses: actions/upload-artifact@v4
+        with:
+          name: BasiliskGame-macOS-${{ runner.arch }}
+          path: build-package/Basilisk-*-macOS-*.dmg
+          if-no-files-found: error
+
+  package-windows:
+    name: Package Windows ZIP
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Release package
+        run: >-
+          cmake -S . -B build-package
+          -DCMAKE_BUILD_TYPE=Release
+          -DBASILISK_BUILD_GAME=ON
+          -DBASILISK_BUILD_CLI=OFF
+          -DBASILISK_BUILD_SIM=OFF
+          -DBASILISK_BUILD_TESTS=OFF
+
+      - name: Build ZIP
+        run: cmake --build build-package --config Release --target package
+
+      - name: Validate ZIP contents
+        shell: pwsh
+        run: |
+          $package = Get-ChildItem build-package -Filter 'Basilisk-*-Windows-*.zip' |
+              Select-Object -First 1
+          if (-not $package -or $package.Length -eq 0) {
+              throw 'The Windows release ZIP was not generated.'
+          }
+
+          $expanded = Join-Path $env:RUNNER_TEMP 'basilisk-package'
+          Expand-Archive -LiteralPath $package.FullName -DestinationPath $expanded
+
+          $requiredPaths = @(
+              'BasiliskGame.exe',
+              'assets/fonts',
+              'assets/ui',
+              'assets/items',
+              'assets/emblems',
+              'assets/fonts/Inter-Regular.ttf',
+              'assets/ui/basilisk-logo.svg',
+              'assets/items/healing-draught.svg',
+              'assets/emblems/circle.svg'
+          )
+          foreach ($relativePath in $requiredPaths) {
+              if (-not (Test-Path (Join-Path $expanded $relativePath))) {
+                  throw "Missing required package path: $relativePath"
+              }
+          }
+
+          if (Get-ChildItem $expanded -Recurse -File |
+                  Where-Object { $_.Name -in @('BasiliskGameDebug.exe', 'BasiliskServer.exe') }) {
+              throw 'The shipping ZIP contains a debug or server executable.'
+          }
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: BasiliskGame-Windows-${{ runner.arch }}
+          path: build-package/Basilisk-*-Windows-*.zip
+          if-no-files-found: error
