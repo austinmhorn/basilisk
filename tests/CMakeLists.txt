@@ -108,6 +108,16 @@ if(TARGET BasiliskGameDebugLocalSession)
 endif()
 
 if(TARGET BasiliskGameActions)
+    add_executable(BasiliskGameMainMenuTests
+        game_main_menu_tests.cpp
+    )
+    target_link_libraries(
+        BasiliskGameMainMenuTests
+        PRIVATE
+            Basilisk::GameActions
+    )
+    add_test(NAME BasiliskGameMainMenuTests COMMAND BasiliskGameMainMenuTests)
+
     add_executable(BasiliskGameActionTests
         game_action_tests.cpp
     )
@@ -117,6 +127,107 @@ if(TARGET BasiliskGameActions)
             Basilisk::GameLocalSession
     )
     add_test(NAME BasiliskGameActionTests COMMAND BasiliskGameActionTests)
+endif()
+
+if(TARGET BasiliskGameNetworkSession)
+    add_executable(BasiliskGameNetworkSessionTests
+        game_network_session_tests.cpp
+    )
+    target_link_libraries(
+        BasiliskGameNetworkSessionTests
+        PRIVATE
+            Basilisk::GameNetworkSession
+    )
+    add_test(
+        NAME BasiliskGameNetworkSessionTests
+        COMMAND BasiliskGameNetworkSessionTests
+    )
+endif()
+
+if(TARGET BasiliskAuthoritativeNetworkSession)
+    add_executable(BasiliskTrophyScoringTests
+        trophy_scoring_tests.cpp
+    )
+    target_link_libraries(
+        BasiliskTrophyScoringTests
+        PRIVATE
+            Basilisk::AuthoritativeNetworkSession
+    )
+    add_test(
+        NAME BasiliskTrophyScoringTests
+        COMMAND BasiliskTrophyScoringTests
+    )
+
+    add_executable(BasiliskAuthoritativeNetworkSessionTests
+        game_authoritative_network_session_tests.cpp
+    )
+    target_link_libraries(
+        BasiliskAuthoritativeNetworkSessionTests
+        PRIVATE
+            Basilisk::AuthoritativeNetworkSession
+    )
+    add_test(
+        NAME BasiliskAuthoritativeNetworkSessionTests
+        COMMAND BasiliskAuthoritativeNetworkSessionTests
+    )
+endif()
+
+if(TARGET BasiliskTrophyPersistenceSQLite)
+    add_executable(BasiliskTrophyPersistenceTests
+        trophy_persistence_tests.cpp
+    )
+    target_link_libraries(
+        BasiliskTrophyPersistenceTests
+        PRIVATE
+            Basilisk::TrophyPersistenceSQLite
+    )
+    add_test(
+        NAME BasiliskTrophyPersistenceTests
+        COMMAND BasiliskTrophyPersistenceTests
+    )
+endif()
+
+if(TARGET BasiliskAccountAuth)
+    add_executable(BasiliskAccountAuthTests
+        account_auth_tests.cpp
+    )
+    target_link_libraries(
+        BasiliskAccountAuthTests
+        PRIVATE
+            Basilisk::AccountAuth
+    )
+    add_test(NAME BasiliskAccountAuthTests COMMAND BasiliskAccountAuthTests)
+endif()
+
+if(TARGET BasiliskLobbyCoordinator)
+    add_executable(BasiliskLobbyCoordinatorTests
+        lobby_coordinator_tests.cpp
+    )
+    target_link_libraries(BasiliskLobbyCoordinatorTests
+        PRIVATE Basilisk::LobbyCoordinator
+    )
+    add_test(NAME BasiliskLobbyCoordinatorTests COMMAND BasiliskLobbyCoordinatorTests)
+endif()
+
+if(TARGET BasiliskWebSocketMatchServer)
+    add_executable(BasiliskWebSocketNetworkTests
+        game_websocket_network_tests.cpp
+    )
+    target_link_libraries(
+        BasiliskWebSocketNetworkTests
+        PRIVATE
+            Basilisk::WebSocketMatchServer
+    )
+    target_include_directories(
+        BasiliskWebSocketNetworkTests
+        PRIVATE
+            $<TARGET_PROPERTY:ixwebsocket,INTERFACE_INCLUDE_DIRECTORIES>
+            $<TARGET_PROPERTY:BasiliskSQLite3,INTERFACE_INCLUDE_DIRECTORIES>
+    )
+    add_test(
+        NAME BasiliskWebSocketNetworkTests
+        COMMAND BasiliskWebSocketNetworkTests
+    )
 endif()
 
 add_executable(BasiliskSnapshotTests

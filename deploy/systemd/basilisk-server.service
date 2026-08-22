@@ -1,0 +1,28 @@
+[Unit]
+Description=Basilisk authoritative WebSocket server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=basilisk
+Group=basilisk
+EnvironmentFile=/etc/basilisk/server.env
+StateDirectory=basilisk
+StateDirectoryMode=0750
+ExecStart=/opt/basilisk/bin/BasiliskServer --bind ${BASILISK_BIND_ADDRESS} --port ${BASILISK_PORT} --auth-db ${BASILISK_AUTH_DATABASE} --trophy-db ${BASILISK_TROPHY_DATABASE}
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/lib/basilisk
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <vector>
@@ -28,8 +29,10 @@ public:
     [[nodiscard]] const std::vector<client::PublicPlayerProfile>& profiles()
         const noexcept;
     [[nodiscard]] const client::ClientViewContext& viewContext() const noexcept;
+    [[nodiscard]] std::int64_t trophyTotal() const noexcept;
 
     void setViewContext(client::ClientViewContext viewContext) noexcept;
+    void setTrophyTotal(std::int64_t trophyTotal) noexcept;
 
     // Same-round replacements are accepted; only snapshots older than the
     // newest cached round for that player are rejected.
@@ -52,6 +55,7 @@ private:
     PublicMatchMetadata matchMetadata_;
     std::vector<client::PublicPlayerProfile> profiles_;
     client::ClientViewContext viewContext_;
+    std::int64_t trophyTotal_{};
     std::map<PlayerId, PlayerRoundSnapshot> snapshots_;
     std::map<PlayerId, PlayerFixedMapGeometry> mapGeometries_;
     std::unique_ptr<ActionCommandSink> actionCommands_;

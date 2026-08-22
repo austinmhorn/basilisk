@@ -1,0 +1,31 @@
+# Replace __BASILISK_DOMAIN__ and the certificate paths during deployment.
+# BasiliskServer remains private at ws://127.0.0.1:8765.
+map $http_upgrade $basilisk_connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name __BASILISK_DOMAIN__;
+
+    ssl_certificate /etc/letsencrypt/live/__BASILISK_DOMAIN__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__BASILISK_DOMAIN__/privkey.pem;
+
+    location / {
+        if ($http_upgrade !~* ^websocket$) {
+            return 426;
+        }
+
+        proxy_pass http://127.0.0.1:8765;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $basilisk_connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 75s;
+        proxy_send_timeout 75s;
+    }
+}

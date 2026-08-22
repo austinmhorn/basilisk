@@ -1289,7 +1289,22 @@ bool drawSidebar(
     }
     y += 146.0F * scale;
 
-    const SDL_FRect actions{x, y, width, 228.0F * scale};
+    const float remainingHeight = std::max(
+        0.0F,
+        sidebar.y + sidebar.h - 18.0F * scale - y);
+    const float waitingSpace =
+        actionSelection.waitingForOtherHunter() ? 13.0F * scale : 0.0F;
+    const float rowsHeight = 37.0F * scale *
+        static_cast<float>(snapshot.availableActions.size());
+    const float desiredHeight = std::max(
+        228.0F * scale,
+        86.0F * scale + waitingSpace + rowsHeight);
+    const SDL_FRect actions{
+        x,
+        y,
+        width,
+        std::min(desiredHeight, remainingHeight),
+    };
     return drawAvailableActions(
         context,
         snapshot,
@@ -1790,6 +1805,29 @@ bool renderScreenShell(
         session,
         sidebar)) {
         return false;
+    }
+    if (rivalReconnectWaiting(snapshot)) {
+        const SDL_FRect status{
+            mapFrame.x + (mapFrame.w - 330.0F * scale) * 0.5F,
+            mapFrame.y + 12.0F * scale,
+            330.0F * scale,
+            28.0F * scale,
+        };
+        drawPanel(
+            renderer,
+            status,
+            14.0F * scale,
+            SDL_Color{28, 25, 18, 238},
+            SDL_Color{105, 85, 42, SDL_ALPHA_OPAQUE},
+            scale);
+        if (!context.centeredLabel(
+                "Opponent disconnected \xE2\x80\x94 waiting for reconnect...",
+                FontWeight::Medium,
+                ui::Typography::actionDetail,
+                ui::Theme::gold,
+                status)) {
+            return false;
+        }
     }
     if (!drawMapActionMenu(
             context,

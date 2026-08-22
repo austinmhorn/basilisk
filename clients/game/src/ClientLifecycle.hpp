@@ -26,6 +26,11 @@ struct LifecycleModalPresentation {
 class ClientSessionCommandSink {
 public:
     virtual ~ClientSessionCommandSink() = default;
+    [[nodiscard]] virtual bool watchRemainingHunter(
+        PlayerId,
+        PlayerId) {
+        return true;
+    }
     [[nodiscard]] virtual bool quitGame(PlayerId localPlayer) = 0;
 };
 
@@ -34,6 +39,11 @@ lifecycleModalPresentation(
     const PlayerRoundSnapshot& viewedSnapshot,
     const client::ClientViewContext& viewContext,
     std::span<const client::PublicPlayerProfile> profiles);
+
+// The authoritative snapshot carrying RivalDisconnected remains current during
+// reconnect grace. A reconnect or timeout publication replaces it immediately.
+[[nodiscard]] bool rivalReconnectWaiting(
+    const PlayerRoundSnapshot& snapshot) noexcept;
 
 // A client-local view transition only. It preserves local identity and grants
 // no authority over the survivor whose player-safe snapshot will be viewed.

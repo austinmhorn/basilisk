@@ -5,14 +5,24 @@ on:
     branches:
       - main
       - dev
+    tags:
+      - "v*"
   pull_request:
     branches:
       - main
       - dev
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'production-deployment' || format('ci-{0}', github.run_id) }}
+  cancel-in-progress: false
+
 jobs:
   build-and-test:
     name: Build & Test (${{ matrix.os }})
+    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/')
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -74,6 +84,7 @@ jobs:
           test -s build-web/clients/game/BasiliskGame.html
           test -s build-web/clients/game/BasiliskGame.js
           test -s build-web/clients/game/BasiliskGame.wasm
+          test -s build-web/clients/game/BasiliskGame.data
 
       - name: Upload browser artifacts
         uses: actions/upload-artifact@v4
@@ -83,4 +94,507 @@ jobs:
             build-web/clients/game/BasiliskGame.html
             build-web/clients/game/BasiliskGame.js
             build-web/clients/game/BasiliskGame.wasm
+            build-web/clients/game/BasiliskGame.data
           if-no-files-found: error
+
+      - name: Assemble deployable web package
+        run: >-
+          cmake --build build-web --config Release
+          --target BasiliskGameWebPackage
+
+      - name: Validate deployable web package
+        shell: bash
+        run: |
+          set -euo pipefail
+          package=build-web/web-package
+          test -s "${package}/index.html"
+          test -s "${package}/BasiliskGame.js"
+          test -s "${package}/BasiliskGame.wasm"
+          test -s "${package}/BasiliskGame.data"
+          grep -Fq 'BasiliskGame.js' "${package}/index.html"
+          grep -Fq 'BasiliskGame.wasm' "${package}/BasiliskGame.js"
+          grep -Fq 'BasiliskGame.data' "${package}/BasiliskGame.js"
+          grep -Fq '/assets/fonts/Inter-Regular.ttf' "${package}/BasiliskGame.js"
+          grep -Fq '/assets/ui/basilisk-logo.svg' "${package}/BasiliskGame.js"
+          grep -Fq '/assets/items/healing-draught.svg' "${package}/BasiliskGame.js"
+          grep -Fq '/assets/emblems/circle.svg' "${package}/BasiliskGame.js"
+          test -z "$(find "${package}" -type f \( -name '*BasiliskGameDebug*' -o -name '*BasiliskServer*' \) -print -quit)"
+
+      - name: Upload deployable web package
+        uses: actions/upload-artifact@v4
+        with:
+          name: BasiliskGame-WebAssembly
+          path: build-web/web-package/
+          if-no-files-found: error
+
+  package-macos:
+    name: Package macOS DMG
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Release package
+        run: >-
+          cmake -S . -B build-package
+          -DCMAKE_BUILD_TYPE=Release
+          -DBASILISK_BUILD_GAME=ON
+          -DBASILISK_BUILD_CLI=OFF
+          -DBASILISK_BUILD_SIM=OFF
+          -DBASILISK_BUILD_TESTS=OFF
+
+      - name: Build DMG
+        run: cmake --build build-package --config Release --target package
+
+      - name: Validate DMG contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="$(find build-package -maxdepth 1 -name 'Basilisk-*-macOS-*.dmg' -type f -print -quit)"
+          test -n "${package}"
+          test -s "${package}"
+
+          mount_point="${RUNNER_TEMP}/basilisk-dmg"
+          mkdir -p "${mount_point}"
+          hdiutil attach -readonly -nobrowse -mountpoint "${mount_point}" "${package}"
+          trap 'hdiutil detach "${mount_point}"' EXIT
+
+          app="${mount_point}/BasiliskGame.app"
+          test -x "${app}/Contents/MacOS/BasiliskGame"
+          test -s "${app}/Contents/Resources/BasiliskGame.icns"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "${app}/Contents/Info.plist")" = "BasiliskGame.icns"
+          test -d "${app}/Contents/Resources/assets/fonts"
+          test -d "${app}/Contents/Resources/assets/ui"
+          test -d "${app}/Contents/Resources/assets/items"
+          test -d "${app}/Contents/Resources/assets/emblems"
+          test -s "${app}/Contents/Resources/assets/fonts/Inter-Regular.ttf"
+          test -s "${app}/Contents/Resources/assets/ui/basilisk-logo.svg"
+          test -s "${app}/Contents/Resources/assets/items/healing-draught.svg"
+          test -s "${app}/Contents/Resources/assets/emblems/circle.svg"
+          test ! -e "${mount_point}/BasiliskGameDebug"
+          test ! -e "${mount_point}/BasiliskServer"
+
+      - name: Upload macOS package
+        uses: actions/upload-artifact@v4
+        with:
+          name: BasiliskGame-macOS-${{ runner.arch }}
+          path: build-package/Basilisk-*-macOS-*.dmg
+          if-no-files-found: error
+
+  package-windows:
+    name: Package Windows ZIP
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Release package
+        run: >-
+          cmake -S . -B build-package
+          -DCMAKE_BUILD_TYPE=Release
+          -DBASILISK_BUILD_GAME=ON
+          -DBASILISK_BUILD_CLI=OFF
+          -DBASILISK_BUILD_SIM=OFF
+          -DBASILISK_BUILD_TESTS=OFF
+
+      - name: Build ZIP
+        run: cmake --build build-package --config Release --target package
+
+      - name: Validate ZIP contents
+        shell: pwsh
+        run: |
+          $package = Get-ChildItem build-package -Filter 'Basilisk-*-Windows-*.zip' |
+              Select-Object -First 1
+          if (-not $package -or $package.Length -eq 0) {
+              throw 'The Windows release ZIP was not generated.'
+          }
+
+          $expanded = Join-Path $env:RUNNER_TEMP 'basilisk-package'
+          Expand-Archive -LiteralPath $package.FullName -DestinationPath $expanded
+
+          $requiredPaths = @(
+              'BasiliskGame.exe',
+              'assets/fonts',
+              'assets/ui',
+              'assets/items',
+              'assets/emblems',
+              'assets/fonts/Inter-Regular.ttf',
+              'assets/ui/basilisk-logo.svg',
+              'assets/items/healing-draught.svg',
+              'assets/emblems/circle.svg'
+          )
+          foreach ($relativePath in $requiredPaths) {
+              if (-not (Test-Path (Join-Path $expanded $relativePath))) {
+                  throw "Missing required package path: $relativePath"
+              }
+          }
+
+          if (Get-ChildItem $expanded -Recurse -File |
+                  Where-Object { $_.Name -in @('BasiliskGameDebug.exe', 'BasiliskServer.exe') }) {
+              throw 'The shipping ZIP contains a debug or server executable.'
+          }
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: BasiliskGame-Windows-${{ runner.arch }}
+          path: build-package/Basilisk-*-Windows-*.zip
+          if-no-files-found: error
+
+  package-linux-server:
+    name: Package Linux server
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bootstrap Ubuntu dependencies
+        run: ./scripts/install-dependencies-ubuntu.sh
+
+      - name: Configure Release server build
+        run: >-
+          cmake -S . -B build-server
+          -DCMAKE_BUILD_TYPE=Release
+          -DBASILISK_BUILD_GAME=ON
+          -DBASILISK_BUILD_CLI=OFF
+          -DBASILISK_BUILD_SIM=OFF
+          -DBASILISK_BUILD_TESTS=OFF
+
+      - name: Build BasiliskServer
+        run: cmake --build build-server --config Release --target BasiliskServer
+
+      - name: Assemble and validate server artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          package=server-package
+          install -Dm755 \
+            build-server/clients/game/BasiliskServer \
+            "${package}/BasiliskServer"
+          install -Dm644 \
+            deploy/systemd/basilisk-server.service \
+            "${package}/deploy/systemd/basilisk-server.service"
+          install -Dm644 \
+            deploy/systemd/server.env.example \
+            "${package}/deploy/systemd/server.env.example"
+          install -Dm644 \
+            deploy/nginx/basilisk-websocket.conf.example \
+            "${package}/deploy/nginx/basilisk-websocket.conf.example"
+
+          test -x "${package}/BasiliskServer"
+          mapfile -t contents < <(
+            find "${package}" -type f -printf '%P\n' | sort
+          )
+          expected=(
+            BasiliskServer
+            deploy/nginx/basilisk-websocket.conf.example
+            deploy/systemd/basilisk-server.service
+            deploy/systemd/server.env.example
+          )
+          if [[ "${contents[*]}" != "${expected[*]}" ]]; then
+            printf 'Unexpected Linux server artifact contents:\n%s\n' \
+              "${contents[*]}"
+            exit 1
+          fi
+
+          runtime="${RUNNER_TEMP}/basilisk-server-smoke"
+          mkdir -p "${runtime}"
+          "${package}/BasiliskServer" \
+            --bind 127.0.0.1 \
+            --port 18765 \
+            --auth-db "${runtime}/auth.sqlite3" \
+            --trophy-db "${runtime}/trophies.sqlite3" \
+            >"${runtime}/server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill -INT "${server_pid}" 2>/dev/null || true' EXIT
+          for _ in {1..100}; do
+            if grep -Fq \
+                'Basilisk server listening on ws://127.0.0.1:18765' \
+                "${runtime}/server.log"; then
+              break
+            fi
+            if ! kill -0 "${server_pid}" 2>/dev/null; then
+              cat "${runtime}/server.log"
+              exit 1
+            fi
+            sleep 0.1
+          done
+          grep -Fq \
+            'Basilisk server listening on ws://127.0.0.1:18765' \
+            "${runtime}/server.log"
+          kill -INT "${server_pid}"
+          wait "${server_pid}"
+          trap - EXIT
+
+      - name: Upload Linux server package
+        uses: actions/upload-artifact@v4
+        with:
+          name: BasiliskServer-Linux-${{ runner.arch }}
+          path: server-package/
+          if-no-files-found: error
+
+  deploy-web-production:
+    name: Deploy production web client
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-web
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout deployment configuration
+        uses: actions/checkout@v4
+
+      - name: Download validated WebAssembly package
+        uses: actions/download-artifact@v4
+        with:
+          name: BasiliskGame-WebAssembly
+          path: deploy/cloudflare/site
+
+      - name: Validate web deployment files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(
+            find deploy/cloudflare/site -maxdepth 1 -type f -printf '%f\n' | sort
+          )
+          expected=(
+            BasiliskGame.data
+            BasiliskGame.js
+            BasiliskGame.wasm
+            index.html
+          )
+          if [[ "${files[*]}" != "${expected[*]}" ]]; then
+            printf 'Unexpected web deployment contents:\n%s\n' "${files[*]}"
+            exit 1
+          fi
+          for file in "${expected[@]}"; do
+            test -s "deploy/cloudflare/site/${file}"
+          done
+
+      - name: Deploy static assets to Cloudflare
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: >-
+          npx --yes wrangler@4 deploy
+          --config deploy/cloudflare/wrangler.toml
+
+  deploy-server-production:
+    name: Deploy production game server
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: package-linux-server
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout deployment tooling
+        uses: actions/checkout@v4
+
+      - name: Download validated Linux server package
+        uses: actions/download-artifact@v4
+        with:
+          pattern: BasiliskServer-Linux-*
+          path: server-package
+          merge-multiple: true
+
+      - name: Validate server candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x server-package/BasiliskServer
+          test -s server-package/BasiliskServer
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Install Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Transfer and activate server candidate
+        shell: bash
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_ZONE: ${{ vars.GCP_ZONE }}
+          GCP_INSTANCE: ${{ vars.GCP_INSTANCE }}
+        run: |
+          set -euo pipefail
+          remote_candidate="/tmp/BasiliskServer.${GITHUB_SHA}"
+          remote_installer="/tmp/install-basilisk-server.${GITHUB_SHA}.sh"
+
+          gcloud compute scp \
+            --project "${GCP_PROJECT_ID}" \
+            --zone "${GCP_ZONE}" \
+            server-package/BasiliskServer \
+            "${GCP_INSTANCE}:${remote_candidate}"
+          gcloud compute scp \
+            --project "${GCP_PROJECT_ID}" \
+            --zone "${GCP_ZONE}" \
+            deploy/gcp/install-basilisk-server.sh \
+            "${GCP_INSTANCE}:${remote_installer}"
+          gcloud compute ssh "${GCP_INSTANCE}" \
+            --project "${GCP_PROJECT_ID}" \
+            --zone "${GCP_ZONE}" \
+            --command \
+              "sudo bash '${remote_installer}' '${remote_candidate}'; status=\$?; rm -f '${remote_installer}'; exit \$status"
+
+      - name: Verify public WebSocket edge
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --output /dev/null \
+            --write-out '%{http_code}' https://game.xiivestudio.com/)"
+          test "${status}" = 426
+
+  release:
+    name: Publish tagged release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build-web
+      - package-macos
+      - package-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify tag matches CMake project version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          project_version="$(
+            sed -nE \
+              's/^[[:space:]]*project\(Basilisk[[:space:]]+VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
+              CMakeLists.txt
+          )"
+          if [[ ! "${project_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo '::error::Unable to read the Basilisk project version from CMakeLists.txt.'
+            exit 1
+          fi
+
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [[ "${tag_version}" != "${project_version}" ]]; then
+            echo "::error::Release tag ${GITHUB_REF_NAME} does not match CMake project version ${project_version}."
+            exit 1
+          fi
+
+          echo "version=${project_version}" >> "${GITHUB_OUTPUT}"
+          if [[ "${project_version}" == 0.* ]]; then
+            echo 'prerelease=true' >> "${GITHUB_OUTPUT}"
+          else
+            echo 'prerelease=false' >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Download macOS package
+        uses: actions/download-artifact@v4
+        with:
+          pattern: BasiliskGame-macOS-*
+          path: release-input/macos
+          merge-multiple: true
+
+      - name: Download Windows package
+        uses: actions/download-artifact@v4
+        with:
+          pattern: BasiliskGame-Windows-*
+          path: release-input/windows
+          merge-multiple: true
+
+      - name: Download WebAssembly package
+        uses: actions/download-artifact@v4
+        with:
+          name: BasiliskGame-WebAssembly
+          path: release-input/web
+
+      - name: Assemble release attachments
+        shell: bash
+        env:
+          BASILISK_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          mapfile -t macos_packages < <(
+            find release-input/macos -type f -name 'Basilisk-*-macOS-*.dmg' -print
+          )
+          mapfile -t windows_packages < <(
+            find release-input/windows -type f -name 'Basilisk-*-Windows-*.zip' -print
+          )
+          if (( ${#macos_packages[@]} != 1 )); then
+            echo "::error::Expected one validated macOS DMG, found ${#macos_packages[@]}."
+            exit 1
+          fi
+          if (( ${#windows_packages[@]} != 1 )); then
+            echo "::error::Expected one validated Windows ZIP, found ${#windows_packages[@]}."
+            exit 1
+          fi
+
+          cp "${macos_packages[0]}" release-assets/
+          cp "${windows_packages[0]}" release-assets/
+
+          web_files=(
+            index.html
+            BasiliskGame.js
+            BasiliskGame.wasm
+            BasiliskGame.data
+          )
+          for file in "${web_files[@]}"; do
+            test -s "release-input/web/${file}"
+          done
+          (
+            cd release-input/web
+            zip -X \
+              "${GITHUB_WORKSPACE}/release-assets/Basilisk-${BASILISK_VERSION}-WebAssembly.zip" \
+              "${web_files[@]}"
+          )
+
+          mapfile -t web_archive_entries < <(
+            unzip -Z1 "release-assets/Basilisk-${BASILISK_VERSION}-WebAssembly.zip"
+          )
+          if [[ "${web_archive_entries[*]}" != "${web_files[*]}" ]]; then
+            echo '::error::The WebAssembly release ZIP has an unexpected layout.'
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASILISK_VERSION: ${{ steps.version.outputs.version }}
+          BASILISK_PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          release_options=()
+          if [[ "${BASILISK_PRERELEASE}" == 'true' ]]; then
+            release_options+=(--prerelease)
+          fi
+
+          mapfile -t release_assets < <(
+            find release-assets -maxdepth 1 -type f -print | sort
+          )
+          if (( ${#release_assets[@]} != 3 )); then
+            echo "::error::Expected three release attachments, found ${#release_assets[@]}."
+            exit 1
+          fi
+
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "Basilisk ${BASILISK_VERSION}" \
+            --generate-notes \
+            "${release_options[@]}" \
+            "${release_assets[@]}"
