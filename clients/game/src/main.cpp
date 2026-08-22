@@ -144,6 +144,10 @@ SDL_AppResult handleMainMenuResult(
         state.authenticatedSessionToken.reset();
         state.authenticatedProfile.reset();
         state.authScreen = basilisk::game::AuthScreenState{};
+        state.mainMenu = basilisk::game::MainMenuState{};
+        state.handledLobbyResponseRevision =
+            state.networkSession->lobbyResponseRevision();
+        state.cancelLobbyWhenHosted = false;
         state.authScreen.setWaiting(true);
         state.authResponseHandled = false;
         state.storedSessionAttempted = true;
@@ -1022,6 +1026,10 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             if (const auto* success = std::get_if<
                     basilisk::game::network::AuthenticationSuccess>(
                         &response.payload)) {
+                state->mainMenu = basilisk::game::MainMenuState{};
+                state->handledLobbyResponseRevision =
+                    state->networkSession->lobbyResponseRevision();
+                state->cancelLobbyWhenHosted = false;
                 state->authenticatedProfile = success->profile;
                 state->authenticatedSessionToken = success->sessionToken;
                 std::string storageError;
