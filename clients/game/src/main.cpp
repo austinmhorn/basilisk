@@ -26,6 +26,7 @@
 #include "MainMenuRenderer.hpp"
 #include "MapActionMenu.hpp"
 #include "MapPresentation.hpp"
+#include "NetworkEndpointConfig.hpp"
 #include "ScreenShell.hpp"
 #include "SessionTokenStorage.hpp"
 #include "SvgTextureManager.hpp"
@@ -228,6 +229,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
 
     std::optional<std::string> connectUrl;
     std::optional<std::string> connectToken;
+    basilisk::game::NetworkEndpointConfig endpointConfig;
     for (int index = 1; index < argc; ++index) {
         if (argv == nullptr || argv[index] == nullptr) continue;
         const std::string_view argument{argv[index]};
@@ -236,7 +238,15 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
             SDL_Log("%s requires a value", argv[index]);
             return SDL_APP_FAILURE;
         }
-        if (argument == "--connect") connectUrl = argv[++index];
+        if (argument == "--connect") {
+            std::string endpointError;
+            if (!basilisk::game::applyNetworkEndpointOption(
+                    argument, argv[++index], endpointConfig, endpointError)) {
+                SDL_Log("%s", endpointError.c_str());
+                return SDL_APP_FAILURE;
+            }
+            connectUrl = endpointConfig.connectUrl;
+        }
         else connectToken = argv[++index];
     }
     if (connectToken.has_value() && !connectUrl.has_value()) {
@@ -251,7 +261,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
             developmentLaunch = true;
     }
     if (!developmentLaunch && !connectUrl.has_value())
-        connectUrl = "ws://127.0.0.1:8765";
+        connectUrl = endpointConfig.connectUrl;
     if (connectUrl.has_value()) {
         std::string error;
         state->networkSession = connectToken.has_value()

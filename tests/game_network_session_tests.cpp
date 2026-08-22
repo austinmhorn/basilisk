@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "NetworkGameSessionAdapter.hpp"
+#include "NetworkEndpointConfig.hpp"
 #include "NetworkProtocol.hpp"
 #include "NetworkWireCodec.hpp"
 
@@ -16,6 +17,23 @@ using namespace basilisk::game;
 using namespace basilisk::game::network;
 
 namespace {
+
+void configurableNetworkEndpointsPreserveDefaultsAndCustomValues() {
+    NetworkEndpointConfig config;
+    assert(config.bindAddress == "127.0.0.1");
+    assert(config.connectUrl == "ws://127.0.0.1:8765");
+    std::string error;
+    assert(applyNetworkEndpointOption(
+        "--bind", "0.0.0.0", config, error));
+    assert(config.bindAddress == "0.0.0.0");
+    assert(applyNetworkEndpointOption(
+        "--connect", "ws://192.168.1.42:8765", config, error));
+    assert(config.connectUrl == "ws://192.168.1.42:8765");
+    assert(applyNetworkEndpointOption(
+        "--connect", "wss://example.com/game", config, error));
+    assert(config.connectUrl == "wss://example.com/game");
+    assert(!applyNetworkEndpointOption("--connect", "", config, error));
+}
 
 template <typename T>
 concept HasWorld = requires(T value) { value.world; };
@@ -735,6 +753,7 @@ void protocolMismatchIsRejectedCleanly() {
 } // namespace
 
 int main() {
+    configurableNetworkEndpointsPreserveDefaultsAndCustomValues();
     allServerFieldsRoundTripExactly();
     everyClientCommandRoundTrips();
     publicLeaderboardRequestAndResponseRoundTrip();

@@ -80,6 +80,7 @@ public:
         std::shared_ptr<TrophyLedger> trophyLedger,
         std::shared_ptr<PublicTrophyReadModel> publicLeaderboard,
         std::uint16_t port,
+        std::string bindAddress,
         std::map<std::string, PlayerId> tokens,
         std::shared_ptr<SQLiteAccountAuth> authentication,
         std::map<AccountIdentity, PlayerId> authenticatedAccounts
@@ -95,7 +96,7 @@ public:
 #endif
           trophyLedger_(std::move(trophyLedger)),
           publicLeaderboard_(std::move(publicLeaderboard)),
-          server_(port, "127.0.0.1", 5, 2),
+          server_(port, std::move(bindAddress), 5, 2),
           tokens_(std::move(tokens)),
           authentication_(std::move(authentication)),
           authenticationProtocol_(authentication_),
@@ -894,13 +895,17 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
         error = "WebSocket server port must be non-zero.";
         return nullptr;
     }
+    if (config.bindAddress.empty()) {
+        error = "WebSocket server bind address must be non-empty.";
+        return nullptr;
+    }
 #if defined(_WIN32)
     auto networkRuntime = NativeNetworkRuntime::acquire(error);
     if (networkRuntime == nullptr) return nullptr;
 #endif
     auto impl = std::make_unique<Impl>(
         std::move(match), std::move(trophyLedger), std::move(publicLeaderboard),
-        config.port,
+        config.port, std::move(config.bindAddress),
         std::map<std::string, PlayerId>{
             {std::move(config.p1Token), PlayerId{1}},
             {std::move(config.p2Token), PlayerId{2}},

@@ -27,6 +27,7 @@ struct LocalServerTrophyConfig {
 
 struct LocalWebSocketServerConfig {
     std::uint16_t port{8765};
+    std::string bindAddress{"127.0.0.1"};
     std::string p1Token;
     std::string p2Token;
     MapSeed mapSeed{20260816};

@@ -65,6 +65,7 @@ target_link_libraries(
 target_compile_features(BasiliskGameActions PUBLIC cxx_std_20)
 
 add_library(BasiliskGameNetworkSession STATIC
+    src/NetworkEndpointConfig.cpp
     src/NetworkGameSessionAdapter.cpp
     src/NetworkWireCodec.cpp
     src/WebSocketNetworkSession.cpp

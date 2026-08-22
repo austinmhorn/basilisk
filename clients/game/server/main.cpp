@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "LocalWebSocketMatchServer.hpp"
+#include "NetworkEndpointConfig.hpp"
 
 namespace {
 
@@ -39,6 +40,7 @@ bool parseUnsigned(std::string_view text, std::uint64_t& value) {
 
 int main(int argc, char** argv) {
     basilisk::game::server::LocalWebSocketServerConfig config;
+    basilisk::game::NetworkEndpointConfig endpointConfig;
     config.p1Token = "basilisk-p1-local";
     config.p2Token = "basilisk-p2-local";
     config.profiles = profiles();
@@ -53,7 +55,8 @@ int main(int argc, char** argv) {
     std::optional<std::string> p2DisplayName;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument{argv[index]};
-        if (argument != "--port" && argument != "--p1-token" &&
+        if (argument != "--bind" && argument != "--port" &&
+            argument != "--p1-token" &&
             argument != "--p2-token" && argument != "--map-seed" &&
             argument != "--trophy-db" && argument != "--match-id" &&
             argument != "--auth-db" &&
@@ -69,7 +72,16 @@ int main(int argc, char** argv) {
                 static_cast<int>(argument.size()), argument.data());
             return 2;
         }
-        if (argument == "--p1-token") config.p1Token = argv[index];
+        if (argument == "--bind") {
+            std::string endpointError;
+            if (!basilisk::game::applyNetworkEndpointOption(
+                    argument, argv[index], endpointConfig, endpointError)) {
+                std::fprintf(stderr, "%s\n", endpointError.c_str());
+                return 2;
+            }
+            config.bindAddress = endpointConfig.bindAddress;
+        }
+        else if (argument == "--p1-token") config.p1Token = argv[index];
         else if (argument == "--p2-token") config.p2Token = argv[index];
         else if (argument == "--trophy-db") trophyDatabase = argv[index];
         else if (argument == "--auth-db") authenticationDatabase = argv[index];
@@ -178,7 +190,8 @@ int main(int argc, char** argv) {
     }
     std::signal(SIGINT, stopServer);
     std::signal(SIGTERM, stopServer);
-    std::printf("Basilisk server listening on ws://127.0.0.1:%u\n", server->port());
+    std::printf("Basilisk server listening on ws://%s:%u\n",
+        endpointConfig.bindAddress.c_str(), server->port());
     std::fflush(stdout);
     while (running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
