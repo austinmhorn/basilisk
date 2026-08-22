@@ -1042,8 +1042,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     state->authenticatedSessionToken.reset();
                     state->restoringSession = false;
                     state->resumeGameplayOnBootstrap = false;
-                    state->authScreen.setError(
-                        "Your session expired. Sign in again.");
+                    state->authScreen.setError(failure->message);
                 } else {
                     state->authScreen.setError(failure->message);
                 }

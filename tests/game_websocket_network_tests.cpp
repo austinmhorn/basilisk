@@ -477,6 +477,127 @@ void authenticatedUnboundAccountCanHostLobby() {
         client->lobbyResponse()->payload));
 }
 
+void rejectedSessionRestoreKeepsAuthenticationConnectionUsable() {
+    TemporaryTrophyDatabase database;
+    std::string error;
+    auto auth = SQLiteAccountAuth::open(database.path(), error);
+    assert(auth != nullptr && error.empty());
+    AccountIdentity firstAccount;
+    AccountIdentity secondAccount;
+    assert(auth->createAccount(
+        LoginIdentity{"restore-first@example.test"}, "first secure password",
+        PublicAccountProfile{PublicProfileHandle{"restore-first"}, "First"},
+        firstAccount, error) == CreateAccountResult::Created);
+    assert(auth->createAccount(
+        LoginIdentity{"restore-second@example.test"}, "second secure password",
+        PublicAccountProfile{PublicProfileHandle{"restore-second"}, "Second"},
+        secondAccount, error) == CreateAccountResult::Created);
+    AuthSessionToken firstToken;
+    AuthSessionToken secondToken;
+    assert(auth->authenticate(LoginIdentity{"restore-first@example.test"},
+        "first secure password", firstToken, error));
+    assert(auth->authenticate(LoginIdentity{"restore-second@example.test"},
+        "second secure password", secondToken, error));
+
+    LocalWebSocketServerConfig config;
+    config.port = static_cast<std::uint16_t>(ix::getFreePort());
+    config.authentication = auth;
+    config.profiles = profiles();
+    auto server = LocalWebSocketMatchServer::start(std::move(config), error);
+    assert(server != nullptr && error.empty());
+    auto active = WebSocketNetworkSession::connectForAuthentication(
+        url(*server), error);
+    auto restoring = WebSocketNetworkSession::connectForAuthentication(
+        url(*server), error);
+    assert(active != nullptr && restoring != nullptr);
+    assert(waitUntil([&] {
+        active->pump();
+        restoring->pump();
+        return active->state() == NetworkConnectionState::Connected &&
+            restoring->state() == NetworkConnectionState::Connected;
+    }));
+    assert(active->authenticate({network::kProtocolVersion,
+        network::AuthenticateSessionRequest{firstToken.value}}));
+    assert(waitUntil([&] {
+        active->pump();
+        return active->authenticationResponse().has_value();
+    }));
+
+    assert(restoring->authenticate({network::kProtocolVersion,
+        network::AuthenticateSessionRequest{firstToken.value}}));
+    assert(waitUntil([&] {
+        restoring->pump();
+        return restoring->authenticationResponse().has_value();
+    }));
+    assert(std::holds_alternative<network::AuthenticationFailure>(
+        restoring->authenticationResponse()->payload));
+    assert(restoring->state() == NetworkConnectionState::Connected);
+
+    assert(restoring->authenticate({network::kProtocolVersion,
+        network::AuthenticateSessionRequest{secondToken.value}}));
+    assert(waitUntil([&] {
+        restoring->pump();
+        return restoring->authenticationResponse().has_value();
+    }));
+    assert(std::holds_alternative<network::AuthenticationSuccess>(
+        restoring->authenticationResponse()->payload));
+}
+
+void logoutReturnsConnectionToUsableAuthenticationState() {
+    TemporaryTrophyDatabase database;
+    std::string error;
+    auto auth = SQLiteAccountAuth::open(database.path(), error);
+    assert(auth != nullptr && error.empty());
+    AccountIdentity account;
+    assert(auth->createAccount(
+        LoginIdentity{"logout@example.test"}, "logout secure password",
+        PublicAccountProfile{PublicProfileHandle{"logout-user"}, "Logout User"},
+        account, error) == CreateAccountResult::Created);
+    AuthSessionToken token;
+    assert(auth->authenticate(LoginIdentity{"logout@example.test"},
+        "logout secure password", token, error));
+
+    LocalWebSocketServerConfig config;
+    config.port = static_cast<std::uint16_t>(ix::getFreePort());
+    config.authentication = auth;
+    config.profiles = profiles();
+    auto server = LocalWebSocketMatchServer::start(std::move(config), error);
+    assert(server != nullptr && error.empty());
+    auto client = WebSocketNetworkSession::connectForAuthentication(
+        url(*server), error);
+    assert(client != nullptr);
+    assert(waitUntil([&] {
+        client->pump();
+        return client->state() == NetworkConnectionState::Connected;
+    }));
+    assert(client->authenticate({network::kProtocolVersion,
+        network::AuthenticateSessionRequest{token.value}}));
+    assert(waitUntil([&] {
+        client->pump();
+        return client->authenticationResponse().has_value();
+    }));
+
+    assert(client->logout(token.value));
+    assert(waitUntil([&] {
+        client->pump();
+        return client->authenticationResponse().has_value();
+    }));
+    assert(std::holds_alternative<network::LogoutSuccess>(
+        client->authenticationResponse()->payload));
+    assert(client->state() == NetworkConnectionState::Connected);
+    AccountIdentity resolved;
+    assert(!auth->resolveSession(token, resolved, error));
+
+    assert(client->authenticate({network::kProtocolVersion,
+        network::LoginRequest{"logout@example.test", "logout secure password"}}));
+    assert(waitUntil([&] {
+        client->pump();
+        return client->authenticationResponse().has_value();
+    }));
+    assert(std::holds_alternative<network::AuthenticationSuccess>(
+        client->authenticationResponse()->payload));
+}
+
 void authenticatedAssignmentLaunchesAuthoritativeGameplay() {
     TemporaryTrophyDatabase database;
     std::string error;
@@ -847,6 +968,8 @@ int main() {
     serverQueriesUseDurableAccountsAndSQLiteSurvivesRestart();
     serverPersistsPublicProfilesAndRejectsDuplicateHandles();
     authenticatedUnboundAccountCanHostLobby();
+    rejectedSessionRestoreKeepsAuthenticationConnectionUsable();
+    logoutReturnsConnectionToUsableAuthenticationState();
     authenticatedAssignmentLaunchesAuthoritativeGameplay();
     dynamicAssignedMatchesUsePersistentTrophyStore();
     authenticatedPlayerReclaimsAssignedMatchWithinGrace();

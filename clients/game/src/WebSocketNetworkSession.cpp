@@ -209,6 +209,24 @@ public:
         }
         for (network::WireBytes& frame : frames) {
             std::string decodeError;
+            network::WireMessageType frameType{};
+            if (network::inspectWireMessageType(
+                    frame, frameType, decodeError) &&
+                frameType == network::WireMessageType::LogoutSuccess) {
+                network::AuthenticationResponse response;
+                if (!network::decodeAuthenticationResponse(
+                        frame, response, decodeError)) {
+                    fail("Invalid logout response: " + decodeError);
+                    shutdownSocket();
+                    return;
+                }
+                authenticationResponse_ = std::move(response);
+                authenticated_ = false;
+                awaitingAuthentication_ = false;
+                adapter_.reset();
+                continue;
+            }
+            decodeError.clear();
             if (authenticationMode_ && !authenticated_) {
                 network::AuthenticationResponse response;
                 if (!network::decodeAuthenticationResponse(
@@ -291,17 +309,7 @@ public:
                     shutdownSocket();
                     return;
                 }
-                if (type == network::WireMessageType::LogoutSuccess) {
-                    network::AuthenticationResponse response;
-                    if (network::decodeAuthenticationResponse(
-                            frame, response, decodeError)) {
-                        authenticationResponse_ = std::move(response);
-                        authenticated_ = false;
-                        awaitingAuthentication_ = false;
-                        adapter_.reset();
-                        continue;
-                    }
-                } else if (type == network::WireMessageType::LeaderboardPageResponse) {
+                if (type == network::WireMessageType::LeaderboardPageResponse) {
                     network::LeaderboardPageResponse response;
                     if (network::decodeLeaderboardPageResponse(
                             frame, response, decodeError)) {

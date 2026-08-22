@@ -598,15 +598,35 @@ private:
             pendingAuthentication_.erase(&socket);
             return;
         }
-        const std::string payload(
-            reinterpret_cast<const char*>(response.data()), response.size());
-        if (!socket.sendBinary(payload).success) return;
+
+        const auto sendResponse = [&socket](const network::WireBytes& bytes) {
+            const std::string payload(
+                reinterpret_cast<const char*>(bytes.data()), bytes.size());
+            return socket.sendBinary(payload).success;
+        };
+        const auto rejectAccountInUse = [&] {
+            network::WireBytes rejection;
+            std::string encodeError;
+            if (!network::encodeWire(network::AuthenticationResponse{
+                    network::kProtocolVersion,
+                    network::AuthenticationFailure{
+                        "Account is already connected"}},
+                    rejection, encodeError)) {
+                socket.close(1008, encodeError);
+                pendingAuthentication_.erase(&socket);
+                return;
+            }
+            (void)sendResponse(rejection);
+        };
 
         network::AuthenticationResponse decoded;
         if (!network::decodeAuthenticationResponse(response, decoded, error)) return;
         const auto* success = std::get_if<network::AuthenticationSuccess>(
             &decoded.payload);
-        if (success == nullptr) return;
+        if (success == nullptr) {
+            (void)sendResponse(response);
+            return;
+        }
         AccountIdentity account;
         if (!authentication_->resolveSession(
                 AuthSessionToken{success->sessionToken}, account, error)) return;
@@ -627,16 +647,14 @@ private:
         }
         for (const auto& [existingSocket, existing] : authenticatedPreMatch_) {
             if (existing.account == account && existingSocket != &socket) {
-                socket.close(1008, "Account is already connected");
-                pendingAuthentication_.erase(&socket);
+                rejectAccountInUse();
                 return;
             }
         }
         for (const auto& [existingSocket, existing] : clients_) {
             if (existing.active && existing.account == account &&
                 existingSocket != &socket) {
-                socket.close(1008, "Account is already connected");
-                pendingAuthentication_.erase(&socket);
+                rejectAccountInUse();
                 return;
             }
         }
@@ -655,6 +673,7 @@ private:
             participant->second.connected = true;
             participant->second.graceRemainingMs =
                 assigned.match->disconnectGraceMs();
+            if (!sendResponse(response)) return;
             pendingAuthentication_.erase(&socket);
             clients_.emplace(&socket, Client{
                 participant->second.player,
@@ -667,15 +686,15 @@ private:
             return;
         }
         const auto bound = authenticatedAccounts_.find(account);
-        pendingAuthentication_.erase(&socket);
         if (bound == authenticatedAccounts_.end()) {
+            if (!sendResponse(response)) return;
+            pendingAuthentication_.erase(&socket);
             authenticatedPreMatch_.emplace(
                 &socket, PreMatchClient{account, success->profile});
             return;
         }
         if (usedPlayers_.contains(bound->second)) {
-            socket.close(1008, "Account is already in use");
-            pendingAuthentication_.erase(&socket);
+            rejectAccountInUse();
             return;
         }
         auto endpoint = match_->connect(bound->second, error);
@@ -684,6 +703,8 @@ private:
             pendingAuthentication_.erase(&socket);
             return;
         }
+        if (!sendResponse(response)) return;
+        pendingAuthentication_.erase(&socket);
         clients_.emplace(
             &socket, Client{bound->second, std::move(endpoint), account,
                             std::nullopt, false, true});
