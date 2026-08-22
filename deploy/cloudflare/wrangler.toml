@@ -1,0 +1,5 @@
+name = "basilisk"
+compatibility_date = "2026-08-22"
+
+[assets]
+directory = "./site"

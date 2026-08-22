@@ -15,6 +15,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'production-deployment' || format('ci-{0}', github.run_id) }}
+  cancel-in-progress: false
+
 jobs:
   build-and-test:
     name: Build & Test (${{ matrix.os }})
@@ -331,6 +335,129 @@ jobs:
           name: BasiliskServer-Linux-${{ runner.arch }}
           path: server-package/
           if-no-files-found: error
+
+  deploy-web-production:
+    name: Deploy production web client
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-web
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout deployment configuration
+        uses: actions/checkout@v4
+
+      - name: Download validated WebAssembly package
+        uses: actions/download-artifact@v4
+        with:
+          name: BasiliskGame-WebAssembly
+          path: deploy/cloudflare/site
+
+      - name: Validate web deployment files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(
+            find deploy/cloudflare/site -maxdepth 1 -type f -printf '%f\n' | sort
+          )
+          expected=(
+            BasiliskGame.data
+            BasiliskGame.js
+            BasiliskGame.wasm
+            index.html
+          )
+          if [[ "${files[*]}" != "${expected[*]}" ]]; then
+            printf 'Unexpected web deployment contents:\n%s\n' "${files[*]}"
+            exit 1
+          fi
+          for file in "${expected[@]}"; do
+            test -s "deploy/cloudflare/site/${file}"
+          done
+
+      - name: Deploy static assets to Cloudflare
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: >-
+          npx --yes wrangler@4 deploy
+          --config deploy/cloudflare/wrangler.toml
+
+  deploy-server-production:
+    name: Deploy production game server
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: package-linux-server
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout deployment tooling
+        uses: actions/checkout@v4
+
+      - name: Download validated Linux server package
+        uses: actions/download-artifact@v4
+        with:
+          pattern: BasiliskServer-Linux-*
+          path: server-package
+          merge-multiple: true
+
+      - name: Validate server candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x server-package/BasiliskServer
+          test -s server-package/BasiliskServer
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Install Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Transfer and activate server candidate
+        shell: bash
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_ZONE: ${{ vars.GCP_ZONE }}
+          GCP_INSTANCE: ${{ vars.GCP_INSTANCE }}
+        run: |
+          set -euo pipefail
+          remote_candidate="/tmp/BasiliskServer.${GITHUB_SHA}"
+          remote_installer="/tmp/install-basilisk-server.${GITHUB_SHA}.sh"
+
+          gcloud compute scp \
+            --project "${GCP_PROJECT_ID}" \
+            --zone "${GCP_ZONE}" \
+            server-package/BasiliskServer \
+            "${GCP_INSTANCE}:${remote_candidate}"
+          gcloud compute scp \
+            --project "${GCP_PROJECT_ID}" \
+            --zone "${GCP_ZONE}" \
+            deploy/gcp/install-basilisk-server.sh \
+            "${GCP_INSTANCE}:${remote_installer}"
+          gcloud compute ssh "${GCP_INSTANCE}" \
+            --project "${GCP_PROJECT_ID}" \
+            --zone "${GCP_ZONE}" \
+            --command \
+              "sudo bash '${remote_installer}' '${remote_candidate}'; status=\$?; rm -f '${remote_installer}'; exit \$status"
+
+      - name: Verify public WebSocket edge
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --output /dev/null \
+            --write-out '%{http_code}' https://game.xiivestudio.com/)"
+          test "${status}" = 426
 
   release:
     name: Publish tagged release
