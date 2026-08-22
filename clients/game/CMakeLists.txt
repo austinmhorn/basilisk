@@ -97,7 +97,33 @@ endif()
 if(EMSCRIPTEN)
     target_link_options(BasiliskGameNetworkSession PUBLIC "-lwebsocket.js")
 else()
-    set(USE_TLS OFF CACHE BOOL "" FORCE)
+    if(APPLE)
+        set(USE_TLS ON CACHE BOOL "" FORCE)
+        set(USE_SECURE_TRANSPORT ON CACHE BOOL "" FORCE)
+    elseif(WIN32)
+        # IXWebSocket's supported Windows default is Mbed TLS. Build the LTS
+        # release statically so packaged clients do not depend on external DLLs.
+        set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+        set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+        set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+        set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
+        set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
+        FetchContent_Declare(
+            mbedtls
+            URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2
+            URL_HASH SHA256=a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6
+            DOWNLOAD_EXTRACT_TIMESTAMP OFF
+        )
+        FetchContent_MakeAvailable(mbedtls)
+        set(MBEDTLS_FOUND TRUE)
+        set(MBEDTLS_INCLUDE_DIRS "${mbedtls_SOURCE_DIR}/include")
+        set(MBEDTLS_LIBRARIES mbedtls mbedx509 mbedcrypto)
+        set(MBEDTLS_VERSION_GREATER_THAN_3 TRUE)
+        set(USE_TLS ON CACHE BOOL "" FORCE)
+        set(USE_MBED_TLS ON CACHE BOOL "" FORCE)
+    else()
+        set(USE_TLS OFF CACHE BOOL "" FORCE)
+    endif()
     set(USE_ZLIB OFF CACHE BOOL "" FORCE)
     set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
     set(BUILD_DEMO OFF CACHE BOOL "" FORCE)
