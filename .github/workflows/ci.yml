@@ -5,14 +5,20 @@ on:
     branches:
       - main
       - dev
+    tags:
+      - "v*"
   pull_request:
     branches:
       - main
       - dev
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     name: Build & Test (${{ matrix.os }})
+    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/')
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -232,3 +238,143 @@ jobs:
           name: BasiliskGame-Windows-${{ runner.arch }}
           path: build-package/Basilisk-*-Windows-*.zip
           if-no-files-found: error
+
+  release:
+    name: Publish tagged release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build-web
+      - package-macos
+      - package-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify tag matches CMake project version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          project_version="$(
+            sed -nE \
+              's/^[[:space:]]*project\(Basilisk[[:space:]]+VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
+              CMakeLists.txt
+          )"
+          if [[ ! "${project_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo '::error::Unable to read the Basilisk project version from CMakeLists.txt.'
+            exit 1
+          fi
+
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [[ "${tag_version}" != "${project_version}" ]]; then
+            echo "::error::Release tag ${GITHUB_REF_NAME} does not match CMake project version ${project_version}."
+            exit 1
+          fi
+
+          echo "version=${project_version}" >> "${GITHUB_OUTPUT}"
+          if [[ "${project_version}" == 0.* ]]; then
+            echo 'prerelease=true' >> "${GITHUB_OUTPUT}"
+          else
+            echo 'prerelease=false' >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Download macOS package
+        uses: actions/download-artifact@v4
+        with:
+          pattern: BasiliskGame-macOS-*
+          path: release-input/macos
+          merge-multiple: true
+
+      - name: Download Windows package
+        uses: actions/download-artifact@v4
+        with:
+          pattern: BasiliskGame-Windows-*
+          path: release-input/windows
+          merge-multiple: true
+
+      - name: Download WebAssembly package
+        uses: actions/download-artifact@v4
+        with:
+          name: BasiliskGame-WebAssembly
+          path: release-input/web
+
+      - name: Assemble release attachments
+        shell: bash
+        env:
+          BASILISK_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          mapfile -t macos_packages < <(
+            find release-input/macos -type f -name 'Basilisk-*-macOS-*.dmg' -print
+          )
+          mapfile -t windows_packages < <(
+            find release-input/windows -type f -name 'Basilisk-*-Windows-*.zip' -print
+          )
+          if (( ${#macos_packages[@]} != 1 )); then
+            echo "::error::Expected one validated macOS DMG, found ${#macos_packages[@]}."
+            exit 1
+          fi
+          if (( ${#windows_packages[@]} != 1 )); then
+            echo "::error::Expected one validated Windows ZIP, found ${#windows_packages[@]}."
+            exit 1
+          fi
+
+          cp "${macos_packages[0]}" release-assets/
+          cp "${windows_packages[0]}" release-assets/
+
+          web_files=(
+            index.html
+            BasiliskGame.js
+            BasiliskGame.wasm
+            BasiliskGame.data
+          )
+          for file in "${web_files[@]}"; do
+            test -s "release-input/web/${file}"
+          done
+          (
+            cd release-input/web
+            zip -X \
+              "${GITHUB_WORKSPACE}/release-assets/Basilisk-${BASILISK_VERSION}-WebAssembly.zip" \
+              "${web_files[@]}"
+          )
+
+          mapfile -t web_archive_entries < <(
+            unzip -Z1 "release-assets/Basilisk-${BASILISK_VERSION}-WebAssembly.zip"
+          )
+          if [[ "${web_archive_entries[*]}" != "${web_files[*]}" ]]; then
+            echo '::error::The WebAssembly release ZIP has an unexpected layout.'
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASILISK_VERSION: ${{ steps.version.outputs.version }}
+          BASILISK_PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          release_options=()
+          if [[ "${BASILISK_PRERELEASE}" == 'true' ]]; then
+            release_options+=(--prerelease)
+          fi
+
+          mapfile -t release_assets < <(
+            find release-assets -maxdepth 1 -type f -print | sort
+          )
+          if (( ${#release_assets[@]} != 3 )); then
+            echo "::error::Expected three release attachments, found ${#release_assets[@]}."
+            exit 1
+          fi
+
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "Basilisk ${BASILISK_VERSION}" \
+            --generate-notes \
+            "${release_options[@]}" \
+            "${release_assets[@]}"
