@@ -617,6 +617,9 @@ endif()
 
 if(EMSCRIPTEN)
     set_target_properties(BasiliskGame PROPERTIES SUFFIX ".html")
+    set_property(TARGET BasiliskGame APPEND PROPERTY LINK_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/web/network-arguments.js"
+    )
     target_link_options(
         BasiliskGame
         PRIVATE
