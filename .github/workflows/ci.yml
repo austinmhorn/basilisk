@@ -410,8 +410,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -x server-package/BasiliskServer
           test -s server-package/BasiliskServer
+          chmod 0755 server-package/BasiliskServer
+          test -x server-package/BasiliskServer
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -438,16 +439,19 @@ jobs:
           gcloud compute scp \
             --project "${GCP_PROJECT_ID}" \
             --zone "${GCP_ZONE}" \
+            --tunnel-through-iap \
             server-package/BasiliskServer \
             "${GCP_INSTANCE}:${remote_candidate}"
           gcloud compute scp \
             --project "${GCP_PROJECT_ID}" \
             --zone "${GCP_ZONE}" \
+            --tunnel-through-iap \
             deploy/gcp/install-basilisk-server.sh \
             "${GCP_INSTANCE}:${remote_installer}"
           gcloud compute ssh "${GCP_INSTANCE}" \
             --project "${GCP_PROJECT_ID}" \
             --zone "${GCP_ZONE}" \
+            --tunnel-through-iap \
             --command \
               "sudo bash '${remote_installer}' '${remote_candidate}'; status=\$?; rm -f '${remote_installer}'; exit \$status"
 

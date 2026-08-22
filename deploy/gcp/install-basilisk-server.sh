@@ -7,7 +7,7 @@ rollback=/opt/basilisk/bin/BasiliskServer.rollback
 staged=/opt/basilisk/bin/BasiliskServer.new
 had_installed=false
 
-test -x "${candidate}"
+test -s "${candidate}"
 if [[ -f "${installed}" ]]; then
     cp --preserve=mode,ownership,timestamps "${installed}" "${rollback}"
     had_installed=true
