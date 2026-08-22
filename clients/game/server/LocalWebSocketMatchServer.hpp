@@ -33,6 +33,9 @@ struct LocalWebSocketServerConfig {
     MapSeed mapSeed{20260816};
     MatchSeed matchSeed{424242};
     std::vector<client::PublicPlayerProfile> profiles;
+    // Server-wide persistence used by dynamically assigned authenticated
+    // matches and the public trophy read model.
+    std::string trophyDatabasePath;
     std::optional<LocalServerTrophyConfig> trophies;
     // When present, authentication is performed with binary protocol messages.
     // The fixed URL-token fields remain the development fallback.

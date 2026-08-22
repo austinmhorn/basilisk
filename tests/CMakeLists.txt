@@ -222,6 +222,7 @@ if(TARGET BasiliskWebSocketMatchServer)
         BasiliskWebSocketNetworkTests
         PRIVATE
             $<TARGET_PROPERTY:ixwebsocket,INTERFACE_INCLUDE_DIRECTORIES>
+            $<TARGET_PROPERTY:BasiliskSQLite3,INTERFACE_INCLUDE_DIRECTORIES>
     )
     add_test(
         NAME BasiliskWebSocketNetworkTests

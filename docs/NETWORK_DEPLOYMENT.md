@@ -60,7 +60,8 @@ The service's exact launch command is:
 /opt/basilisk/bin/BasiliskServer \
   --bind 127.0.0.1 \
   --port 8765 \
-  --auth-db /var/lib/basilisk/auth.sqlite3
+  --auth-db /var/lib/basilisk/auth.sqlite3 \
+  --trophy-db /var/lib/basilisk/trophies.sqlite3
 ```
 
 This matches the current `BasiliskServer` CLI and retains the configurable
@@ -68,11 +69,11 @@ This matches the current `BasiliskServer` CLI and retains the configurable
 `network-online.target`, runs as the non-root `basilisk` user, and receives a
 systemd-managed persistent `/var/lib/basilisk` state directory.
 
-The current optional `--trophy-db` mode also requires its documented fixed
-match/account/profile arguments (`--match-id`, both `--p*-account`,
-`--p*-handle`, and `--p*-display-name`). Store that database at
-`/var/lib/basilisk/trophies.sqlite3` when that mode is configured; do not add
-incomplete trophy arguments to the service command.
+The server-wide `--trophy-db` configures the durable trophy ledger, public
+profiles, and leaderboard for authenticated dynamically assigned matches. The
+existing fixed-match development mode remains available by additionally
+supplying `--match-id`, both `--p*-account`, `--p*-handle`, and
+`--p*-display-name` arguments.
 
 After installing the files:
 

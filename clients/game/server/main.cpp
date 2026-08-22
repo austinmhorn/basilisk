@@ -103,17 +103,19 @@ int main(int argc, char** argv) {
             config.mapSeed = static_cast<basilisk::MapSeed>(value);
         }
     }
-    const bool trophiesRequested = trophyDatabase.has_value() ||
-        trophyMatch.has_value() || p1PublicHandle.has_value() ||
+    const bool fixedTrophyScoringRequested = trophyMatch.has_value() ||
+        p1PublicHandle.has_value() ||
         p2PublicHandle.has_value() || p1DisplayName.has_value() ||
         p2DisplayName.has_value();
     if ((p1Account.has_value() || p2Account.has_value()) &&
-        !trophiesRequested && !authenticationDatabase.has_value()) {
+        !fixedTrophyScoringRequested && !authenticationDatabase.has_value()) {
         std::fprintf(stderr,
             "Player account bindings require --auth-db or trophy persistence.\n");
         return 2;
     }
-    if (trophiesRequested) {
+    if (trophyDatabase.has_value())
+        config.trophyDatabasePath = *trophyDatabase;
+    if (fixedTrophyScoringRequested) {
         if (!trophyMatch.has_value() || !p1Account.has_value() ||
             !p2Account.has_value()) {
             std::fprintf(stderr,
@@ -138,7 +140,7 @@ int main(int argc, char** argv) {
             basilisk::game::server::TrophyMatchId{std::move(*trophyMatch)},
             basilisk::game::server::AccountIdentity{*p1Account},
             basilisk::game::server::AccountIdentity{*p2Account},
-            trophyDatabase.has_value() ? std::move(*trophyDatabase) : std::string{},
+            trophyDatabase.has_value() ? *trophyDatabase : std::string{},
         };
         if (completePublicProfiles) {
             config.trophies->p1PublicProfile =

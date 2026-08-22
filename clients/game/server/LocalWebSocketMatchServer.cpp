@@ -79,6 +79,7 @@ public:
         std::unique_ptr<AuthoritativeInMemoryMatch> match,
         std::shared_ptr<TrophyLedger> trophyLedger,
         std::shared_ptr<PublicTrophyReadModel> publicLeaderboard,
+        std::shared_ptr<PublicAccountProfileStore> publicProfiles,
         std::uint16_t port,
         std::string bindAddress,
         std::map<std::string, PlayerId> tokens,
@@ -96,6 +97,7 @@ public:
 #endif
           trophyLedger_(std::move(trophyLedger)),
           publicLeaderboard_(std::move(publicLeaderboard)),
+          publicProfiles_(std::move(publicProfiles)),
           server_(port, std::move(bindAddress), 5, 2),
           tokens_(std::move(tokens)),
           authentication_(std::move(authentication)),
@@ -608,6 +610,21 @@ private:
         AccountIdentity account;
         if (!authentication_->resolveSession(
                 AuthSessionToken{success->sessionToken}, account, error)) return;
+        if (publicProfiles_ != nullptr) {
+            const PublicProfileStoreResult profileResult =
+                publicProfiles_->storeProfile(account, success->profile, error);
+            if (profileResult != PublicProfileStoreResult::Stored &&
+                profileResult != PublicProfileStoreResult::AlreadyStored) {
+                if (error.empty()) {
+                    error = profileResult == PublicProfileStoreResult::DuplicateHandle
+                        ? "Public profile handle is already in use."
+                        : "Unable to persist the authenticated public profile.";
+                }
+                socket.close(1008, error);
+                pendingAuthentication_.erase(&socket);
+                return;
+            }
+        }
         for (const auto& [existingSocket, existing] : authenticatedPreMatch_) {
             if (existing.account == account && existingSocket != &socket) {
                 socket.close(1008, "Account is already connected");
@@ -770,6 +787,7 @@ private:
     std::unique_ptr<AuthoritativeInMemoryMatch> match_;
     std::shared_ptr<TrophyLedger> trophyLedger_;
     std::shared_ptr<PublicTrophyReadModel> publicLeaderboard_;
+    std::shared_ptr<PublicAccountProfileStore> publicProfiles_;
     ix::WebSocketServer server_;
     std::map<std::string, PlayerId> tokens_;
     std::shared_ptr<SQLiteAccountAuth> authentication_;
@@ -817,7 +835,30 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
     }
     std::shared_ptr<TrophyLedger> trophyLedger;
     std::shared_ptr<PublicTrophyReadModel> publicLeaderboard;
+    std::shared_ptr<PublicAccountProfileStore> publicProfiles;
     std::optional<TrophyScoringContext> trophyScoring;
+    std::string trophyDatabasePath = config.trophyDatabasePath;
+    if (config.trophies.has_value() &&
+        !config.trophies->sqliteDatabasePath.empty()) {
+        if (!trophyDatabasePath.empty() &&
+            trophyDatabasePath != config.trophies->sqliteDatabasePath) {
+            error = "Server-wide and fixed-match trophy databases must match.";
+            return nullptr;
+        }
+        trophyDatabasePath = config.trophies->sqliteDatabasePath;
+    }
+    if (!trophyDatabasePath.empty()) {
+        auto persistence = SQLiteTrophyPersistence::open(
+            trophyDatabasePath, error);
+        if (persistence == nullptr) {
+            error = "Unable to open trophy database: " + error;
+            return nullptr;
+        }
+        trophyLedger = std::make_shared<TrophyLedger>(persistence);
+        publicProfiles = persistence;
+        publicLeaderboard = std::make_shared<PublicTrophyReadModel>(
+            trophyLedger, publicProfiles);
+    }
     if (config.trophies.has_value()) {
         const LocalServerTrophyConfig& trophies = *config.trophies;
         if (trophies.match.value.empty() || trophies.p1Account.value.empty() ||
@@ -831,25 +872,19 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
             error = "Public profiles must be configured for both players.";
             return nullptr;
         }
-        if (trophies.p1PublicProfile.has_value() &&
-            trophies.sqliteDatabasePath.empty()) {
+        if (trophies.p1PublicProfile.has_value() && publicProfiles == nullptr) {
             error = "Public profiles require SQLite trophy persistence.";
             return nullptr;
         }
-        if (trophies.sqliteDatabasePath.empty()) {
+        if (trophyLedger == nullptr) {
             trophyLedger = std::make_shared<TrophyLedger>();
-        } else {
-            auto persistence = SQLiteTrophyPersistence::open(
-                trophies.sqliteDatabasePath, error);
-            if (persistence == nullptr) {
-                error = "Unable to open trophy database: " + error;
-                return nullptr;
-            }
+        }
+        if (publicProfiles != nullptr) {
             const auto persistProfile = [&](PlayerSlot slot,
                                             const AccountIdentity& account,
                                             const PublicAccountProfile& profile) {
                 const PublicProfileStoreResult result =
-                    persistence->storeProfile(account, profile, error);
+                    publicProfiles->storeProfile(account, profile, error);
                 if (result == PublicProfileStoreResult::Stored ||
                     result == PublicProfileStoreResult::AlreadyStored)
                     return true;
@@ -871,12 +906,8 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
                 (!persistProfile(
                     PlayerSlot::P1, trophies.p1Account,
                     *trophies.p1PublicProfile) ||
-                 !persistProfile(
-                    PlayerSlot::P2, trophies.p2Account,
+                 !persistProfile(PlayerSlot::P2, trophies.p2Account,
                     *trophies.p2PublicProfile))) return nullptr;
-            trophyLedger = std::make_shared<TrophyLedger>(persistence);
-            publicLeaderboard = std::make_shared<PublicTrophyReadModel>(
-                trophyLedger, persistence);
         }
         trophyScoring = TrophyScoringContext{
             trophies.match,
@@ -905,6 +936,7 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
 #endif
     auto impl = std::make_unique<Impl>(
         std::move(match), std::move(trophyLedger), std::move(publicLeaderboard),
+        std::move(publicProfiles),
         config.port, std::move(config.bindAddress),
         std::map<std::string, PlayerId>{
             {std::move(config.p1Token), PlayerId{1}},

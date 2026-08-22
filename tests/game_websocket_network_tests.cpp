@@ -11,6 +11,7 @@
 
 #include <ixwebsocket/IXGetFreePort.h>
 #include <ixwebsocket/IXWebSocketServer.h>
+#include <sqlite3.h>
 
 #include "AuthoritativeInMemoryMatch.hpp"
 #include "AccountAuth.hpp"
@@ -96,6 +97,22 @@ private:
 
 std::string url(const LocalWebSocketMatchServer& server) {
     return "ws://127.0.0.1:" + std::to_string(server.port());
+}
+
+int assignedScoredMatchCount(const std::string& databasePath) {
+    sqlite3* database = nullptr;
+    assert(sqlite3_open_v2(databasePath.c_str(), &database,
+        SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
+    sqlite3_stmt* statement = nullptr;
+    assert(sqlite3_prepare_v2(database,
+        "SELECT COUNT(*) FROM trophy_scored_matches "
+        "WHERE match_id LIKE 'assigned-%'",
+        -1, &statement, nullptr) == SQLITE_OK);
+    assert(sqlite3_step(statement) == SQLITE_ROW);
+    const int count = sqlite3_column_int(statement, 0);
+    assert(sqlite3_finalize(statement) == SQLITE_OK);
+    assert(sqlite3_close(database) == SQLITE_OK);
+    return count;
 }
 
 struct IncompatibleServer {
@@ -567,6 +584,144 @@ void authenticatedAssignmentLaunchesAuthoritativeGameplay() {
     assert(host->controller() == nullptr);
 }
 
+void dynamicAssignedMatchesUsePersistentTrophyStore() {
+    TemporaryTrophyDatabase authenticationDatabase;
+    TemporaryTrophyDatabase trophyDatabase;
+    std::string error;
+    auto auth = SQLiteAccountAuth::open(authenticationDatabase.path(), error);
+    assert(auth != nullptr && error.empty());
+    const PublicAccountProfile hostProfile{
+        PublicProfileHandle{"persistent-host"}, "Persistent Host"};
+    const PublicAccountProfile guestProfile{
+        PublicProfileHandle{"persistent-guest"}, "Persistent Guest"};
+    AccountIdentity hostAccount;
+    AccountIdentity guestAccount;
+    assert(auth->createAccount(
+        LoginIdentity{"persistent-host@example.test"},
+        "correct horse battery staple", hostProfile, hostAccount, error) ==
+        CreateAccountResult::Created);
+    assert(auth->createAccount(
+        LoginIdentity{"persistent-guest@example.test"},
+        "correct horse battery staple", guestProfile, guestAccount, error) ==
+        CreateAccountResult::Created);
+    AuthSessionToken hostToken;
+    AuthSessionToken guestToken;
+    assert(auth->authenticate(LoginIdentity{"persistent-host@example.test"},
+        "correct horse battery staple", hostToken, error));
+    assert(auth->authenticate(LoginIdentity{"persistent-guest@example.test"},
+        "correct horse battery staple", guestToken, error));
+
+    auto seededPersistence = SQLiteTrophyPersistence::open(
+        trophyDatabase.path(), error);
+    assert(seededPersistence != nullptr && error.empty());
+    const TrophyMatchId priorMatch{"persistent-prior-match"};
+    const std::vector<TrophyLedgerEntry> priorEntries{
+        {priorMatch, hostAccount, TrophyReason::Win, 2},
+        {priorMatch, guestAccount, TrophyReason::Loss, -1},
+    };
+    assert(seededPersistence->appendMatch(
+        priorMatch, priorEntries, error) == TrophyAppendResult::Appended);
+    seededPersistence.reset();
+
+    LocalWebSocketServerConfig config;
+    config.port = static_cast<std::uint16_t>(ix::getFreePort());
+    config.authentication = auth;
+    config.trophyDatabasePath = trophyDatabase.path();
+    config.profiles = profiles();
+    auto server = LocalWebSocketMatchServer::start(std::move(config), error);
+    assert(server != nullptr && error.empty());
+
+    auto host = WebSocketNetworkSession::connectForAuthentication(
+        url(*server), error);
+    auto guest = WebSocketNetworkSession::connectForAuthentication(
+        url(*server), error);
+    assert(host != nullptr && guest != nullptr);
+    assert(waitUntil([&] {
+        host->pump();
+        guest->pump();
+        return host->state() == NetworkConnectionState::Connected &&
+            guest->state() == NetworkConnectionState::Connected;
+    }));
+    assert(host->authenticate({network::kProtocolVersion,
+        network::AuthenticateSessionRequest{hostToken.value}}));
+    assert(guest->authenticate({network::kProtocolVersion,
+        network::AuthenticateSessionRequest{guestToken.value}}));
+    assert(waitUntil([&] {
+        host->pump();
+        guest->pump();
+        return host->authenticationResponse().has_value() &&
+            guest->authenticationResponse().has_value();
+    }));
+    assert(host->requestLobby({network::kProtocolVersion,
+        network::HostLobbyRequest{}}));
+    assert(waitUntil([&] {
+        host->pump();
+        return host->lobbyResponse().has_value() &&
+            std::holds_alternative<network::LobbyHosted>(
+                host->lobbyResponse()->payload);
+    }));
+    const std::string lobbyCode = std::get<network::LobbyHosted>(
+        host->lobbyResponse()->payload).lobbyCode;
+    assert(guest->requestLobby({network::kProtocolVersion,
+        network::JoinLobbyRequest{lobbyCode}}));
+    assert(waitUntil([&] {
+        host->pump();
+        guest->pump();
+        return host->controller() != nullptr && guest->controller() != nullptr;
+    }));
+
+    assert(host->requestLeaderboard(0, 10));
+    assert(waitUntil([&] {
+        host->pump();
+        return host->leaderboardPage().has_value();
+    }));
+    const auto& publicEntries = host->leaderboardPage()->entries;
+    assert(publicEntries.size() == 2);
+    assert(publicEntries.front().handle == hostProfile.handle);
+    assert(publicEntries.front().displayName == hostProfile.displayName);
+    assert(publicEntries.front().trophyTotal == 2);
+
+    host.reset();
+    guest.reset();
+    assert(waitUntil([&] { return server->connectedClientCount() == 0; }));
+    server->advanceTime(30000);
+    assert(server->trophyScoringError() == std::nullopt);
+    server->stop();
+    server.reset();
+    assert(assignedScoredMatchCount(trophyDatabase.path()) == 1);
+
+    auto reopenedPersistence = SQLiteTrophyPersistence::open(
+        trophyDatabase.path(), error);
+    assert(reopenedPersistence != nullptr && error.empty());
+    std::optional<PublicAccountProfile> persistedProfile;
+    assert(reopenedPersistence->profileForAccount(
+        hostAccount, persistedProfile, error));
+    assert(persistedProfile == hostProfile);
+    assert(reopenedPersistence->profileForAccount(
+        guestAccount, persistedProfile, error));
+    assert(persistedProfile == guestProfile);
+    auto reopenedLedger = std::make_shared<TrophyLedger>(reopenedPersistence);
+    PublicTrophyReadModel reopenedReadModel(
+        reopenedLedger, reopenedPersistence);
+    std::vector<PublicTrophyLeaderboardEntry> reopenedLeaderboard;
+    assert(reopenedReadModel.leaderboardPage(
+        0, 10, reopenedLeaderboard, error));
+    assert(reopenedLeaderboard.size() == 2);
+    assert(reopenedLeaderboard.front().handle == hostProfile.handle);
+
+    LocalWebSocketServerConfig restartedConfig;
+    restartedConfig.port = static_cast<std::uint16_t>(ix::getFreePort());
+    restartedConfig.authentication = auth;
+    restartedConfig.trophyDatabasePath = trophyDatabase.path();
+    restartedConfig.profiles = profiles();
+    auto restarted = LocalWebSocketMatchServer::start(
+        std::move(restartedConfig), error);
+    assert(restarted != nullptr && error.empty());
+    std::int64_t total = 0;
+    assert(restarted->trophyTotal(hostAccount, total, error));
+    assert(total == 2);
+}
+
 void authenticatedPlayerReclaimsAssignedMatchWithinGrace() {
     TemporaryTrophyDatabase database;
     std::string error;
@@ -693,5 +848,6 @@ int main() {
     serverPersistsPublicProfilesAndRejectsDuplicateHandles();
     authenticatedUnboundAccountCanHostLobby();
     authenticatedAssignmentLaunchesAuthoritativeGameplay();
+    dynamicAssignedMatchesUsePersistentTrophyStore();
     authenticatedPlayerReclaimsAssignedMatchWithinGrace();
 }
