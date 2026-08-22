@@ -28,8 +28,17 @@ trap restore_previous ERR
 install -o root -g root -m 0755 "${candidate}" "${staged}"
 mv -f "${staged}" "${installed}"
 systemctl restart basilisk-server.service
-systemctl is-active --quiet basilisk-server.service
-ss -H -ltn | grep -Eq '(^|[[:space:]])127\.0\.0\.1:8765([[:space:]]|$)'
+listener_ready=false
+for _ in {1..100}; do
+    systemctl is-active --quiet basilisk-server.service
+    if ss -H -ltn |
+            grep -Eq '(^|[[:space:]])127\.0\.0\.1:8765([[:space:]]|$)'; then
+        listener_ready=true
+        break
+    fi
+    sleep 0.1
+done
+test "${listener_ready}" = true
 
 rm -f "${candidate}"
 trap - ERR
