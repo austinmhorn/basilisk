@@ -550,6 +550,21 @@ void authenticatedAssignmentLaunchesAuthoritativeGameplay() {
             guest->controller()->displayedSnapshot()->round ==
                 host->controller()->displayedSnapshot()->round;
     }));
+
+    assert(host->controller()->quit());
+    host->clearGameplaySession();
+    assert(host->controller() == nullptr);
+    assert(host->requestLobby({network::kProtocolVersion,
+        network::FindMatchRequest{}}));
+    assert(waitUntil([&] {
+        host->pump();
+        guest->pump();
+        return host->lobbyResponse().has_value() &&
+            std::holds_alternative<network::MatchmakingQueued>(
+                host->lobbyResponse()->payload);
+    }));
+
+    assert(host->controller() == nullptr);
 }
 
 void authenticatedPlayerReclaimsAssignedMatchWithinGrace() {

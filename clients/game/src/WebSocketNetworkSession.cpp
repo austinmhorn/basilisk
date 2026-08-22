@@ -345,6 +345,8 @@ public:
         return socketState_->state;
     }
 
+    void clearGameplaySession() { adapter_.reset(); }
+
     std::string error() const {
         std::lock_guard lock(socketState_->mutex);
         return socketState_->error;
@@ -596,6 +598,9 @@ WebSocketNetworkSession::connectForAuthentication(
 
 void WebSocketNetworkSession::pump() { impl_->pump(); }
 void WebSocketNetworkSession::close() { impl_->stop(); }
+void WebSocketNetworkSession::clearGameplaySession() {
+    impl_->clearGameplaySession();
+}
 NetworkConnectionState WebSocketNetworkSession::state() const noexcept {
     return impl_->state();
 }

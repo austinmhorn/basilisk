@@ -748,6 +748,17 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 } else if (basilisk::game::hitTestLifecycleQuit(
                                state->lifecycleModalGeometry, pointer) &&
                            state->session->quit()) {
+                    if (state->networkSession != nullptr) {
+                        state->networkSession->clearGameplaySession();
+                        state->session = nullptr;
+                        state->mainMenu = basilisk::game::MainMenuState{};
+                        state->screenShellEnabled = false;
+                        state->view = AppView::MainMenu;
+                        state->mapActionMenu.dismiss();
+                        state->actionSelection =
+                            basilisk::game::ActionSelectionState{};
+                        return SDL_APP_CONTINUE;
+                    }
                     return SDL_APP_SUCCESS;
                 }
             }

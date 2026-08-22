@@ -377,6 +377,25 @@ private:
             reject(socket, found->second, 1008, error);
             return;
         }
+        if (explicitQuit && found->second.account.has_value() &&
+            found->second.assignedMatch.has_value()) {
+            PublicAccountProfile profile;
+            if (!authentication_->publicProfile(
+                    *found->second.account, profile, error)) {
+                reject(socket, found->second, 1008, error);
+                return;
+            }
+            const AccountIdentity account = *found->second.account;
+            found->second.reconnectable = false;
+            updateAssignedReservation(found->second, false);
+            found->second.active = false;
+            clients_.erase(found);
+            authenticatedPreMatch_.emplace(
+                &socket, PreMatchClient{account, std::move(profile)});
+            reportTrophyError();
+            drainAll();
+            return;
+        }
         if (explicitQuit) {
             found->second.reconnectable = false;
             updateAssignedReservation(found->second, false);

@@ -38,6 +38,9 @@ public:
     void pump();
     // Idempotently close the transport and ignore any later callbacks.
     void close();
+    // Called only after an intentional QuitCommand succeeds. The authenticated
+    // transport remains open and can accept a bootstrap for a later match.
+    void clearGameplaySession();
     [[nodiscard]] NetworkConnectionState state() const noexcept;
     [[nodiscard]] std::string error() const;
     [[nodiscard]] ClientSessionController* controller() noexcept;
