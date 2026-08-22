@@ -413,6 +413,29 @@ void playingLifecycleHasAuthorityAndNoModal() {
     assert(view.canSubmitActions());
 }
 
+void rivalReconnectStatusFollowsPlayerSafeObservations() {
+    PlayerRoundSnapshot snapshot;
+    snapshot.observations = {
+        PlayerObservation{ObservationType::RivalDisconnected, PlayerId{1}},
+    };
+    assert(rivalReconnectWaiting(snapshot));
+
+    snapshot.observations = {
+        PlayerObservation{ObservationType::RivalReconnected, PlayerId{1}},
+    };
+    assert(!rivalReconnectWaiting(snapshot));
+
+    snapshot.observations = {
+        PlayerObservation{ObservationType::RivalDisconnectTimedOut, PlayerId{1}},
+    };
+    assert(!rivalReconnectWaiting(snapshot));
+    const auto report = roundReportText(snapshot);
+    assert(report.size() == 1);
+    assert(report.front() ==
+        "The rival hunter did not return before the reconnect grace expired "
+        "and is out of the hunt.");
+}
+
 void firstDeathCanTransitionToViewOnlySpectating() {
     PlayerRoundSnapshot snapshot;
     snapshot.player = PlayerId{1};
@@ -994,6 +1017,7 @@ int main() {
     emptyAndPopulatedRoundReportsUsePlayerObservations();
     roundReportLayoutIncludesEveryWrappedMessage();
     playingLifecycleHasAuthorityAndNoModal();
+    rivalReconnectStatusFollowsPlayerSafeObservations();
     firstDeathCanTransitionToViewOnlySpectating();
     finalDeathOffersQuitOnly();
     spectatorTerminalResultUsesPublicWinnerProfile();

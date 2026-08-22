@@ -76,6 +76,26 @@ std::optional<LifecycleModalPresentation> lifecycleModalPresentation(
     return std::nullopt;
 }
 
+bool rivalReconnectWaiting(const PlayerRoundSnapshot& snapshot) noexcept {
+    bool waiting = false;
+    for (const PlayerObservation& observation : snapshot.observations) {
+        switch (observation.type) {
+            case ObservationType::RivalDisconnected:
+                waiting = true;
+                break;
+            case ObservationType::RivalReconnected:
+            case ObservationType::RivalDisconnectTimedOut:
+            case ObservationType::RivalReserveExpired:
+            case ObservationType::RivalDied:
+                waiting = false;
+                break;
+            default:
+                break;
+        }
+    }
+    return waiting;
+}
+
 bool beginSpectating(client::ClientViewContext& viewContext) {
     if (viewContext.mode != client::ClientViewMode::Defeated ||
         !viewContext.spectatablePlayer.has_value()) {

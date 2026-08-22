@@ -40,6 +40,11 @@ lifecycleModalPresentation(
     const client::ClientViewContext& viewContext,
     std::span<const client::PublicPlayerProfile> profiles);
 
+// The authoritative snapshot carrying RivalDisconnected remains current during
+// reconnect grace. A reconnect or timeout publication replaces it immediately.
+[[nodiscard]] bool rivalReconnectWaiting(
+    const PlayerRoundSnapshot& snapshot) noexcept;
+
 // A client-local view transition only. It preserves local identity and grants
 // no authority over the survivor whose player-safe snapshot will be viewed.
 [[nodiscard]] bool beginSpectating(client::ClientViewContext& viewContext);

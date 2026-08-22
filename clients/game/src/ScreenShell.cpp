@@ -1806,6 +1806,29 @@ bool renderScreenShell(
         sidebar)) {
         return false;
     }
+    if (rivalReconnectWaiting(snapshot)) {
+        const SDL_FRect status{
+            mapFrame.x + (mapFrame.w - 330.0F * scale) * 0.5F,
+            mapFrame.y + 12.0F * scale,
+            330.0F * scale,
+            28.0F * scale,
+        };
+        drawPanel(
+            renderer,
+            status,
+            14.0F * scale,
+            SDL_Color{28, 25, 18, 238},
+            SDL_Color{105, 85, 42, SDL_ALPHA_OPAQUE},
+            scale);
+        if (!context.centeredLabel(
+                "Opponent disconnected \xE2\x80\x94 waiting for reconnect...",
+                FontWeight::Medium,
+                ui::Typography::actionDetail,
+                ui::Theme::gold,
+                status)) {
+            return false;
+        }
+    }
     if (!drawMapActionMenu(
             context,
             snapshot,
