@@ -13,6 +13,7 @@ constexpr std::array mainActions{
     MainMenuAction::Leaderboards,
     MainMenuAction::Settings,
     MainMenuAction::Exit,
+    MainMenuAction::EditProfile,
 };
 constexpr std::array startActions{
     MainMenuAction::FindGame,
@@ -26,6 +27,7 @@ constexpr std::array leaderboardActions{
     MainMenuAction::Back,
 };
 constexpr std::array settingsActions{MainMenuAction::Logout, MainMenuAction::Back};
+constexpr std::array cosmeticsActions{MainMenuAction::Back};
 constexpr std::array hostLobbyActions{
     MainMenuAction::CancelLobby, MainMenuAction::Back};
 constexpr std::array joinLobbyActions{
@@ -44,6 +46,7 @@ std::span<const MainMenuAction> MainMenuState::actions() const noexcept {
         case MainMenuPage::StartGame: return startActions;
         case MainMenuPage::Leaderboards: return leaderboardActions;
         case MainMenuPage::Settings: return settingsActions;
+        case MainMenuPage::Cosmetics: return cosmeticsActions;
         case MainMenuPage::HostLobby: return hostLobbyActions;
         case MainMenuPage::JoinLobby: return joinLobbyActions;
         case MainMenuPage::MatchReady: return matchReadyActions;
@@ -95,6 +98,9 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
             return MainMenuResult::RequestLeaderboard;
         case MainMenuAction::Settings:
             setPage(MainMenuPage::Settings);
+            break;
+        case MainMenuAction::EditProfile:
+            setPage(MainMenuPage::Cosmetics);
             break;
         case MainMenuAction::Exit:
             return MainMenuResult::Exit;

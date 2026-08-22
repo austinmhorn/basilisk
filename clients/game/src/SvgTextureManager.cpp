@@ -113,6 +113,40 @@ bool SvgTextureManager::drawAspectFit(
     return draw(asset, fitted, opacity, tint, error);
 }
 
+bool SvgTextureManager::drawAuthoredAspectFit(
+    SvgAssetId asset,
+    const SDL_FRect& destination,
+    float opacity,
+    std::string& error) {
+
+    error.clear();
+    if (destination.w <= 0.0F || destination.h <= 0.0F) return true;
+    const auto size = intrinsicSizes_.find(asset);
+    if (size == intrinsicSizes_.end() || size->second.x <= 0 || size->second.y <= 0) {
+        error = "SVG asset has no valid intrinsic dimensions";
+        return false;
+    }
+    const SDL_FRect fitted = aspectFit(
+        destination,
+        static_cast<float>(size->second.x),
+        static_cast<float>(size->second.y));
+    SDL_Texture* texture = textureFor(
+        asset, rasterBucket(fitted.w), rasterBucket(fitted.h), error, true);
+    if (texture == nullptr) return false;
+    if (!SDL_SetTextureColorMod(texture, 255, 255, 255) ||
+        !SDL_SetTextureAlphaModFloat(texture, std::clamp(opacity, 0.0F, 1.0F))) {
+        error = "Unable to configure authored SVG texture: " +
+            std::string{SDL_GetError()};
+        return false;
+    }
+    if (!SDL_RenderTexture(renderer_, texture, nullptr, &fitted)) {
+        error = "Unable to render authored SVG texture: " +
+            std::string{SDL_GetError()};
+        return false;
+    }
+    return true;
+}
+
 bool SvgTextureManager::draw(
     SvgAssetId asset,
     const SDL_FRect& destination,
@@ -179,7 +213,8 @@ SDL_Texture* SvgTextureManager::textureFor(
     SvgAssetId asset,
     int requestedWidth,
     int requestedHeight,
-    std::string& error) {
+    std::string& error,
+    bool authoredColors) {
 
     if (renderer_ == nullptr) {
         error = "SVG texture manager is not initialized";
@@ -190,6 +225,7 @@ SDL_Texture* SvgTextureManager::textureFor(
         asset,
         rasterBucket(static_cast<float>(requestedWidth)),
         rasterBucket(static_cast<float>(requestedHeight)),
+        authoredColors,
     };
     if (const auto cached = textures_.find(key); cached != textures_.end()) {
         return cached->second;
@@ -208,7 +244,7 @@ SDL_Texture* SvgTextureManager::textureFor(
         return nullptr;
     }
 
-    if (assetUsesUiTint(asset)) {
+    if (assetUsesUiTint(asset) && !authoredColors) {
         SDL_Surface* mask = makeTintableMask(surface);
         SDL_DestroySurface(surface);
         surface = mask;

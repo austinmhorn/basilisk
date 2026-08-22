@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "UITheme.hpp"
 
@@ -29,10 +32,120 @@ void panel(SDL_Renderer* renderer, PresentationRect bounds, SDL_Color fill,
     SDL_RenderRect(renderer, &area);
 }
 
+void filledCircle(SDL_Renderer* renderer, float centerX, float centerY,
+                  float radius, SDL_Color color) {
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    const int extent = static_cast<int>(std::ceil(radius));
+    for (int y = -extent; y <= extent; ++y) {
+        const float vertical = static_cast<float>(y);
+        const float horizontal = std::sqrt(std::max(
+            0.0F, radius * radius - vertical * vertical));
+        SDL_RenderLine(renderer, centerX - horizontal, centerY + vertical,
+                       centerX + horizontal, centerY + vertical);
+    }
+}
+
+void filledPill(SDL_Renderer* renderer, PresentationRect bounds, SDL_Color color) {
+    const float x = static_cast<float>(bounds.x);
+    const float y = static_cast<float>(bounds.y);
+    const float width = static_cast<float>(bounds.width);
+    const float height = static_cast<float>(bounds.height);
+    const float radius = height * 0.5F;
+    SDL_FRect center{x + radius, y, std::max(0.0F, width - height), height};
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    SDL_RenderFillRect(renderer, &center);
+    filledCircle(renderer, x + radius, y + radius, radius, color);
+    filledCircle(renderer, x + width - radius, y + radius, radius, color);
+}
+
+void pill(SDL_Renderer* renderer, PresentationRect bounds, SDL_Color fill,
+          SDL_Color border) {
+    filledPill(renderer, bounds, border);
+    constexpr double inset = 1.0;
+    const PresentationRect interior{
+        bounds.x + inset, bounds.y + inset,
+        std::max(0.0, bounds.width - inset * 2.0),
+        std::max(0.0, bounds.height - inset * 2.0),
+    };
+    filledPill(renderer, interior, fill);
+}
+
+void filledRoundedRect(SDL_Renderer* renderer, PresentationRect bounds,
+                       double radius, SDL_Color color) {
+    radius = std::clamp(radius, 0.0,
+        std::min(bounds.width, bounds.height) * 0.5);
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    SDL_FRect horizontal{
+        static_cast<float>(bounds.x + radius), static_cast<float>(bounds.y),
+        static_cast<float>(std::max(0.0, bounds.width - radius * 2.0)),
+        static_cast<float>(bounds.height),
+    };
+    SDL_FRect vertical{
+        static_cast<float>(bounds.x), static_cast<float>(bounds.y + radius),
+        static_cast<float>(bounds.width),
+        static_cast<float>(std::max(0.0, bounds.height - radius * 2.0)),
+    };
+    SDL_RenderFillRect(renderer, &horizontal);
+    SDL_RenderFillRect(renderer, &vertical);
+    const float r = static_cast<float>(radius);
+    filledCircle(renderer, static_cast<float>(bounds.x + radius),
+        static_cast<float>(bounds.y + radius), r, color);
+    filledCircle(renderer, static_cast<float>(bounds.x + bounds.width - radius),
+        static_cast<float>(bounds.y + radius), r, color);
+    filledCircle(renderer, static_cast<float>(bounds.x + radius),
+        static_cast<float>(bounds.y + bounds.height - radius), r, color);
+    filledCircle(renderer,
+        static_cast<float>(bounds.x + bounds.width - radius),
+        static_cast<float>(bounds.y + bounds.height - radius), r, color);
+}
+
+void roundedPanel(SDL_Renderer* renderer, PresentationRect bounds, double radius,
+                  SDL_Color fill, SDL_Color border) {
+    filledRoundedRect(renderer, bounds, radius, border);
+    constexpr double inset = 1.0;
+    filledRoundedRect(renderer,
+        PresentationRect{bounds.x + inset, bounds.y + inset,
+            std::max(0.0, bounds.width - inset * 2.0),
+            std::max(0.0, bounds.height - inset * 2.0)},
+        std::max(0.0, radius - inset), fill);
+}
+
 bool label(TextRenderer& text, std::string_view value, FontWeight weight,
            float size, SDL_Color color, double x, double y, std::string& error) {
     return text.drawText(value, weight, size, color,
         SDL_FPoint{static_cast<float>(x), static_cast<float>(y)}, error);
+}
+
+bool labelCentered(TextRenderer& text, std::string_view value, FontWeight weight,
+                   float size, SDL_Color color, double centerX, double y,
+                   std::string& error) {
+    const auto measured = text.measureText(value, weight, size, error);
+    if (!measured.has_value()) return false;
+    return label(text, value, weight, size, color,
+        centerX - static_cast<double>(measured->width) * 0.5, y, error);
+}
+
+bool trackedLabelCentered(TextRenderer& text, std::string_view value,
+                          FontWeight weight, float size, SDL_Color color,
+                          double centerX, double y, float trackingEm,
+                          std::string& error) {
+    if (value.empty()) return true;
+    const float tracking = size * trackingEm;
+    float width = tracking * static_cast<float>(value.size() - 1);
+    std::vector<TextSize> sizes(value.size());
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        const auto measured = text.measureText(value.substr(index, 1), weight, size, error);
+        if (!measured.has_value()) return false;
+        sizes[index] = *measured;
+        width += static_cast<float>(measured->width);
+    }
+    float x = static_cast<float>(centerX) - width * 0.5F;
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        if (!text.drawText(value.substr(index, 1), weight, size, color,
+                SDL_FPoint{x, static_cast<float>(y)}, error)) return false;
+        x += static_cast<float>(sizes[index].width) + tracking;
+    }
+    return true;
 }
 
 std::string_view actionLabel(MainMenuAction action) {
@@ -40,6 +153,7 @@ std::string_view actionLabel(MainMenuAction action) {
         case MainMenuAction::StartGame: return "START GAME";
         case MainMenuAction::Leaderboards: return "LEADERBOARDS";
         case MainMenuAction::Settings: return "SETTINGS";
+        case MainMenuAction::EditProfile: return "EDIT";
         case MainMenuAction::Exit: return "EXIT";
         case MainMenuAction::FindGame: return "FIND GAME";
         case MainMenuAction::HostGame: return "HOST GAME";
@@ -61,6 +175,7 @@ std::string_view pageTitle(MainMenuPage page) {
         case MainMenuPage::StartGame: return "START GAME";
         case MainMenuPage::Leaderboards: return "TROPHY LEADERBOARD";
         case MainMenuPage::Settings: return "SETTINGS";
+        case MainMenuPage::Cosmetics: return "COSMETICS";
         case MainMenuPage::HostLobby: return "HOST GAME";
         case MainMenuPage::JoinLobby: return "JOIN GAME";
         case MainMenuPage::MatchReady: return "MATCH READY";
@@ -83,6 +198,7 @@ std::optional<std::size_t> hitTestMainMenu(
 bool renderMainMenu(
     SDL_Renderer* renderer,
     TextRenderer& text,
+    SvgTextureManager& svgTextures,
     const MainMenuState& menu,
     std::optional<std::int64_t> trophyTotal,
     const std::optional<PublicAccountProfile>& authenticatedProfile,
@@ -109,16 +225,39 @@ bool renderMainMenu(
     };
     panel(renderer, shell, ui::Theme::surface, ui::Theme::border);
     const double left = shell.x + 48.0 * scale;
-    if (!label(text, "BASILISK", FontWeight::Bold,
-            static_cast<float>(30.0 * scale), ui::Theme::gold,
-            left, shell.y + 40.0 * scale, error) ||
-        !label(text, "PLAYER FIELD OPERATIONS", FontWeight::Medium,
-            static_cast<float>(10.0 * scale), ui::Theme::muted,
-            left, shell.y + 82.0 * scale, error) ||
-        !label(text, pageTitle(menu.page()), FontWeight::SemiBold,
-            static_cast<float>(17.0 * scale), ui::Theme::text,
-            left, shell.y + 125.0 * scale, error)) return false;
-    if (authenticatedProfile.has_value()) {
+    const double centerX = shell.x + shell.width * 0.5;
+    if (menu.page() == MainMenuPage::Main) {
+        constexpr double heroDiameter = 104.0;
+        const float heroSize = static_cast<float>(heroDiameter * scale);
+        const float heroCenterY = static_cast<float>(shell.y + 91.0 * scale);
+        filledCircle(renderer, static_cast<float>(centerX), heroCenterY,
+                     heroSize * 0.5F, ui::Theme::gold);
+        const SDL_FRect iconBounds{
+            static_cast<float>(centerX) - heroSize * 0.32F,
+            heroCenterY - heroSize * 0.32F,
+            heroSize * 0.64F,
+            heroSize * 0.64F,
+        };
+        if (!svgTextures.drawAuthoredAspectFit(
+                SvgAssetId::ObjectiveBasilisk, iconBounds, 1.0F, error) ||
+            !trackedLabelCentered(text, "BASILISK", FontWeight::Bold,
+                static_cast<float>(42.0 * scale), ui::Theme::gold,
+                centerX, shell.y + 157.0 * scale, 0.28F, error) ||
+            !labelCentered(text, pageTitle(menu.page()), FontWeight::SemiBold,
+                static_cast<float>(13.0 * scale), ui::Theme::text,
+                centerX, shell.y + 221.0 * scale, error)) return false;
+    } else if (!trackedLabelCentered(text, "BASILISK", FontWeight::Bold,
+                   static_cast<float>(30.0 * scale), ui::Theme::gold,
+                   shell.x + 131.0 * scale, shell.y + 40.0 * scale, 0.28F, error) ||
+               !label(text, "PLAYER FIELD OPERATIONS", FontWeight::Medium,
+                   static_cast<float>(10.0 * scale), ui::Theme::muted,
+                   left, shell.y + 82.0 * scale, error) ||
+               !label(text, pageTitle(menu.page()), FontWeight::SemiBold,
+                   static_cast<float>(17.0 * scale), ui::Theme::text,
+                   left, shell.y + 125.0 * scale, error)) {
+        return false;
+    }
+    if (menu.page() != MainMenuPage::Main && authenticatedProfile.has_value()) {
         const std::string identity = authenticatedProfile->displayName +
             "  @" + authenticatedProfile->handle.value;
         if (!label(text, identity, FontWeight::Medium,
@@ -128,7 +267,8 @@ bool renderMainMenu(
     }
 
     geometry.buttons.clear();
-    double buttonY = shell.y + 180.0 * scale;
+    double buttonY = shell.y +
+        (menu.page() == MainMenuPage::Main ? 275.0 : 180.0) * scale;
     if (menu.page() == MainMenuPage::Leaderboards) {
         const std::string trophies = trophyTotal.has_value()
             ? "YOUR TROPHIES  " + std::to_string(*trophyTotal)
@@ -182,6 +322,15 @@ bool renderMainMenu(
                 static_cast<float>(12.0 * scale), ui::Theme::mutedBright,
                 left, buttonY, error)) return false;
         buttonY += 54.0 * scale;
+    } else if (menu.page() == MainMenuPage::Cosmetics) {
+        if (!label(text, "Customize your calling card and emblem.",
+                FontWeight::Medium, static_cast<float>(13.0 * scale),
+                ui::Theme::text, left, buttonY, error) ||
+            !label(text, "Cosmetic loadouts are coming soon.",
+                FontWeight::Regular, static_cast<float>(11.0 * scale),
+                ui::Theme::mutedBright, left, buttonY + 34.0 * scale, error))
+            return false;
+        buttonY += 92.0 * scale;
     } else if (menu.page() == MainMenuPage::HostLobby) {
         if (!menu.lobbyCode().empty()) {
             if (!label(text, "LOBBY CODE", FontWeight::SemiBold,
@@ -238,11 +387,15 @@ bool renderMainMenu(
     const double buttonWidth = compact ? 170.0 * scale : 430.0 * scale;
     const double buttonHeight = 48.0 * scale;
     for (std::size_t index = 0; index < actions.size(); ++index) {
+        if (actions[index] == MainMenuAction::EditProfile) continue;
         const PresentationRect bounds{
-            left + (compact ? index * 184.0 * scale : 0.0), buttonY,
+            menu.page() == MainMenuPage::Main
+                ? centerX - buttonWidth * 0.5
+                : left + (compact ? index * 184.0 * scale : 0.0),
+            buttonY,
             buttonWidth, buttonHeight};
         const bool selected = index == menu.selectedIndex();
-        panel(renderer, bounds,
+        pill(renderer, bounds,
             selected ? ui::Theme::surfaceSoft : ui::Theme::surfaceRaised,
             selected ? ui::Theme::gold : ui::Theme::border);
         if (!label(text, actionLabel(actions[index]), FontWeight::SemiBold,
@@ -252,6 +405,72 @@ bool renderMainMenu(
             return false;
         geometry.buttons.push_back({actions[index], bounds});
         if (!compact) buttonY += 62.0 * scale;
+    }
+
+    if (menu.page() == MainMenuPage::Main) {
+        const PresentationRect profile{
+            centerX - 215.0 * scale,
+            shell.y + shell.height - 98.0 * scale,
+            430.0 * scale,
+            68.0 * scale,
+        };
+        const bool editSelected = menu.selectedAction() == MainMenuAction::EditProfile;
+        roundedPanel(renderer, profile, 12.0 * scale, ui::Theme::surfaceRaised,
+            editSelected ? ui::Theme::gold : ui::Theme::borderSoft);
+
+        const SDL_FRect emblemBounds{
+            static_cast<float>(profile.x + 13.0 * scale),
+            static_cast<float>(profile.y + 11.0 * scale),
+            static_cast<float>(46.0 * scale),
+            static_cast<float>(46.0 * scale),
+        };
+        filledCircle(renderer, emblemBounds.x + emblemBounds.w * 0.5F,
+            emblemBounds.y + emblemBounds.h * 0.5F, emblemBounds.w * 0.5F,
+            ui::Theme::surfaceSoft);
+        // Presentation-only fallback until authenticated accounts expose an
+        // equipped cosmetic loadout.
+        const SDL_FRect emblemArt{
+            emblemBounds.x + 7.0F * static_cast<float>(scale),
+            emblemBounds.y + 7.0F * static_cast<float>(scale),
+            emblemBounds.w - 14.0F * static_cast<float>(scale),
+            emblemBounds.h - 14.0F * static_cast<float>(scale),
+        };
+        if (!svgTextures.drawAspectFit(SvgAssetId::EmblemCircle, emblemArt,
+                0.82F, ui::Theme::mutedBright, error)) return false;
+
+        const std::string displayName = authenticatedProfile.has_value()
+            ? authenticatedProfile->displayName : "PLAYER PROFILE";
+        const std::string handle = authenticatedProfile.has_value()
+            ? "@" + authenticatedProfile->handle.value : "@unavailable";
+        const std::string trophies = trophyTotal.has_value()
+            ? "TROPHIES  " + std::to_string(*trophyTotal)
+            : "TROPHIES  --";
+        if (!label(text, displayName, FontWeight::SemiBold,
+                static_cast<float>(12.0 * scale), ui::Theme::text,
+                profile.x + 75.0 * scale, profile.y + 12.0 * scale, error) ||
+            !label(text, handle, FontWeight::Regular,
+                static_cast<float>(9.0 * scale), ui::Theme::muted,
+                profile.x + 75.0 * scale, profile.y + 38.0 * scale, error) ||
+            !label(text, trophies, FontWeight::SemiBold,
+                static_cast<float>(9.0 * scale), ui::Theme::gold,
+                profile.x + 238.0 * scale, profile.y + 27.0 * scale, error))
+            return false;
+
+        const PresentationRect edit{
+            profile.x + profile.width - 76.0 * scale,
+            profile.y + 18.0 * scale,
+            60.0 * scale,
+            32.0 * scale,
+        };
+        pill(renderer, edit,
+            editSelected ? ui::Theme::surfaceSoft : ui::Theme::surface,
+            editSelected ? ui::Theme::gold : ui::Theme::border);
+        if (!labelCentered(text, actionLabel(MainMenuAction::EditProfile),
+                FontWeight::SemiBold, static_cast<float>(9.0 * scale),
+                editSelected ? ui::Theme::gold : ui::Theme::text,
+                edit.x + edit.width * 0.5, edit.y + 9.0 * scale, error))
+            return false;
+        geometry.buttons.push_back({MainMenuAction::EditProfile, edit});
     }
     error.clear();
     return true;

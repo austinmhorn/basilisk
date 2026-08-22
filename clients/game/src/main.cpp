@@ -1103,6 +1103,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             if (!basilisk::game::renderMainMenu(
                     state->renderer,
                     *state->textRenderer,
+                    *state->svgTextures,
                     state->mainMenu,
                     trophies,
                     state->authenticatedProfile,

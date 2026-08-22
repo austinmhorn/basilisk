@@ -10,6 +10,7 @@
 #include "MainMenu.hpp"
 #include "MapPresentation.hpp"
 #include "NetworkProtocol.hpp"
+#include "SvgTextureManager.hpp"
 #include "TextRenderer.hpp"
 
 namespace basilisk::game {
@@ -30,6 +31,7 @@ struct MainMenuGeometry {
 [[nodiscard]] bool renderMainMenu(
     SDL_Renderer* renderer,
     TextRenderer& text,
+    SvgTextureManager& svgTextures,
     const MainMenuState& menu,
     std::optional<std::int64_t> trophyTotal,
     const std::optional<PublicAccountProfile>& authenticatedProfile,

@@ -71,6 +71,14 @@ int main() {
     assert(menu.activateSelected() == MainMenuResult::Logout);
 
     (void)menu.back();
+    assert(menu.activate(MainMenuAction::EditProfile) == MainMenuResult::None);
+    assert(menu.page() == MainMenuPage::Cosmetics);
+    assert(menu.selectedAction() == MainMenuAction::Back);
+    assert(menu.activateSelected() == MainMenuResult::None);
+    assert(menu.page() == MainMenuPage::Main);
+
+    menu.moveSelection(-1);
+    assert(menu.selectedAction() == MainMenuAction::EditProfile);
     menu.moveSelection(-1);
     assert(menu.selectedAction() == MainMenuAction::Exit);
     assert(menu.activateSelected() == MainMenuResult::Exit);
