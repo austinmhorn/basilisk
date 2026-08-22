@@ -44,7 +44,8 @@ public:
 class SQLiteAccountAuth final : public AccountSessionResolver {
 public:
     using Clock = std::function<std::int64_t()>;
-    static constexpr std::chrono::seconds defaultSessionLifetime{900};
+    static constexpr std::chrono::seconds defaultSessionLifetime{
+        30 * 24 * 60 * 60};
 
     [[nodiscard]] static std::shared_ptr<SQLiteAccountAuth> open(
         const std::string& databasePath,

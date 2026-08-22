@@ -73,7 +73,12 @@ int main() {
     assert(auth->resolveSession(session, resolved, error));
     assert(resolved == created);
 
-    now += SQLiteAccountAuth::defaultSessionLifetime.count();
+    const std::int64_t sessionCreatedAt = now;
+    now += 16 * 60;
+    assert(auth->resolveSession(session, resolved, error));
+    assert(resolved == created);
+
+    now = sessionCreatedAt + SQLiteAccountAuth::defaultSessionLifetime.count();
     assert(!auth->resolveSession(session, resolved, error));
     assert(error == "Invalid or expired authentication session.");
 
