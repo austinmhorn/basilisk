@@ -619,11 +619,13 @@ if(EMSCRIPTEN)
     set_target_properties(BasiliskGame PROPERTIES SUFFIX ".html")
     set_property(TARGET BasiliskGame APPEND PROPERTY LINK_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/web/network-arguments.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
     )
     target_link_options(
         BasiliskGame
         PRIVATE
             "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/web/network-arguments.js"
+            "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
             "SHELL:--preload-file ${BASILISK_GAME_FONT_ASSET_DIR}@/assets/fonts"
             "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets/ui@/assets/ui"
             "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets/items@/assets/items"

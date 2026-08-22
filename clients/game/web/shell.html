@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0c1018">
+    <title>Basilisk</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            background: #0c1018;
+            font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: #0c1018;
+        }
+
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #canvas {
+            display: block;
+            width: min(100vw, 160vh) !important;
+            height: min(100vh, 62.5vw) !important;
+            aspect-ratio: 8 / 5;
+            border: 0;
+            outline: 0;
+            background: #0c1018;
+            touch-action: none;
+            opacity: 0;
+            transition: opacity 160ms ease-out;
+        }
+
+        #canvas.ready {
+            opacity: 1;
+        }
+
+        #loader {
+            position: fixed;
+            inset: 0;
+            z-index: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            color: #d8dce5;
+            background: #0c1018;
+            pointer-events: none;
+            transition: opacity 160ms ease-out;
+        }
+
+        #loader.hidden {
+            opacity: 0;
+            visibility: hidden;
+        }
+
+        .brand {
+            color: #e1b85b;
+            font-size: clamp(24px, 4vw, 42px);
+            font-weight: 700;
+            letter-spacing: 0.28em;
+            text-indent: 0.28em;
+        }
+
+        #status {
+            min-height: 1.4em;
+            color: #858d9d;
+            font-size: 13px;
+            letter-spacing: 0.08em;
+        }
+
+        .spinner {
+            width: 22px;
+            height: 22px;
+            border: 2px solid #252c38;
+            border-top-color: #e1b85b;
+            border-radius: 50%;
+            animation: spin 900ms linear infinite;
+        }
+
+        #loader.failed .spinner {
+            display: none;
+        }
+
+        #loader.failed #status {
+            max-width: min(420px, 80vw);
+            color: #d98c8c;
+            line-height: 1.5;
+            text-align: center;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            #canvas,
+            #loader {
+                transition: none;
+            }
+
+            .spinner {
+                animation-duration: 1800ms;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="loader" role="status" aria-live="polite">
+        <div class="brand">BASILISK</div>
+        <div class="spinner" aria-hidden="true"></div>
+        <div id="status">Loading...</div>
+    </div>
+    <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const loader = document.getElementById('loader');
+        const status = document.getElementById('status');
+
+        const showGame = () => {
+            canvas.classList.add('ready');
+            loader.classList.add('hidden');
+            canvas.focus({preventScroll: true});
+        };
+        const showFailure = () => {
+            loader.classList.remove('hidden');
+            loader.classList.add('failed');
+            status.textContent = 'Unable to load Basilisk. Please refresh and try again.';
+        };
+
+        canvas.addEventListener('pointerdown', () => {
+            canvas.focus({preventScroll: true});
+        });
+        canvas.addEventListener('webglcontextlost', (event) => {
+            event.preventDefault();
+            showFailure();
+        });
+        window.addEventListener('error', showFailure);
+        window.addEventListener('unhandledrejection', showFailure);
+
+        var Module = {
+            canvas,
+            print: (...messages) => console.log(...messages),
+            printErr: (...messages) => console.error(...messages),
+            setStatus(message) {
+                if (!message) {
+                    requestAnimationFrame(showGame);
+                    return;
+                }
+                status.textContent = message;
+            },
+            monitorRunDependencies(remaining) {
+                this.totalDependencies = Math.max(
+                    this.totalDependencies || 0, remaining);
+                if (remaining > 0) {
+                    const completed = this.totalDependencies - remaining;
+                    this.setStatus(`Preparing... ${completed}/${this.totalDependencies}`);
+                }
+            },
+            onAbort: showFailure
+        };
+    </script>
+    {{{ SCRIPT }}}
+</body>
+</html>
