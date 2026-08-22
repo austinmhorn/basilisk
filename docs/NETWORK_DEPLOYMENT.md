@@ -97,8 +97,11 @@ proxy_set_header Upgrade $http_upgrade;
 proxy_set_header Connection $basilisk_connection_upgrade;
 ```
 
-It also forwards `Host`, `X-Forwarded-For`, and `X-Forwarded-Proto`. The public
-client connects with a deployment-selected endpoint such as:
+The example returns HTTP 426 for requests without `Upgrade: websocket`, so
+ordinary browser GET/HEAD traffic never reaches BasiliskServer. It also
+forwards `Host`, `X-Forwarded-For`, and `X-Forwarded-Proto` for accepted
+WebSocket upgrades. The public client connects with a deployment-selected
+endpoint such as:
 
 ```sh
 BasiliskGame --connect wss://game.example.com
