@@ -239,6 +239,99 @@ jobs:
           path: build-package/Basilisk-*-Windows-*.zip
           if-no-files-found: error
 
+  package-linux-server:
+    name: Package Linux server
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bootstrap Ubuntu dependencies
+        run: ./scripts/install-dependencies-ubuntu.sh
+
+      - name: Configure Release server build
+        run: >-
+          cmake -S . -B build-server
+          -DCMAKE_BUILD_TYPE=Release
+          -DBASILISK_BUILD_GAME=ON
+          -DBASILISK_BUILD_CLI=OFF
+          -DBASILISK_BUILD_SIM=OFF
+          -DBASILISK_BUILD_TESTS=OFF
+
+      - name: Build BasiliskServer
+        run: cmake --build build-server --config Release --target BasiliskServer
+
+      - name: Assemble and validate server artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          package=server-package
+          install -Dm755 \
+            build-server/clients/game/BasiliskServer \
+            "${package}/BasiliskServer"
+          install -Dm644 \
+            deploy/systemd/basilisk-server.service \
+            "${package}/deploy/systemd/basilisk-server.service"
+          install -Dm644 \
+            deploy/systemd/server.env.example \
+            "${package}/deploy/systemd/server.env.example"
+          install -Dm644 \
+            deploy/nginx/basilisk-websocket.conf.example \
+            "${package}/deploy/nginx/basilisk-websocket.conf.example"
+
+          test -x "${package}/BasiliskServer"
+          mapfile -t contents < <(
+            find "${package}" -type f -printf '%P\n' | sort
+          )
+          expected=(
+            BasiliskServer
+            deploy/nginx/basilisk-websocket.conf.example
+            deploy/systemd/basilisk-server.service
+            deploy/systemd/server.env.example
+          )
+          if [[ "${contents[*]}" != "${expected[*]}" ]]; then
+            printf 'Unexpected Linux server artifact contents:\n%s\n' \
+              "${contents[*]}"
+            exit 1
+          fi
+
+          runtime="${RUNNER_TEMP}/basilisk-server-smoke"
+          mkdir -p "${runtime}"
+          "${package}/BasiliskServer" \
+            --bind 127.0.0.1 \
+            --port 18765 \
+            --auth-db "${runtime}/auth.sqlite3" \
+            --trophy-db "${runtime}/trophies.sqlite3" \
+            >"${runtime}/server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill -INT "${server_pid}" 2>/dev/null || true' EXIT
+          for _ in {1..100}; do
+            if grep -Fq \
+                'Basilisk server listening on ws://127.0.0.1:18765' \
+                "${runtime}/server.log"; then
+              break
+            fi
+            if ! kill -0 "${server_pid}" 2>/dev/null; then
+              cat "${runtime}/server.log"
+              exit 1
+            fi
+            sleep 0.1
+          done
+          grep -Fq \
+            'Basilisk server listening on ws://127.0.0.1:18765' \
+            "${runtime}/server.log"
+          kill -INT "${server_pid}"
+          wait "${server_pid}"
+          trap - EXIT
+
+      - name: Upload Linux server package
+        uses: actions/upload-artifact@v4
+        with:
+          name: BasiliskServer-Linux-${{ runner.arch }}
+          path: server-package/
+          if-no-files-found: error
+
   release:
     name: Publish tagged release
     if: startsWith(github.ref, 'refs/tags/v')
