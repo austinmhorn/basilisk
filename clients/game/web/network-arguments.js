@@ -3,9 +3,13 @@ if (typeof window !== 'undefined') {
     const parameters = new URLSearchParams(window.location.search);
     const connect = parameters.get('connect');
     const token = parameters.get('token');
-    if (connect !== null && token !== null) {
-        Module['arguments'] = (Module['arguments'] || []).concat([
-            '--connect', connect, '--token', token
-        ]);
+    if (connect !== null) {
+        const argumentsToAppend = ['--connect', connect];
+        if (token !== null) {
+            argumentsToAppend.push('--token', token);
+        }
+        Module['arguments'] = (Module['arguments'] || []).concat(
+            argumentsToAppend
+        );
     }
 }

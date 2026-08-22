@@ -74,6 +74,7 @@ jobs:
           test -s build-web/clients/game/BasiliskGame.html
           test -s build-web/clients/game/BasiliskGame.js
           test -s build-web/clients/game/BasiliskGame.wasm
+          test -s build-web/clients/game/BasiliskGame.data
 
       - name: Upload browser artifacts
         uses: actions/upload-artifact@v4
@@ -83,6 +84,37 @@ jobs:
             build-web/clients/game/BasiliskGame.html
             build-web/clients/game/BasiliskGame.js
             build-web/clients/game/BasiliskGame.wasm
+            build-web/clients/game/BasiliskGame.data
+          if-no-files-found: error
+
+      - name: Assemble deployable web package
+        run: >-
+          cmake --build build-web --config Release
+          --target BasiliskGameWebPackage
+
+      - name: Validate deployable web package
+        shell: bash
+        run: |
+          set -euo pipefail
+          package=build-web/web-package
+          test -s "${package}/index.html"
+          test -s "${package}/BasiliskGame.js"
+          test -s "${package}/BasiliskGame.wasm"
+          test -s "${package}/BasiliskGame.data"
+          grep -Fq 'BasiliskGame.js' "${package}/index.html"
+          grep -Fq 'BasiliskGame.wasm' "${package}/BasiliskGame.js"
+          grep -Fq 'BasiliskGame.data' "${package}/BasiliskGame.js"
+          grep -Fq '/assets/fonts/Inter-Regular.ttf' "${package}/BasiliskGame.js"
+          grep -Fq '/assets/ui/basilisk-logo.svg' "${package}/BasiliskGame.js"
+          grep -Fq '/assets/items/healing-draught.svg' "${package}/BasiliskGame.js"
+          grep -Fq '/assets/emblems/circle.svg' "${package}/BasiliskGame.js"
+          test -z "$(find "${package}" -type f \( -name '*BasiliskGameDebug*' -o -name '*BasiliskServer*' \) -print -quit)"
+
+      - name: Upload deployable web package
+        uses: actions/upload-artifact@v4
+        with:
+          name: BasiliskGame-WebAssembly
+          path: build-web/web-package/
           if-no-files-found: error
 
   package-macos:

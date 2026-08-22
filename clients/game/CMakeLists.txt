@@ -600,4 +600,31 @@ if(EMSCRIPTEN)
             "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets/items@/assets/items"
             "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets/emblems@/assets/emblems"
     )
+
+    set(BASILISK_WEB_PACKAGE_DIR
+        "${CMAKE_BINARY_DIR}/web-package"
+        CACHE PATH
+        "Output directory for the deployable Basilisk WebAssembly client"
+    )
+    add_custom_target(BasiliskGameWebPackage
+        COMMAND ${CMAKE_COMMAND} -E remove_directory
+            "${BASILISK_WEB_PACKAGE_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${BASILISK_WEB_PACKAGE_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:BasiliskGame>"
+            "${BASILISK_WEB_PACKAGE_DIR}/index.html"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE_DIR:BasiliskGame>/BasiliskGame.js"
+            "${BASILISK_WEB_PACKAGE_DIR}/BasiliskGame.js"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE_DIR:BasiliskGame>/BasiliskGame.wasm"
+            "${BASILISK_WEB_PACKAGE_DIR}/BasiliskGame.wasm"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE_DIR:BasiliskGame>/BasiliskGame.data"
+            "${BASILISK_WEB_PACKAGE_DIR}/BasiliskGame.data"
+        DEPENDS BasiliskGame
+        COMMENT "Assembling deployable Basilisk WebAssembly package"
+        VERBATIM
+    )
 endif()
