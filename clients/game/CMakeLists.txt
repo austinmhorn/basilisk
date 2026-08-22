@@ -429,11 +429,22 @@ target_link_libraries(BasiliskGameRuntime
 target_compile_features(BasiliskGameRuntime PUBLIC cxx_std_20)
 
 function(basilisk_add_game_executable target)
-    add_executable(${target}
+    set(_executable_options)
+    if(APPLE AND "${target}" STREQUAL "BasiliskGame")
+        list(APPEND _executable_options MACOSX_BUNDLE)
+    endif()
+    add_executable(${target} ${_executable_options}
         src/ConnectionStatusPresentation.cpp
         src/main.cpp
         src/ScreenShell.cpp
     )
+    unset(_executable_options)
+    if(APPLE AND "${target}" STREQUAL "BasiliskGame")
+        set(_asset_root
+            "$<TARGET_BUNDLE_CONTENT_DIR:${target}>/Resources/assets")
+    else()
+        set(_asset_root "$<TARGET_FILE_DIR:${target}>/assets")
+    endif()
     target_link_libraries(
         ${target}
         PRIVATE
@@ -446,10 +457,10 @@ function(basilisk_add_game_executable target)
         TARGET ${target}
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
-            "$<TARGET_FILE_DIR:${target}>/assets/fonts"
+            "${_asset_root}/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${BASILISK_GAME_FONT_ASSET_DIR}"
-            "$<TARGET_FILE_DIR:${target}>/assets/fonts"
+            "${_asset_root}/fonts"
         COMMENT "Packaging Inter font assets for ${target}"
     )
 
@@ -458,23 +469,64 @@ function(basilisk_add_game_executable target)
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/assets/ui"
-            "$<TARGET_FILE_DIR:${target}>/assets/ui"
+            "${_asset_root}/ui"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/assets/items"
-            "$<TARGET_FILE_DIR:${target}>/assets/items"
+            "${_asset_root}/items"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/assets/emblems"
-            "$<TARGET_FILE_DIR:${target}>/assets/emblems"
+            "${_asset_root}/emblems"
         COMMENT "Packaging SVG UI assets for ${target}"
     )
+    unset(_asset_root)
 endfunction()
 
 basilisk_add_game_executable(BasiliskGame)
+if(APPLE)
+    set(_basilisk_macos_icon
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/macos/BasiliskGame.icns")
+    set_source_files_properties("${_basilisk_macos_icon}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources
+    )
+    target_sources(BasiliskGame PRIVATE "${_basilisk_macos_icon}")
+    set_target_properties(BasiliskGame PROPERTIES
+        MACOSX_BUNDLE_BUNDLE_NAME "Basilisk"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.basilisk.game"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_ICON_FILE "BasiliskGame.icns"
+    )
+    unset(_basilisk_macos_icon)
+endif()
 target_link_libraries(
     BasiliskGame
     PRIVATE
         Basilisk::GameLocalSession
 )
+
+if(APPLE)
+    install(TARGETS BasiliskGame
+        BUNDLE DESTINATION .
+        COMPONENT BasiliskGame
+    )
+elseif(WIN32)
+    install(TARGETS BasiliskGame
+        RUNTIME DESTINATION .
+        COMPONENT BasiliskGame
+    )
+    install(DIRECTORY "${BASILISK_GAME_FONT_ASSET_DIR}/"
+        DESTINATION assets/fonts
+        COMPONENT BasiliskGame
+    )
+    foreach(_asset_directory IN ITEMS ui items emblems)
+        install(DIRECTORY
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/${_asset_directory}/"
+            DESTINATION "assets/${_asset_directory}"
+            COMPONENT BasiliskGame
+        )
+    endforeach()
+    unset(_asset_directory)
+endif()
 
 if(NOT EMSCRIPTEN)
     add_library(BasiliskGameDebugSupport STATIC
