@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -7,6 +8,7 @@ namespace basilisk::game {
 
 struct NetworkEndpointConfig {
     std::string bindAddress{"127.0.0.1"};
+    std::uint16_t serverPort{8765};
     std::string connectUrl{"ws://127.0.0.1:8765"};
 };
 

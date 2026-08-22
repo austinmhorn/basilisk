@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
                 static_cast<int>(argument.size()), argument.data());
             return 2;
         }
-        if (argument == "--bind") {
+        if (argument == "--bind" || argument == "--port") {
             std::string endpointError;
             if (!basilisk::game::applyNetworkEndpointOption(
                     argument, argv[index], endpointConfig, endpointError)) {
@@ -80,6 +80,7 @@ int main(int argc, char** argv) {
                 return 2;
             }
             config.bindAddress = endpointConfig.bindAddress;
+            config.port = endpointConfig.serverPort;
         }
         else if (argument == "--p1-token") config.p1Token = argv[index];
         else if (argument == "--p2-token") config.p2Token = argv[index];
@@ -94,14 +95,12 @@ int main(int argc, char** argv) {
         else if (argument == "--p2-display-name") p2DisplayName = argv[index];
         else {
             std::uint64_t value = 0;
-            if (!parseUnsigned(argv[index], value) ||
-                (argument == "--port" && (value == 0 || value > 65535))) {
+            if (!parseUnsigned(argv[index], value)) {
                 std::fprintf(stderr, "Invalid value for %.*s: %s\n",
                     static_cast<int>(argument.size()), argument.data(), argv[index]);
                 return 2;
             }
-            if (argument == "--port") config.port = static_cast<std::uint16_t>(value);
-            else config.mapSeed = static_cast<basilisk::MapSeed>(value);
+            config.mapSeed = static_cast<basilisk::MapSeed>(value);
         }
     }
     const bool trophiesRequested = trophyDatabase.has_value() ||

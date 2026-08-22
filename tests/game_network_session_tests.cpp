@@ -21,11 +21,16 @@ namespace {
 void configurableNetworkEndpointsPreserveDefaultsAndCustomValues() {
     NetworkEndpointConfig config;
     assert(config.bindAddress == "127.0.0.1");
+    assert(config.serverPort == 8765);
     assert(config.connectUrl == "ws://127.0.0.1:8765");
     std::string error;
     assert(applyNetworkEndpointOption(
         "--bind", "0.0.0.0", config, error));
     assert(config.bindAddress == "0.0.0.0");
+    assert(applyNetworkEndpointOption("--port", "9443", config, error));
+    assert(config.serverPort == 9443);
+    assert(!applyNetworkEndpointOption("--port", "0", config, error));
+    assert(!applyNetworkEndpointOption("--port", "65536", config, error));
     assert(applyNetworkEndpointOption(
         "--connect", "ws://192.168.1.42:8765", config, error));
     assert(config.connectUrl == "ws://192.168.1.42:8765");
