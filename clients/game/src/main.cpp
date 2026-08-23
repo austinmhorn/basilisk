@@ -27,6 +27,8 @@
 #include "MapActionMenu.hpp"
 #include "MapPresentation.hpp"
 #include "NetworkEndpointConfig.hpp"
+#include "PauseMenu.hpp"
+#include "PauseMenuRenderer.hpp"
 #include "ScreenShell.hpp"
 #include "SessionTokenStorage.hpp"
 #include "SvgTextureManager.hpp"
@@ -88,6 +90,8 @@ struct AppState {
     basilisk::game::MapActionMenuState mapActionMenu;
     basilisk::game::MapActionMenuGeometry mapActionMenuGeometry;
     basilisk::game::LifecycleModalGeometry lifecycleModalGeometry;
+    basilisk::game::PauseMenuState pauseMenu;
+    basilisk::game::PauseMenuGeometry pauseMenuGeometry;
     std::optional<basilisk::RoundNumber> mapActionMenuRound;
 #if defined(BASILISK_GAME_DEBUG)
     std::unique_ptr<basilisk::game::debug::DebugMapProvider> debugMapProvider;
@@ -250,6 +254,35 @@ bool pointerInRenderCoordinates(
     }
     point = {renderX, renderY};
     return true;
+}
+
+SDL_AppResult finishGameplayQuit(AppState& state) {
+    state.pauseMenu.close();
+    if (state.networkSession == nullptr) return SDL_APP_SUCCESS;
+    state.networkSession->clearGameplaySession();
+    state.session = nullptr;
+    state.mainMenu = basilisk::game::MainMenuState{};
+    if (state.confirmedCosmeticLoadout.has_value()) {
+        state.mainMenu.applyConfirmedCosmeticLoadout(
+            *state.confirmedCosmeticLoadout);
+    }
+    state.screenShellEnabled = false;
+    state.view = AppView::MainMenu;
+    state.mapActionMenu.dismiss();
+    state.actionSelection = basilisk::game::ActionSelectionState{};
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult handlePauseResult(
+    AppState& state,
+    basilisk::game::PauseMenuResult result) {
+    if (result == basilisk::game::PauseMenuResult::Resume) {
+        state.pauseMenu.close();
+    } else if (result == basilisk::game::PauseMenuResult::QuitGame &&
+               state.session != nullptr && state.session->quit()) {
+        return finishGameplayQuit(state);
+    }
+    return SDL_APP_CONTINUE;
 }
 
 } // namespace
@@ -533,16 +566,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 return handleMainMenuResult(*state, result);
             }
             if (event->key.key == SDLK_ESCAPE) {
-                if (state->mainMenu.page() ==
-                        basilisk::game::MainMenuPage::Main &&
-                    state->session != nullptr &&
-                    state->session->displayedSnapshot() != nullptr) {
-                    state->view = AppView::Gameplay;
-                } else {
-                    return handleMainMenuResult(
-                        *state, state->mainMenu.back());
-                }
-                return SDL_APP_CONTINUE;
+                return handleMainMenuResult(*state, state->mainMenu.back());
             }
         }
         if (event->type == SDL_EVENT_MOUSE_MOTION ||
@@ -583,6 +607,42 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                         basilisk::game::MainMenuPage::JoinLobby)
                     (void)SDL_StartTextInput(state->window);
                 return handleMainMenuResult(*state, result);
+            }
+        }
+        return SDL_APP_CONTINUE;
+    }
+
+    if (state != nullptr && state->pauseMenu.active()) {
+        if (event->type == SDL_EVENT_KEY_DOWN && !event->key.repeat) {
+            if (event->key.key == SDLK_ESCAPE) {
+                state->pauseMenu.close();
+            } else if (event->key.key == SDLK_UP) {
+                state->pauseMenu.moveSelection(-1);
+            } else if (event->key.key == SDLK_DOWN) {
+                state->pauseMenu.moveSelection(1);
+            } else if (event->key.key == SDLK_RETURN ||
+                       event->key.key == SDLK_KP_ENTER) {
+                return handlePauseResult(
+                    *state, state->pauseMenu.activateSelected());
+            }
+        } else if (event->type == SDL_EVENT_MOUSE_MOTION ||
+                   (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+                    event->button.button == SDL_BUTTON_LEFT)) {
+            basilisk::game::PresentationPoint pointer;
+            const float windowX = event->type == SDL_EVENT_MOUSE_MOTION
+                ? event->motion.x : event->button.x;
+            const float windowY = event->type == SDL_EVENT_MOUSE_MOTION
+                ? event->motion.y : event->button.y;
+            if (!pointerInRenderCoordinates(
+                    state->renderer, windowX, windowY, pointer))
+                return SDL_APP_FAILURE;
+            const auto hit = basilisk::game::hitTestPauseMenu(
+                state->pauseMenuGeometry, pointer);
+            if (hit.has_value()) state->pauseMenu.select(*hit);
+            if (hit.has_value() &&
+                event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+                return handlePauseResult(
+                    *state, state->pauseMenu.activateSelected());
             }
         }
         return SDL_APP_CONTINUE;
@@ -731,11 +791,13 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 
     if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
         !event->key.repeat && event->key.key == SDLK_ESCAPE) {
-        if (!lifecycleModalActive && state->mapActionMenu.isOpen()) {
+        if (!lifecycleModalActive) {
             state->mapActionMenu.dismiss();
-        } else if (!lifecycleModalActive && state->networkSession != nullptr) {
-            state->view = AppView::MainMenu;
-            (void)state->mainMenu.back();
+            state->hoveredActionIndex.reset();
+            basilisk::game::updateMapHover(
+                state->mapPresentation,
+                basilisk::game::MapHitTarget{});
+            state->pauseMenu.open();
         }
         return SDL_APP_CONTINUE;
     }
@@ -808,24 +870,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                                 state->session->viewContext().viewedPlayer));
                     }
                 } else if (basilisk::game::hitTestLifecycleQuit(
-                               state->lifecycleModalGeometry, pointer) &&
+                           state->lifecycleModalGeometry, pointer) &&
                            state->session->quit()) {
-                    if (state->networkSession != nullptr) {
-                        state->networkSession->clearGameplaySession();
-                        state->session = nullptr;
-                        state->mainMenu = basilisk::game::MainMenuState{};
-                        if (state->confirmedCosmeticLoadout.has_value()) {
-                            state->mainMenu.applyConfirmedCosmeticLoadout(
-                                *state->confirmedCosmeticLoadout);
-                        }
-                        state->screenShellEnabled = false;
-                        state->view = AppView::MainMenu;
-                        state->mapActionMenu.dismiss();
-                        state->actionSelection =
-                            basilisk::game::ActionSelectionState{};
-                        return SDL_APP_CONTINUE;
-                    }
-                    return SDL_APP_SUCCESS;
+                    return finishGameplayQuit(*state);
                 }
             }
             return SDL_APP_CONTINUE;
@@ -1305,6 +1352,21 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 return SDL_APP_FAILURE;
             }
           }
+        }
+    }
+
+    if (state->pauseMenu.active()) {
+        std::string pauseError;
+        if (!basilisk::game::renderPauseMenu(
+                state->renderer,
+                *state->textRenderer,
+                state->pauseMenu,
+                state->pauseMenuGeometry,
+                outputWidth,
+                outputHeight,
+                pauseError)) {
+            SDL_Log("Pause menu rendering failed: %s", pauseError.c_str());
+            return SDL_APP_FAILURE;
         }
     }
 

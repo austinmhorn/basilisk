@@ -36,6 +36,9 @@ public:
 
     void disconnect(PlayerId player);
     void reconnect(PlayerId player);
+    // An intentional departure eliminates the hunter immediately. Unlike a
+    // transport disconnect, it does not start reconnect grace.
+    void forfeit(PlayerId player);
     void advanceTime(std::uint64_t elapsedMs);
 
     [[nodiscard]] const HostSessionState* hostSession(PlayerId player) const;
@@ -53,7 +56,9 @@ private:
     [[nodiscard]] bool allRequiredPlayersLocked() const;
     [[nodiscard]] bool anotherLivingPlayerIsLocked(PlayerId player) const;
     void tryResolveRound();
-    void eliminateForTimeout(PlayerId player, GameEventType reason);
+    void eliminatePlayer(
+        PlayerId player,
+        std::optional<GameEventType> reason = std::nullopt);
     void updateTerminalResultIfNeeded();
 };
 

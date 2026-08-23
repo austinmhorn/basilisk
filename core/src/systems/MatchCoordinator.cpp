@@ -93,6 +93,18 @@ void MatchCoordinator::reconnect(PlayerId player) {
     tryResolveRound();
 }
 
+void MatchCoordinator::forfeit(PlayerId player) {
+    lastEvents_.clear();
+    if (state_.result.status != MatchStatus::Active || !isLivingPlayer(player))
+        return;
+
+    const auto sessionIt = sessions_.find(player);
+    if (sessionIt != sessions_.end()) sessionIt->second.connected = false;
+    eliminatePlayer(player);
+    updateTerminalResultIfNeeded();
+    if (state_.result.status == MatchStatus::Active) tryResolveRound();
+}
+
 bool MatchCoordinator::anotherLivingPlayerIsLocked(PlayerId player) const {
     for (const auto& candidate : state_.players) {
         if (!candidate.alive || candidate.id == player) continue;
@@ -116,7 +128,9 @@ bool MatchCoordinator::allRequiredPlayersLocked() const {
     return foundLivingPlayer;
 }
 
-void MatchCoordinator::eliminateForTimeout(PlayerId player, GameEventType reason) {
+void MatchCoordinator::eliminatePlayer(
+    PlayerId player,
+    std::optional<GameEventType> reason) {
     PlayerState* statePlayer = findPlayer(state_, player);
     if (statePlayer == nullptr || !statePlayer->alive) return;
 
@@ -129,7 +143,10 @@ void MatchCoordinator::eliminateForTimeout(PlayerId player, GameEventType reason
         sessionIt->second.actionLocked = false;
     }
 
-    lastEvents_.push_back(GameEvent{reason, player, player, statePlayer->cave});
+    if (reason.has_value()) {
+        lastEvents_.push_back(
+            GameEvent{*reason, player, player, statePlayer->cave});
+    }
     lastEvents_.push_back(GameEvent{GameEventType::PlayerKilled, std::nullopt, player, statePlayer->cave});
 
     if (!bodyExists(state_, player)) {
@@ -187,10 +204,10 @@ void MatchCoordinator::advanceTime(std::uint64_t elapsedMs) {
     }
 
     for (const PlayerId player : disconnectExpired) {
-        eliminateForTimeout(player, GameEventType::PlayerDisconnectTimedOut);
+        eliminatePlayer(player, GameEventType::PlayerDisconnectTimedOut);
     }
     for (const PlayerId player : reserveExpired) {
-        eliminateForTimeout(player, GameEventType::PlayerReserveExpired);
+        eliminatePlayer(player, GameEventType::PlayerReserveExpired);
     }
 
     updateTerminalResultIfNeeded();

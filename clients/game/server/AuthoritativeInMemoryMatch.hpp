@@ -31,6 +31,10 @@ public:
     [[nodiscard]] PlayerId authenticatedPlayer() const noexcept;
     [[nodiscard]] std::optional<network::WireBytes> takeNextServerFrame();
 
+    // Trusted transport lifecycle hook. This is intentionally separate from
+    // the player's explicit QuitCommand/forfeit.
+    void disconnect();
+
 private:
     friend class AuthoritativeInMemoryMatch;
     friend class AuthoritativeInMemoryMatchState;
