@@ -553,7 +553,7 @@ private:
         return true;
     }
     static bool onError(int, const EmscriptenWebSocketErrorEvent*, void* userData) {
-        static_cast<Impl*>(userData)->transportFailed("Browser WebSocket error.");
+        static_cast<Impl*>(userData)->browserTransportError();
         return true;
     }
     static bool onClose(
@@ -604,6 +604,16 @@ private:
     bool awaitingAuthentication_{false};
     bool authenticated_{false};
     bool socketStopped_{false};
+
+#if defined(__EMSCRIPTEN__)
+    void browserTransportError() {
+        std::lock_guard lock(socketState_->mutex);
+        if (socketState_->closed) return;
+        // Browser error events contain no close code or reason. The following
+        // close event carries those diagnostics, so do not tear down first.
+        socketState_->error = "Browser WebSocket error; awaiting close details.";
+    }
+#endif
 };
 
 WebSocketNetworkSession::WebSocketNetworkSession(std::unique_ptr<Impl> impl)

@@ -272,7 +272,16 @@ private:
             receive(socket, *message);
             break;
         case ix::WebSocketMessageType::Close:
+            std::fprintf(stderr,
+                "Basilisk WebSocket closed: code=%u reason=%s remote=%s\n",
+                message->closeInfo.code,
+                message->closeInfo.reason.c_str(),
+                message->closeInfo.remote ? "true" : "false");
+            disconnect(socket);
+            break;
         case ix::WebSocketMessageType::Error:
+            std::fprintf(stderr, "Basilisk WebSocket error: %s\n",
+                message->errorInfo.reason.c_str());
             disconnect(socket);
             break;
         default:
