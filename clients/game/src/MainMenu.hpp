@@ -78,6 +78,7 @@ public:
     void lobbyAssigned(std::string code);
     void lobbyCancelled();
     void lobbyFailed(std::string error);
+    void connectionLost(std::string error);
     void matchmakingCancelled();
     void selectCallingCard(client::CallingCardId callingCard);
     void selectEmblem(client::EmblemId emblem);

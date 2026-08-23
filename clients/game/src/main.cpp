@@ -1208,6 +1208,11 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 state->networkSession->error().c_str());
             if (state->view == AppView::Authentication)
                 state->authScreen.setError(state->networkSession->error());
+            if (state->view == AppView::MainMenu) {
+                std::string error = state->networkSession->error();
+                if (error.empty()) error = "Connection to the server was lost.";
+                state->mainMenu.connectionLost(std::move(error));
+            }
             state->networkFailureLogged = true;
         }
     }
