@@ -232,6 +232,23 @@ void requestCosmeticLoadout(
     }
 }
 
+bool pointerInRenderCoordinates(
+    SDL_Renderer* renderer,
+    float windowX,
+    float windowY,
+    basilisk::game::PresentationPoint& point) {
+    float renderX = 0.0F;
+    float renderY = 0.0F;
+    if (!SDL_RenderCoordinatesFromWindow(
+            renderer, windowX, windowY, &renderX, &renderY)) {
+        SDL_Log("Unable to convert menu pointer coordinates: %s",
+            SDL_GetError());
+        return false;
+    }
+    point = {renderX, renderY};
+    return true;
+}
+
 } // namespace
 
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
@@ -528,17 +545,14 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         if (event->type == SDL_EVENT_MOUSE_MOTION ||
             (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
              event->button.button == SDL_BUTTON_LEFT)) {
-            if (!SDL_ConvertEventToRenderCoordinates(state->renderer, event)) {
-                SDL_Log("Unable to convert menu pointer coordinates: %s",
-                    SDL_GetError());
+            basilisk::game::PresentationPoint pointer;
+            const float windowX = event->type == SDL_EVENT_MOUSE_MOTION
+                ? event->motion.x : event->button.x;
+            const float windowY = event->type == SDL_EVENT_MOUSE_MOTION
+                ? event->motion.y : event->button.y;
+            if (!pointerInRenderCoordinates(
+                    state->renderer, windowX, windowY, pointer))
                 return SDL_APP_FAILURE;
-            }
-            const basilisk::game::PresentationPoint pointer =
-                event->type == SDL_EVENT_MOUSE_MOTION
-                ? basilisk::game::PresentationPoint{
-                    event->motion.x, event->motion.y}
-                : basilisk::game::PresentationPoint{
-                    event->button.x, event->button.y};
             const auto hit = basilisk::game::hitTestMainMenu(
                 state->mainMenuGeometry, pointer);
             if (hit.has_value()) state->mainMenu.select(*hit);
