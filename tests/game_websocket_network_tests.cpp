@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <chrono>
 #include <cstdio>
@@ -489,6 +490,80 @@ void authenticatedUnboundAccountCanHostLobby() {
     }));
     assert(std::holds_alternative<network::LobbyHosted>(
         client->lobbyResponse()->payload));
+}
+
+void defaultServerCapacityAcceptsFourAuthenticatedAccounts() {
+    static_assert(kServerWebSocketMaxConnections >= 4);
+    TemporaryTrophyDatabase database;
+    std::string error;
+    auto auth = SQLiteAccountAuth::open(database.path(), error);
+    assert(auth != nullptr && error.empty());
+
+    constexpr std::array emails{
+        "capacity-1@example.test",
+        "capacity-2@example.test",
+        "capacity-3@example.test",
+        "capacity-4@example.test",
+    };
+    constexpr std::array usernames{
+        "capacity-1",
+        "capacity-2",
+        "capacity-3",
+        "capacity-4",
+    };
+    std::vector<AuthSessionToken> tokens;
+    for (std::size_t index = 0; index < emails.size(); ++index) {
+        AccountIdentity account;
+        assert(auth->createAccount(
+            EmailAddress{emails[index]}, "correct horse battery staple",
+            PublicAccountProfile{Username{usernames[index]}},
+            account, error) == CreateAccountResult::Created);
+        AuthSessionToken token;
+        assert(auth->authenticate(
+            EmailAddress{emails[index]}, "correct horse battery staple",
+            token, error));
+        tokens.push_back(std::move(token));
+    }
+
+    LocalWebSocketServerConfig config;
+    config.port = static_cast<std::uint16_t>(ix::getFreePort());
+    config.authentication = auth;
+    config.profiles = profiles();
+    auto server = LocalWebSocketMatchServer::start(std::move(config), error);
+    assert(server != nullptr && error.empty());
+
+    std::vector<std::unique_ptr<WebSocketNetworkSession>> clients;
+    for (std::size_t index = 0; index < tokens.size(); ++index) {
+        clients.push_back(WebSocketNetworkSession::connectForAuthentication(
+            url(*server), error));
+        assert(clients.back() != nullptr);
+    }
+    assert(waitUntil([&] {
+        for (const auto& client : clients) {
+            client->pump();
+            if (client->state() != NetworkConnectionState::Connected)
+                return false;
+        }
+        return true;
+    }));
+
+    for (std::size_t index = 0; index < clients.size(); ++index) {
+        assert(clients[index]->authenticate({
+            network::kProtocolVersion,
+            network::AuthenticateSessionRequest{tokens[index].value},
+        }));
+    }
+    assert(waitUntil([&] {
+        for (const auto& client : clients) {
+            client->pump();
+            if (!client->authenticationResponse().has_value()) return false;
+            if (!std::holds_alternative<network::AuthenticationSuccess>(
+                    client->authenticationResponse()->payload)) return false;
+            if (client->state() != NetworkConnectionState::Connected)
+                return false;
+        }
+        return true;
+    }));
 }
 
 void authenticatedIdleConnectionCanHostCancelAndHostAgain() {
@@ -1069,6 +1144,7 @@ int main() {
     serverQueriesUseDurableAccountsAndSQLiteSurvivesRestart();
     serverPersistsPublicProfilesAndRejectsDuplicateUsernames();
     authenticatedUnboundAccountCanHostLobby();
+    defaultServerCapacityAcceptsFourAuthenticatedAccounts();
     authenticatedIdleConnectionCanHostCancelAndHostAgain();
     rejectedSessionRestoreKeepsAuthenticationConnectionUsable();
     logoutReturnsConnectionToUsableAuthenticationState();

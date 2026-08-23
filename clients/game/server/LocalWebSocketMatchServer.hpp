@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -18,6 +19,8 @@ namespace basilisk::game::server {
 // reverse-proxy timeout. WebSocket ping control frames require no game protocol
 // traffic and browser clients answer them with pong automatically.
 inline constexpr int kServerWebSocketPingIntervalSeconds{25};
+inline constexpr int kServerWebSocketListenBacklog{64};
+inline constexpr std::size_t kServerWebSocketMaxConnections{64};
 
 struct LocalServerTrophyConfig {
     TrophyMatchId match;
