@@ -102,8 +102,8 @@ public:
           server_(
               port,
               std::move(bindAddress),
-              5,
-              2,
+              kServerWebSocketListenBacklog,
+              kServerWebSocketMaxConnections,
               ix::WebSocketServer::kDefaultHandShakeTimeoutSecs,
               ix::SocketServer::kDefaultAddressFamily,
               webSocketPingIntervalSeconds),
