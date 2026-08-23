@@ -117,7 +117,8 @@ jobs:
           grep -Fq '/assets/fonts/Inter-Regular.ttf' "${package}/BasiliskGame.js"
           grep -Fq '/assets/ui/basilisk-logo.svg' "${package}/BasiliskGame.js"
           grep -Fq '/assets/items/healing-draught.svg' "${package}/BasiliskGame.js"
-          grep -Fq '/assets/emblems/circle.svg' "${package}/BasiliskGame.js"
+          grep -Fq '/assets/emblems/circle-black.svg' "${package}/BasiliskGame.js"
+          grep -Fq '/assets/calling-cards/arrow-right-black.svg' "${package}/BasiliskGame.js"
           test -z "$(find "${package}" -type f \( -name '*BasiliskGameDebug*' -o -name '*BasiliskServer*' \) -print -quit)"
 
       - name: Upload deployable web package
@@ -168,10 +169,12 @@ jobs:
           test -d "${app}/Contents/Resources/assets/ui"
           test -d "${app}/Contents/Resources/assets/items"
           test -d "${app}/Contents/Resources/assets/emblems"
+          test -d "${app}/Contents/Resources/assets/calling-cards"
           test -s "${app}/Contents/Resources/assets/fonts/Inter-Regular.ttf"
           test -s "${app}/Contents/Resources/assets/ui/basilisk-logo.svg"
           test -s "${app}/Contents/Resources/assets/items/healing-draught.svg"
-          test -s "${app}/Contents/Resources/assets/emblems/circle.svg"
+          test -s "${app}/Contents/Resources/assets/emblems/circle-black.svg"
+          test -s "${app}/Contents/Resources/assets/calling-cards/arrow-right-black.svg"
           test ! -e "${mount_point}/BasiliskGameDebug"
           test ! -e "${mount_point}/BasiliskServer"
 
@@ -220,10 +223,12 @@ jobs:
               'assets/ui',
               'assets/items',
               'assets/emblems',
+              'assets/calling-cards',
               'assets/fonts/Inter-Regular.ttf',
               'assets/ui/basilisk-logo.svg',
               'assets/items/healing-draught.svg',
-              'assets/emblems/circle.svg'
+              'assets/emblems/circle-black.svg',
+              'assets/calling-cards/arrow-right-black.svg'
           )
           foreach ($relativePath in $requiredPaths) {
               if (-not (Test-Path (Join-Path $expanded $relativePath))) {
