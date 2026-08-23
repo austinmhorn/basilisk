@@ -182,7 +182,10 @@
                     this.setStatus(`Preparing... ${completed}/${this.totalDependencies}`);
                 }
             },
-            onAbort: showFailure
+            onAbort(reason) {
+                console.error('Basilisk runtime aborted:', reason);
+                showFailure();
+            }
         };
     </script>
     {{{ SCRIPT }}}

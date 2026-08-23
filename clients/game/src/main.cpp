@@ -29,6 +29,7 @@
 #include "NetworkEndpointConfig.hpp"
 #include "PauseMenu.hpp"
 #include "PauseMenuRenderer.hpp"
+#include "PointerInput.hpp"
 #include "ScreenShell.hpp"
 #include "SessionTokenStorage.hpp"
 #include "SvgTextureManager.hpp"
@@ -822,16 +823,33 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         (event->type == SDL_EVENT_MOUSE_MOTION ||
          event->type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
          event->type == SDL_EVENT_MOUSE_WHEEL)) {
-        if (!SDL_ConvertEventToRenderCoordinates(state->renderer, event)) {
-            SDL_Log("Unable to convert pointer coordinates: %s", SDL_GetError());
-            return SDL_APP_FAILURE;
-        }
         if (snapshot == nullptr) return SDL_APP_CONTINUE;
         basilisk::game::PresentationPoint pointer;
-        if (event->type == SDL_EVENT_MOUSE_MOTION) {
-            pointer = {event->motion.x, event->motion.y};
-        } else if (event->type == SDL_EVENT_MOUSE_WHEEL) {
-            pointer = {event->wheel.mouse_x, event->wheel.mouse_y};
+        const float windowX = event->type == SDL_EVENT_MOUSE_MOTION
+            ? event->motion.x
+            : event->type == SDL_EVENT_MOUSE_WHEEL
+                ? event->wheel.mouse_x
+                : event->button.x;
+        const float windowY = event->type == SDL_EVENT_MOUSE_MOTION
+            ? event->motion.y
+            : event->type == SDL_EVENT_MOUSE_WHEEL
+                ? event->wheel.mouse_y
+                : event->button.y;
+        if (!basilisk::game::tryGameplayPointerCoordinates(
+                windowX,
+                windowY,
+                pointer,
+                [renderer = state->renderer](
+                    float x, float y, float& renderX, float& renderY) {
+                    return SDL_RenderCoordinatesFromWindow(
+                        renderer, x, y, &renderX, &renderY);
+                })) {
+            SDL_Log(
+                "Unable to convert gameplay pointer coordinates: %s",
+                SDL_GetError());
+            return SDL_APP_CONTINUE;
+        }
+        if (event->type == SDL_EVENT_MOUSE_WHEEL) {
             if (lifecycleModalActive) return SDL_APP_CONTINUE;
             if (basilisk::game::hitTestActionPanel(state->actionGeometry, pointer)) {
                 const int delta = event->wheel.y > 0.0F
@@ -847,8 +865,6 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 state->mapPresentation,
                 basilisk::game::MapHitTarget{});
             return SDL_APP_CONTINUE;
-        } else {
-            pointer = {event->button.x, event->button.y};
         }
 
         if (lifecycleModalActive) {

@@ -13,6 +13,7 @@
 #include "ClientSessionController.hpp"
 #include "LocalGameSessionAdapter.hpp"
 #include "MapActionMenu.hpp"
+#include "PointerInput.hpp"
 #include "PauseMenu.hpp"
 #include "SnapshotPresentation.hpp"
 #include "basilisk/systems/RoundController.hpp"
@@ -730,6 +731,28 @@ void caveMenuUsesOnlyLiteralTargetMatches() {
                actions, caveActionTarget(CaveId{34}), CaveId{7}).empty());
 }
 
+void failedGameplayPointerConversionIsIgnored() {
+    PresentationPoint point{91.0, 73.0};
+    const bool converted = tryGameplayPointerCoordinates(
+        12.0F,
+        34.0F,
+        point,
+        [](float, float, float&, float&) { return false; });
+    assert(!converted);
+    assert((point == PresentationPoint{91.0, 73.0}));
+
+    assert(tryGameplayPointerCoordinates(
+        12.0F,
+        34.0F,
+        point,
+        [](float x, float y, float& renderX, float& renderY) {
+            renderX = x * 2.0F;
+            renderY = y * 3.0F;
+            return true;
+        }));
+    assert((point == PresentationPoint{24.0, 102.0}));
+}
+
 void currentCaveMenuUsesOnlyCurrentLocationActions() {
     AvailableAction healing = actionWithShape(ActionType::UseItem);
     healing.targetItem = ItemType::HealingDraught;
@@ -1057,6 +1080,7 @@ int main() {
     localAdapterPublishesOnlyPlayerSafeSessionState();
     fixedUnknownEndpointBecomesDiscoveredCaveAtSameCoordinate();
     caveMenuUsesOnlyLiteralTargetMatches();
+    failedGameplayPointerConversionIsIgnored();
     currentCaveMenuUsesOnlyCurrentLocationActions();
     inventoryItemSelectsOnlyMatchingLegalUseAction();
     huntersMapStaysHuntersMapThroughClientActionPipeline();
