@@ -36,7 +36,9 @@ std::vector<std::size_t> matchingSpatialActionIndices(
         if (target.kind == SpatialActionTargetKind::Cave) {
             matchesTarget = target.cave == currentCave
                 ? action.type == ActionType::Search ||
-                    action.type == ActionType::UseItem
+                    (action.type == ActionType::UseItem &&
+                     !action.targetCave.has_value() &&
+                     !action.targetTunnel.has_value())
                 : action.targetCave == target.cave;
         } else {
             matchesTarget = target.cave == currentCave &&

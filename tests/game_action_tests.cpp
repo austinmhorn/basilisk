@@ -216,6 +216,13 @@ void actionPresentationUsesUnifiedCopyAndTargetDetails() {
     assert(untargetedShootRow.title == "Fire Arrow");
     assert(untargetedShootRow.detail == "Uses 1 arrow");
 
+    AvailableAction survey = actionWithShape(ActionType::UseItem);
+    survey.targetItem = ItemType::SurveyFragment;
+    survey.targetTunnel = TunnelId{6};
+    const PresentedAction surveyRow = presentAvailableAction(survey);
+    assert(surveyRow.title == "Use Survey Fragment");
+    assert(surveyRow.detail == "Tunnel 6 · Destination unknown");
+
     const std::array actions{knownMove, targetedShoot};
     assert(mapActionMenuChoiceTitle(
                {MapActionMenuChoiceKind::GameplayAction, 0}, actions) ==
@@ -726,7 +733,7 @@ void currentCaveMenuUsesOnlyCurrentLocationActions() {
 
     const auto matches = matchingSpatialActionIndices(
         actions, caveActionTarget(CaveId{7}), CaveId{7});
-    assert((matches == std::vector<std::size_t>{0, 1, 2}));
+    assert((matches == std::vector<std::size_t>{0, 1}));
 
     MapActionMenuState menu;
     assert(menu.open(
@@ -736,10 +743,13 @@ void currentCaveMenuUsesOnlyCurrentLocationActions() {
         actions,
         CaveId{7},
         playingView()));
-    assert(menu.choices().size() == 3);
+    assert(menu.choices().size() == 2);
     assert(menu.choices()[0].actionIndex == 0);
     assert(menu.choices()[1].actionIndex == 1);
-    assert(menu.choices()[2].actionIndex == 2);
+
+    const auto unknownMatches = matchingSpatialActionIndices(
+        actions, unknownExitActionTarget(CaveId{7}, TunnelId{6}), CaveId{7});
+    assert((unknownMatches == std::vector<std::size_t>{2}));
 }
 
 void inventoryItemSelectsOnlyMatchingLegalUseAction() {
