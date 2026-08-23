@@ -279,6 +279,20 @@ public:
             }
             decodeError.clear();
             if (adapter_ == nullptr) {
+                if (!network::inspectWireMessageType(
+                        frame, frameType, decodeError)) {
+                    fail("Invalid server message: " + decodeError);
+                    shutdownSocket();
+                    return;
+                }
+                // A resolved-round update can already be buffered when an
+                // intentional quit returns this authenticated connection to
+                // pre-match state. It belongs to the released adapter, not to
+                // the next match bootstrap.
+                if (frameType == network::WireMessageType::ServerUpdate) {
+                    continue;
+                }
+                decodeError.clear();
                 network::ServerBootstrap bootstrap;
                 if (!network::decodeServerBootstrap(frame, bootstrap, decodeError)) {
                     if (decodeError ==

@@ -808,9 +808,14 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                                state->lifecycleModalGeometry, pointer) &&
                            state->session->quit()) {
                     if (state->networkSession != nullptr) {
+                        const basilisk::client::AccountCosmeticLoadout loadout{
+                            state->mainMenu.selectedCallingCard(),
+                            state->mainMenu.selectedEmblem(),
+                        };
                         state->networkSession->clearGameplaySession();
                         state->session = nullptr;
                         state->mainMenu = basilisk::game::MainMenuState{};
+                        state->mainMenu.applyConfirmedCosmeticLoadout(loadout);
                         state->screenShellEnabled = false;
                         state->view = AppView::MainMenu;
                         state->mapActionMenu.dismiss();

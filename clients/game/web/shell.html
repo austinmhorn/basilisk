@@ -132,8 +132,10 @@
         const canvas = document.getElementById('canvas');
         const loader = document.getElementById('loader');
         const status = document.getElementById('status');
+        let runtimeReady = false;
 
         const showGame = () => {
+            runtimeReady = true;
             canvas.classList.add('ready');
             loader.classList.add('hidden');
             canvas.focus({preventScroll: true});
@@ -151,8 +153,15 @@
             event.preventDefault();
             showFailure();
         });
-        window.addEventListener('error', showFailure);
-        window.addEventListener('unhandledrejection', showFailure);
+        window.addEventListener('error', (event) => {
+            console.error('Basilisk browser error:',
+                event.error || event.message || event);
+            if (!runtimeReady) showFailure();
+        });
+        window.addEventListener('unhandledrejection', (event) => {
+            console.error('Basilisk unhandled rejection:', event.reason || event);
+            if (!runtimeReady) showFailure();
+        });
 
         var Module = {
             canvas,
