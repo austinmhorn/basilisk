@@ -69,6 +69,12 @@ std::uint32_t MainMenuState::leaderboardOffset() const noexcept {
 const std::string& MainMenuState::lobbyCode() const noexcept { return lobbyCode_; }
 const std::string& MainMenuState::lobbyError() const noexcept { return lobbyError_; }
 bool MainMenuState::lobbyWaiting() const noexcept { return lobbyWaiting_; }
+const client::CallingCardId& MainMenuState::selectedCallingCard() const noexcept {
+    return selectedCallingCard_;
+}
+const client::EmblemId& MainMenuState::selectedEmblem() const noexcept {
+    return selectedEmblem_;
+}
 
 void MainMenuState::select(std::size_t index) noexcept {
     if (index < actions().size()) selectedIndex_ = index;
@@ -204,6 +210,13 @@ void MainMenuState::lobbyFailed(std::string error) {
 void MainMenuState::matchmakingCancelled() {
     lobbyCode_.clear(); lobbyError_.clear(); lobbyWaiting_ = false;
     setPage(MainMenuPage::StartGame);
+}
+
+void MainMenuState::selectCallingCard(client::CallingCardId callingCard) {
+    selectedCallingCard_ = std::move(callingCard);
+}
+void MainMenuState::selectEmblem(client::EmblemId emblem) {
+    selectedEmblem_ = std::move(emblem);
 }
 
 void MainMenuState::setPage(MainMenuPage page) noexcept {

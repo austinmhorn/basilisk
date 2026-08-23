@@ -21,11 +21,21 @@ enum class SvgAssetId {
     OldHuntersMap,
     JackalRepellent,
     BloodBait,
-    EmblemRoundedSquare,
-    EmblemCircle,
+    EmblemCircleBlack,
+    EmblemCircleGreen,
+    EmblemRoundedSquareBlack,
+    EmblemRoundedSquareGreen,
+    CallingCardArrowRightBlack,
+    CallingCardArrowRightWhite,
+    CallingCardDiamondsFlagBlack,
+    CallingCardDiamondsFlagWhite,
+    CallingCardHoneycombFlagBlack,
+    CallingCardHoneycombFlagWhite,
+    CallingCardSlantedRectanglesBlack,
+    CallingCardSlantedRectanglesWhite,
 };
 
-inline constexpr std::array<SvgAssetId, 12> kRequiredSvgAssets{
+inline constexpr std::array<SvgAssetId, 22> kRequiredSvgAssets{
     SvgAssetId::BasiliskLogo,
     SvgAssetId::ObjectiveBasilisk,
     SvgAssetId::HuntersSigil,
@@ -36,8 +46,18 @@ inline constexpr std::array<SvgAssetId, 12> kRequiredSvgAssets{
     SvgAssetId::OldHuntersMap,
     SvgAssetId::JackalRepellent,
     SvgAssetId::BloodBait,
-    SvgAssetId::EmblemRoundedSquare,
-    SvgAssetId::EmblemCircle,
+    SvgAssetId::EmblemCircleBlack,
+    SvgAssetId::EmblemCircleGreen,
+    SvgAssetId::EmblemRoundedSquareBlack,
+    SvgAssetId::EmblemRoundedSquareGreen,
+    SvgAssetId::CallingCardArrowRightBlack,
+    SvgAssetId::CallingCardArrowRightWhite,
+    SvgAssetId::CallingCardDiamondsFlagBlack,
+    SvgAssetId::CallingCardDiamondsFlagWhite,
+    SvgAssetId::CallingCardHoneycombFlagBlack,
+    SvgAssetId::CallingCardHoneycombFlagWhite,
+    SvgAssetId::CallingCardSlantedRectanglesBlack,
+    SvgAssetId::CallingCardSlantedRectanglesWhite,
 };
 
 [[nodiscard]] std::string_view assetRelativePath(SvgAssetId asset) noexcept;
@@ -45,5 +65,7 @@ inline constexpr std::array<SvgAssetId, 12> kRequiredSvgAssets{
 [[nodiscard]] SvgAssetId itemAsset(ItemType item) noexcept;
 [[nodiscard]] std::optional<SvgAssetId> emblemAsset(
     const client::EmblemId& emblem) noexcept;
+[[nodiscard]] std::optional<SvgAssetId> callingCardAsset(
+    const client::CallingCardId& callingCard) noexcept;
 
 } // namespace basilisk::game

@@ -25,7 +25,7 @@ struct EmblemId {
 // gameplay state.
 struct PublicPlayerProfile {
     PlayerId player{};
-    std::string displayName;
+    std::string username;
     CallingCardId callingCardId;
     EmblemId emblemId;
 };

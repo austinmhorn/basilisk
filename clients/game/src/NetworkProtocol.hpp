@@ -16,16 +16,16 @@
 
 namespace basilisk::game::network {
 
-inline constexpr std::uint32_t kProtocolVersion{2};
+inline constexpr std::uint32_t kProtocolVersion{3};
 
 struct CreateAccountRequest {
-    std::string login;
+    std::string email;
     std::string password;
-    PublicAccountProfile profile;
+    std::string username;
 };
 
 struct LoginRequest {
-    std::string login;
+    std::string email;
     std::string password;
 };
 

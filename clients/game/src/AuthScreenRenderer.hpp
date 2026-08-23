@@ -7,6 +7,7 @@
 
 #include "AuthScreen.hpp"
 #include "MapPresentation.hpp"
+#include "SvgTextureManager.hpp"
 #include "TextRenderer.hpp"
 
 namespace basilisk::game {
@@ -19,9 +20,9 @@ struct AuthScreenGeometry {
 };
 
 [[nodiscard]] bool renderAuthScreen(
-    SDL_Renderer* renderer, TextRenderer& text, const AuthScreenState& state,
-    AuthScreenGeometry& geometry, int outputWidth, int outputHeight,
-    std::string& error);
+    SDL_Renderer* renderer, TextRenderer& text, SvgTextureManager& svgTextures,
+    const AuthScreenState& state, AuthScreenGeometry& geometry,
+    int outputWidth, int outputHeight, std::string& error);
 [[nodiscard]] bool hitTest(PresentationRect bounds, PresentationPoint point) noexcept;
 
 } // namespace basilisk::game

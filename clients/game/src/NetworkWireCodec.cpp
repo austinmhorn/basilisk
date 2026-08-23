@@ -650,14 +650,14 @@ bool readMetadata(Reader& reader, PublicMatchMetadata& metadata) {
 
 bool writeProfile(Writer& writer, const client::PublicPlayerProfile& profile) {
     writeId(writer, profile.player);
-    return writer.string(profile.displayName) &&
+    return writer.string(profile.username) &&
            writer.string(profile.callingCardId.value) &&
            writer.string(profile.emblemId.value);
 }
 
 bool readProfile(Reader& reader, client::PublicPlayerProfile& profile) {
     return readId(reader, profile.player) &&
-           reader.string(profile.displayName) &&
+           reader.string(profile.username) &&
            reader.string(profile.callingCardId.value) &&
            reader.string(profile.emblemId.value);
 }
@@ -668,11 +668,10 @@ bool writeLeaderboardEntry(
 
     if (entry.rank == 0 ||
         entry.rank > std::numeric_limits<std::uint32_t>::max() ||
-        entry.handle.value.empty() || entry.displayName.empty())
+        entry.username.value.empty())
         return writer.fail("Invalid public leaderboard entry.");
     writer.u32(static_cast<std::uint32_t>(entry.rank));
-    if (!writer.string(entry.handle.value) ||
-        !writer.string(entry.displayName)) return false;
+    if (!writer.string(entry.username.value)) return false;
     writer.i64(entry.trophyTotal);
     return true;
 }
@@ -682,10 +681,10 @@ bool readLeaderboardEntry(
     PublicTrophyLeaderboardEntry& entry) {
 
     std::uint32_t rank{};
-    if (!reader.u32(rank) || !reader.string(entry.handle.value) ||
-        !reader.string(entry.displayName) || !reader.i64(entry.trophyTotal))
+    if (!reader.u32(rank) || !reader.string(entry.username.value) ||
+        !reader.i64(entry.trophyTotal))
         return false;
-    if (rank == 0 || entry.handle.value.empty() || entry.displayName.empty())
+    if (rank == 0 || entry.username.value.empty())
         return reader.fail("Invalid public leaderboard entry.");
     entry.rank = rank;
     return true;
@@ -694,18 +693,16 @@ bool readLeaderboardEntry(
 bool writePublicAccountProfile(
     Writer& writer,
     const PublicAccountProfile& profile) {
-    if (profile.handle.value.empty() || profile.displayName.empty())
+    if (profile.username.value.empty())
         return writer.fail("Invalid public account profile.");
-    return writer.string(profile.handle.value) &&
-           writer.string(profile.displayName);
+    return writer.string(profile.username.value);
 }
 
 bool readPublicAccountProfile(
     Reader& reader,
     PublicAccountProfile& profile) {
-    if (!reader.string(profile.handle.value) ||
-        !reader.string(profile.displayName)) return false;
-    if (profile.handle.value.empty() || profile.displayName.empty())
+    if (!reader.string(profile.username.value)) return false;
+    if (profile.username.value.empty())
         return reader.fail("Invalid public account profile.");
     return true;
 }
@@ -992,12 +989,12 @@ bool encodeWire(
     const bool written = std::visit([&](const auto& request) {
         using T = std::decay_t<decltype(request)>;
         if constexpr (std::is_same_v<T, CreateAccountRequest>) {
-            return !request.login.empty() && !request.password.empty() &&
-                writer.string(request.login) && writer.string(request.password) &&
-                writePublicAccountProfile(writer, request.profile);
+            return !request.email.empty() && !request.password.empty() &&
+                !request.username.empty() && writer.string(request.email) &&
+                writer.string(request.password) && writer.string(request.username);
         } else if constexpr (std::is_same_v<T, LoginRequest>) {
-            return !request.login.empty() && !request.password.empty() &&
-                writer.string(request.login) && writer.string(request.password);
+            return !request.email.empty() && !request.password.empty() &&
+                writer.string(request.email) && writer.string(request.password);
         } else {
             return !request.sessionToken.empty() &&
                 writer.string(request.sessionToken);
@@ -1285,19 +1282,20 @@ bool decodeAuthenticationRequest(
     switch (type) {
         case WireMessageType::CreateAccount: {
             CreateAccountRequest request;
-            if (!reader.string(request.login) ||
+            if (!reader.string(request.email) ||
                 !reader.string(request.password) ||
-                !readPublicAccountProfile(reader, request.profile)) return false;
-            if (request.login.empty() || request.password.empty())
+                !reader.string(request.username)) return false;
+            if (request.email.empty() || request.password.empty() ||
+                request.username.empty())
                 return reader.fail("Invalid authentication request.");
             decoded.payload = std::move(request);
             break;
         }
         case WireMessageType::Login: {
             LoginRequest request;
-            if (!reader.string(request.login) ||
+            if (!reader.string(request.email) ||
                 !reader.string(request.password)) return false;
-            if (request.login.empty() || request.password.empty())
+            if (request.email.empty() || request.password.empty())
                 return reader.fail("Invalid authentication request.");
             decoded.payload = std::move(request);
             break;

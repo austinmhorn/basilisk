@@ -37,15 +37,16 @@ bool AccountAuthProtocol::process(
         using T = std::decay_t<decltype(payload)>;
         if constexpr (std::is_same_v<T, network::CreateAccountRequest>) {
             AccountIdentity account;
+            const PublicAccountProfile profile{Username{payload.username}};
             const CreateAccountResult result = auth_->createAccount(
-                LoginIdentity{payload.login}, payload.password, payload.profile,
+                EmailAddress{payload.email}, payload.password, profile,
                 account, authError);
             AuthSessionToken token;
             if (result == CreateAccountResult::Created && auth_->authenticate(
-                    LoginIdentity{payload.login}, payload.password,
+                    EmailAddress{payload.email}, payload.password,
                     token, authError)) {
                 response.payload = network::AuthenticationSuccess{
-                    std::move(token.value), payload.profile};
+                    std::move(token.value), profile};
             } else {
                 response = failure(authError);
             }
@@ -54,7 +55,7 @@ bool AccountAuthProtocol::process(
             AccountIdentity account;
             PublicAccountProfile profile;
             if (auth_->authenticate(
-                    LoginIdentity{payload.login}, payload.password,
+                    EmailAddress{payload.email}, payload.password,
                     token, authError) &&
                 auth_->resolveSession(token, account, authError) &&
                 auth_->publicProfile(account, profile, authError)) {

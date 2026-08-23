@@ -8,16 +8,15 @@
 namespace basilisk::game {
 
 enum class AuthMode { SignIn, CreateAccount };
-enum class AuthField { Login, Password, PublicHandle, DisplayName };
+enum class AuthField { Email, Password, Username };
 
 class AuthScreenState {
 public:
     [[nodiscard]] AuthMode mode() const noexcept { return mode_; }
     [[nodiscard]] AuthField field() const noexcept { return field_; }
-    [[nodiscard]] const std::string& login() const noexcept { return login_; }
+    [[nodiscard]] const std::string& email() const noexcept { return email_; }
     [[nodiscard]] const std::string& password() const noexcept { return password_; }
-    [[nodiscard]] const std::string& publicHandle() const noexcept { return handle_; }
-    [[nodiscard]] const std::string& displayName() const noexcept { return displayName_; }
+    [[nodiscard]] const std::string& username() const noexcept { return username_; }
     [[nodiscard]] const std::string& error() const noexcept { return error_; }
     [[nodiscard]] bool waiting() const noexcept { return waiting_; }
 
@@ -33,11 +32,10 @@ public:
 private:
     [[nodiscard]] std::string& activeValue() noexcept;
     AuthMode mode_{AuthMode::SignIn};
-    AuthField field_{AuthField::Login};
-    std::string login_;
+    AuthField field_{AuthField::Email};
+    std::string email_;
     std::string password_;
-    std::string handle_;
-    std::string displayName_;
+    std::string username_;
     std::string error_;
     bool waiting_{false};
 };

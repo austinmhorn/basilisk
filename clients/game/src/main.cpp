@@ -528,6 +528,21 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             const auto hit = basilisk::game::hitTestMainMenu(
                 state->mainMenuGeometry, pointer);
             if (hit.has_value()) state->mainMenu.select(*hit);
+            if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+                const auto callingCard =
+                    basilisk::game::hitTestCallingCardGallery(
+                        state->mainMenuGeometry, pointer);
+                if (callingCard.has_value()) {
+                    state->mainMenu.selectCallingCard(*callingCard);
+                    return SDL_APP_CONTINUE;
+                }
+                const auto emblem = basilisk::game::hitTestEmblemGallery(
+                    state->mainMenuGeometry, pointer);
+                if (emblem.has_value()) {
+                    state->mainMenu.selectEmblem(*emblem);
+                    return SDL_APP_CONTINUE;
+                }
+            }
             if (hit.has_value() &&
                 event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
                 const auto result = state->mainMenu.activateSelected();
@@ -1083,8 +1098,9 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         if (state->view == AppView::Authentication) {
             std::string authError;
             if (!basilisk::game::renderAuthScreen(
-                    state->renderer, *state->textRenderer, state->authScreen,
-                    state->authGeometry, outputWidth, outputHeight, authError)) {
+                    state->renderer, *state->textRenderer, *state->svgTextures,
+                    state->authScreen, state->authGeometry,
+                    outputWidth, outputHeight, authError)) {
                 SDL_Log("Authentication rendering failed: %s", authError.c_str());
                 return SDL_APP_FAILURE;
             }

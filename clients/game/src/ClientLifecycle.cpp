@@ -6,7 +6,7 @@
 namespace basilisk::game {
 namespace {
 
-std::string_view displayName(
+std::string_view username(
     PlayerId player,
     std::span<const client::PublicPlayerProfile> profiles) {
 
@@ -16,7 +16,7 @@ std::string_view displayName(
             return profile.player == player;
         });
     return found == profiles.end() ? std::string_view{"Unknown hunter"}
-                                   : std::string_view{found->displayName};
+                                   : std::string_view{found->username};
 }
 
 std::string resultText(
@@ -24,7 +24,7 @@ std::string resultText(
     std::span<const client::PublicPlayerProfile> profiles) {
 
     const std::string winner = snapshot.winner.has_value()
-        ? std::string{displayName(*snapshot.winner, profiles)}
+        ? std::string{username(*snapshot.winner, profiles)}
         : std::string{"A hunter"};
     switch (snapshot.matchOutcome) {
         case MatchOutcome::BasiliskKilled:

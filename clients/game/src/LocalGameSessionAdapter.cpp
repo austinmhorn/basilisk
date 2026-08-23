@@ -197,8 +197,8 @@ LocalSessionAssembly createLocalSession(MapSeed mapSeed, MatchSeed matchSeed) {
         client::PublicPlayerProfile{
             kLocalPlayer,
             "Local Hunter",
-            client::CallingCardId{"local-hunter"},
-            client::EmblemId{"wayfinder"}},
+            client::CallingCardId{"arrow-right-black"},
+            client::EmblemId{"circle-black"}},
     };
     const client::ClientViewContext viewContext{
         kLocalPlayer,

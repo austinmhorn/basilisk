@@ -33,7 +33,7 @@ template <typename T>
 concept HasObservationsMember = requires(T value) { value.observations; };
 
 template <typename T>
-concept HasDisplayNameMember = requires(T value) { value.displayName; };
+concept HasUsernameMember = requires(T value) { value.username; };
 
 template <typename T>
 concept HasCallingCardIdMember = requires(T value) { value.callingCardId; };
@@ -49,13 +49,13 @@ static_assert(!HasCurrentCaveMember<PublicPlayerProfile>);
 static_assert(!HasActionsMember<PublicPlayerProfile>);
 static_assert(!HasObservationsMember<PublicPlayerProfile>);
 
-static_assert(!HasDisplayNameMember<PlayerRoundSnapshot>);
+static_assert(!HasUsernameMember<PlayerRoundSnapshot>);
 static_assert(!HasCallingCardIdMember<PlayerRoundSnapshot>);
 static_assert(!HasEmblemIdMember<PlayerRoundSnapshot>);
-static_assert(!HasDisplayNameMember<MatchState>);
+static_assert(!HasUsernameMember<MatchState>);
 static_assert(!HasCallingCardIdMember<MatchState>);
 static_assert(!HasEmblemIdMember<MatchState>);
-static_assert(!HasDisplayNameMember<PublicMatchMetadata>);
+static_assert(!HasUsernameMember<PublicMatchMetadata>);
 static_assert(!HasCallingCardIdMember<PublicMatchMetadata>);
 static_assert(!HasEmblemIdMember<PublicMatchMetadata>);
 
@@ -72,7 +72,7 @@ void playersCanUseDifferentPublicProfiles() {
         EmblemId{"ward"}};
 
     assert(first.player != second.player);
-    assert(first.displayName != second.displayName);
+    assert(first.username != second.username);
     assert(first.callingCardId != second.callingCardId);
     assert(first.emblemId != second.emblemId);
 }

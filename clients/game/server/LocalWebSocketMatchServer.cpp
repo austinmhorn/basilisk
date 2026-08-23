@@ -514,9 +514,9 @@ private:
         }
 
         std::vector<client::PublicPlayerProfile> profiles{
-            {PlayerId{1}, hostConnection->second.profile.displayName,
+            {PlayerId{1}, hostConnection->second.profile.username.value,
              client::CallingCardId{"default"}, client::EmblemId{"default"}},
-            {PlayerId{2}, guestConnection->second.profile.displayName,
+            {PlayerId{2}, guestConnection->second.profile.username.value,
              client::CallingCardId{"default"}, client::EmblemId{"default"}},
         };
         const std::string matchId = "assigned-" +
@@ -636,8 +636,8 @@ private:
             if (profileResult != PublicProfileStoreResult::Stored &&
                 profileResult != PublicProfileStoreResult::AlreadyStored) {
                 if (error.empty()) {
-                    error = profileResult == PublicProfileStoreResult::DuplicateHandle
-                        ? "Public profile handle is already in use."
+                    error = profileResult == PublicProfileStoreResult::DuplicateUsername
+                        ? "Username is already in use."
                         : "Unable to persist the authenticated public profile.";
                 }
                 socket.close(1008, error);
@@ -910,9 +910,9 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
                     result == PublicProfileStoreResult::AlreadyStored)
                     return true;
                 const char* player = slot == PlayerSlot::P1 ? "P1" : "P2";
-                if (result == PublicProfileStoreResult::DuplicateHandle) {
-                    error = std::string{"Public handle '"} +
-                        profile.handle.value + "' for " + player +
+                if (result == PublicProfileStoreResult::DuplicateUsername) {
+                    error = std::string{"Username '"} +
+                        profile.username.value + "' for " + player +
                         " is already in use.";
                 } else if (result == PublicProfileStoreResult::AccountConflict) {
                     error = std::string{"Public profile for "} + player +

@@ -13,10 +13,10 @@ struct sqlite3;
 
 namespace basilisk::game::server {
 
-struct LoginIdentity {
+struct EmailAddress {
     std::string value;
 
-    auto operator<=>(const LoginIdentity&) const = default;
+    auto operator<=>(const EmailAddress&) const = default;
 };
 
 struct AuthSessionToken {
@@ -27,7 +27,8 @@ struct AuthSessionToken {
 
 enum class CreateAccountResult {
     Created,
-    DuplicateLogin,
+    DuplicateEmail,
+    DuplicateUsername,
     InvalidInput,
     Error,
 };
@@ -56,18 +57,18 @@ public:
     SQLiteAccountAuth& operator=(const SQLiteAccountAuth&) = delete;
 
     [[nodiscard]] CreateAccountResult createAccount(
-        const LoginIdentity& login,
+        const EmailAddress& email,
         const std::string& password,
         AccountIdentity& account,
         std::string& error);
     [[nodiscard]] CreateAccountResult createAccount(
-        const LoginIdentity& login,
+        const EmailAddress& email,
         const std::string& password,
         const PublicAccountProfile& profile,
         AccountIdentity& account,
         std::string& error);
     [[nodiscard]] bool authenticate(
-        const LoginIdentity& login,
+        const EmailAddress& email,
         const std::string& password,
         AuthSessionToken& token,
         std::string& error,

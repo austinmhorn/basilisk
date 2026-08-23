@@ -35,7 +35,7 @@ constexpr std::string_view schema = R"sql(
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS accounts (
     account_id TEXT PRIMARY KEY NOT NULL,
-    login_identity TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
@@ -49,8 +49,7 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at);
 CREATE TABLE IF NOT EXISTS public_account_profiles (
     account_id TEXT PRIMARY KEY NOT NULL,
-    public_handle TEXT UNIQUE NOT NULL,
-    display_name TEXT NOT NULL,
+    username TEXT UNIQUE NOT NULL,
     FOREIGN KEY (account_id) REFERENCES accounts(account_id)
 );
 )sql";
@@ -123,9 +122,9 @@ std::string hex(std::span<const unsigned char> bytes) {
 }
 
 bool validCredentialsInput(
-    const LoginIdentity& login,
+    const EmailAddress& email,
     const std::string& password) {
-    return !login.value.empty() && login.value.size() <= 254 &&
+    return !email.value.empty() && email.value.size() <= 254 &&
            password.size() >= 8 && password.size() <= 1024;
 }
 
@@ -199,12 +198,12 @@ std::shared_ptr<SQLiteAccountAuth> SQLiteAccountAuth::open(
 }
 
 CreateAccountResult SQLiteAccountAuth::createAccount(
-    const LoginIdentity& login,
+    const EmailAddress& email,
     const std::string& password,
     AccountIdentity& account,
     std::string& error) {
-    if (!validCredentialsInput(login, password)) {
-        error = "Login must be non-empty and password must contain 8-1024 bytes.";
+    if (!validCredentialsInput(email, password)) {
+        error = "Email must be non-empty and password must contain 8-1024 bytes.";
         return CreateAccountResult::InvalidInput;
     }
     std::string encoded;
@@ -216,11 +215,11 @@ CreateAccountResult SQLiteAccountAuth::createAccount(
         return CreateAccountResult::Error;
     }
     Statement insert(database_,
-        "INSERT INTO accounts(account_id, login_identity, password_hash, "
+        "INSERT INTO accounts(account_id, email, password_hash, "
         "created_at) VALUES(?, ?, ?, ?)", error);
     if (insert.get() == nullptr ||
         !bindText(insert.get(), 1, created.value) ||
-        !bindText(insert.get(), 2, login.value) ||
+        !bindText(insert.get(), 2, email.value) ||
         !bindText(insert.get(), 3, encoded) ||
         sqlite3_bind_int64(insert.get(), 4, clock_()) != SQLITE_OK) {
         if (error.empty()) error = sqlite3_errmsg(database_);
@@ -228,8 +227,8 @@ CreateAccountResult SQLiteAccountAuth::createAccount(
     }
     const int result = sqlite3_step(insert.get());
     if (result == SQLITE_CONSTRAINT) {
-        error = "Login identity is already registered.";
-        return CreateAccountResult::DuplicateLogin;
+        error = "Email is already registered.";
+        return CreateAccountResult::DuplicateEmail;
     }
     if (result != SQLITE_DONE) {
         error = sqlite3_errmsg(database_);
@@ -241,40 +240,41 @@ CreateAccountResult SQLiteAccountAuth::createAccount(
 }
 
 CreateAccountResult SQLiteAccountAuth::createAccount(
-    const LoginIdentity& login,
+    const EmailAddress& email,
     const std::string& password,
     const PublicAccountProfile& profile,
     AccountIdentity& account,
     std::string& error) {
-    if (profile.handle.value.empty() || profile.displayName.empty()) {
-        error = "Public handle and display name must not be empty.";
+    if (profile.username.value.empty()) {
+        error = "Username must not be empty.";
         return CreateAccountResult::InvalidInput;
     }
     if (!execute(database_, "BEGIN IMMEDIATE", error))
         return CreateAccountResult::Error;
     AccountIdentity created;
     const CreateAccountResult createdResult = createAccount(
-        login, password, created, error);
+        email, password, created, error);
     if (createdResult != CreateAccountResult::Created) {
         std::string ignored;
         (void)execute(database_, "ROLLBACK", ignored);
         return createdResult;
     }
     Statement insert(database_,
-        "INSERT INTO public_account_profiles(account_id, public_handle, "
-        "display_name) VALUES(?, ?, ?)", error);
+        "INSERT INTO public_account_profiles(account_id, username) VALUES(?, ?)",
+        error);
     if (insert.get() == nullptr ||
         !bindText(insert.get(), 1, created.value) ||
-        !bindText(insert.get(), 2, profile.handle.value) ||
-        !bindText(insert.get(), 3, profile.displayName) ||
+        !bindText(insert.get(), 2, profile.username.value) ||
         sqlite3_step(insert.get()) != SQLITE_DONE) {
         if (error.empty()) error = sqlite3_errmsg(database_);
         std::string ignored;
         (void)execute(database_, "ROLLBACK", ignored);
-        if (error.find("UNIQUE constraint failed: public_account_profiles.public_handle") !=
+        if (error.find("UNIQUE constraint failed: public_account_profiles.username") !=
             std::string::npos)
-            error = "Public handle is already registered.";
-        return CreateAccountResult::Error;
+            error = "Username is already registered.";
+        return error == "Username is already registered."
+            ? CreateAccountResult::DuplicateUsername
+            : CreateAccountResult::Error;
     }
     if (!execute(database_, "COMMIT", error)) {
         std::string ignored;
@@ -286,26 +286,26 @@ CreateAccountResult SQLiteAccountAuth::createAccount(
 }
 
 bool SQLiteAccountAuth::authenticate(
-    const LoginIdentity& login,
+    const EmailAddress& email,
     const std::string& password,
     AuthSessionToken& token,
     std::string& error,
     std::chrono::seconds lifetime) {
-    if (!validCredentialsInput(login, password) || lifetime.count() <= 0 ||
+    if (!validCredentialsInput(email, password) || lifetime.count() <= 0 ||
         lifetime > defaultSessionLifetime) {
-        error = "Invalid login credentials or session lifetime.";
+        error = "Invalid email credentials or session lifetime.";
         return false;
     }
     Statement query(database_,
-        "SELECT account_id, password_hash FROM accounts WHERE login_identity = ?",
+        "SELECT account_id, password_hash FROM accounts WHERE email = ?",
         error);
-    if (query.get() == nullptr || !bindText(query.get(), 1, login.value)) {
+    if (query.get() == nullptr || !bindText(query.get(), 1, email.value)) {
         if (error.empty()) error = sqlite3_errmsg(database_);
         return false;
     }
     const int result = sqlite3_step(query.get());
     if (result != SQLITE_ROW) {
-        error = result == SQLITE_DONE ? "Invalid login credentials."
+        error = result == SQLITE_DONE ? "Invalid email or password."
                                       : sqlite3_errmsg(database_);
         return false;
     }
@@ -314,7 +314,7 @@ bool SQLiteAccountAuth::authenticate(
     const char* encoded = reinterpret_cast<const char*>(
         sqlite3_column_text(query.get(), 1));
     if (argon2id_verify(encoded, password.data(), password.size()) != ARGON2_OK) {
-        error = "Invalid login credentials.";
+        error = "Invalid email or password.";
         return false;
     }
     AuthSessionToken created;
@@ -374,7 +374,7 @@ bool SQLiteAccountAuth::publicProfile(
     PublicAccountProfile& profile,
     std::string& error) {
     Statement query(database_,
-        "SELECT public_handle, display_name FROM public_account_profiles "
+        "SELECT username FROM public_account_profiles "
         "WHERE account_id = ?", error);
     if (query.get() == nullptr || !bindText(query.get(), 1, account.value)) {
         if (error.empty()) error = sqlite3_errmsg(database_);
@@ -386,10 +386,8 @@ bool SQLiteAccountAuth::publicProfile(
                                       : sqlite3_errmsg(database_);
         return false;
     }
-    profile.handle.value = reinterpret_cast<const char*>(
+    profile.username.value = reinterpret_cast<const char*>(
         sqlite3_column_text(query.get(), 0));
-    profile.displayName = reinterpret_cast<const char*>(
-        sqlite3_column_text(query.get(), 1));
     error.clear();
     return true;
 }

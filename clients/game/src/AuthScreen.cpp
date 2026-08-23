@@ -7,24 +7,21 @@ namespace basilisk::game {
 void AuthScreenState::switchMode() noexcept {
     mode_ = mode_ == AuthMode::SignIn ? AuthMode::CreateAccount
                                       : AuthMode::SignIn;
-    field_ = AuthField::Login;
+    field_ = AuthField::Email;
     error_.clear();
 }
 
 void AuthScreenState::nextField() noexcept {
-    if (field_ == AuthField::Login) field_ = AuthField::Password;
+    if (field_ == AuthField::Email) field_ = AuthField::Password;
     else if (mode_ == AuthMode::CreateAccount && field_ == AuthField::Password)
-        field_ = AuthField::PublicHandle;
-    else if (mode_ == AuthMode::CreateAccount && field_ == AuthField::PublicHandle)
-        field_ = AuthField::DisplayName;
-    else field_ = AuthField::Login;
+        field_ = AuthField::Username;
+    else field_ = AuthField::Email;
 }
 
 std::string& AuthScreenState::activeValue() noexcept {
     if (field_ == AuthField::Password) return password_;
-    if (field_ == AuthField::PublicHandle) return handle_;
-    if (field_ == AuthField::DisplayName) return displayName_;
-    return login_;
+    if (field_ == AuthField::Username) return username_;
+    return email_;
 }
 
 void AuthScreenState::append(std::string_view text) {
@@ -45,21 +42,20 @@ void AuthScreenState::setError(std::string error) {
 }
 
 bool AuthScreenState::request(network::AuthenticationRequest& request) {
-    if (login_.empty() || password_.empty()) {
-        setError("Login and password are required.");
+    if (email_.empty() || password_.empty()) {
+        setError("Email and password are required.");
         return false;
     }
     request.protocolVersion = network::kProtocolVersion;
     if (mode_ == AuthMode::SignIn) {
-        request.payload = network::LoginRequest{login_, password_};
+        request.payload = network::LoginRequest{email_, password_};
     } else {
-        if (handle_.empty() || displayName_.empty()) {
-            setError("Public handle and display name are required.");
+        if (username_.empty()) {
+            setError("Username is required.");
             return false;
         }
         request.payload = network::CreateAccountRequest{
-            login_, password_,
-            PublicAccountProfile{PublicProfileHandle{handle_}, displayName_}};
+            email_, password_, username_};
     }
     error_.clear();
     waiting_ = true;

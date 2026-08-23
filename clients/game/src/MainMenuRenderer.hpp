@@ -22,11 +22,29 @@ struct MainMenuButtonGeometry {
 
 struct MainMenuGeometry {
     std::vector<MainMenuButtonGeometry> buttons;
+    struct CallingCardTile {
+        client::CallingCardId callingCard;
+        PresentationRect bounds;
+    };
+    std::vector<CallingCardTile> callingCards;
+    struct EmblemTile {
+        client::EmblemId emblem;
+        PresentationRect bounds;
+    };
+    std::vector<EmblemTile> emblems;
 };
 
 [[nodiscard]] std::optional<std::size_t> hitTestMainMenu(
     const MainMenuGeometry& geometry,
     PresentationPoint point) noexcept;
+
+[[nodiscard]] std::optional<client::CallingCardId> hitTestCallingCardGallery(
+    const MainMenuGeometry& geometry,
+    PresentationPoint point);
+
+[[nodiscard]] std::optional<client::EmblemId> hitTestEmblemGallery(
+    const MainMenuGeometry& geometry,
+    PresentationPoint point);
 
 [[nodiscard]] bool renderMainMenu(
     SDL_Renderer* renderer,

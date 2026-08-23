@@ -15,9 +15,8 @@ public:
         const PublicAccountProfile& profile,
         std::string& error) override {
 
-        if (account.value.empty() || profile.handle.value.empty() ||
-            profile.displayName.empty()) {
-            error = "Account, public handle, and display name must not be empty.";
+        if (account.value.empty() || profile.username.value.empty()) {
+            error = "Account and username must not be empty.";
             return PublicProfileStoreResult::Error;
         }
         const auto existing = profiles_.find(account);
@@ -27,13 +26,13 @@ public:
                 ? PublicProfileStoreResult::AlreadyStored
                 : PublicProfileStoreResult::AccountConflict;
         }
-        const auto handle = accountsByHandle_.find(profile.handle);
-        if (handle != accountsByHandle_.end()) {
+        const auto username = accountsByUsername_.find(profile.username);
+        if (username != accountsByUsername_.end()) {
             error.clear();
-            return PublicProfileStoreResult::DuplicateHandle;
+            return PublicProfileStoreResult::DuplicateUsername;
         }
         profiles_.emplace(account, profile);
-        accountsByHandle_.emplace(profile.handle, account);
+        accountsByUsername_.emplace(profile.username, account);
         error.clear();
         return PublicProfileStoreResult::Stored;
     }
@@ -52,7 +51,7 @@ public:
 
 private:
     std::map<AccountIdentity, PublicAccountProfile> profiles_;
-    std::map<PublicProfileHandle, AccountIdentity> accountsByHandle_;
+    std::map<Username, AccountIdentity> accountsByUsername_;
 };
 
 } // namespace
@@ -101,15 +100,14 @@ bool PublicTrophyReadModel::leaderboardPage(
         if (!profile.has_value()) continue;
         publicEntries.push_back({
             0,
-            profile->handle,
-            profile->displayName,
+            profile->username,
             entry.total,
         });
     }
     std::ranges::sort(publicEntries, [](const auto& left, const auto& right) {
         if (left.trophyTotal != right.trophyTotal)
             return left.trophyTotal > right.trophyTotal;
-        return left.handle < right.handle;
+        return left.username < right.username;
     });
     for (std::size_t index = 0; index < publicEntries.size(); ++index) {
         if (index == 0 || publicEntries[index].trophyTotal !=
