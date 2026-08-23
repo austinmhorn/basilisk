@@ -46,6 +46,7 @@ add_library(BasiliskGameActions STATIC
     src/ClientSessionController.cpp
     src/MainMenu.cpp
     src/MapActionMenu.cpp
+    src/PauseMenu.cpp
     src/SnapshotPresentation.cpp
 )
 
@@ -436,6 +437,7 @@ add_library(BasiliskGameRuntime STATIC
     src/DemoUi.cpp
     src/MainMenuRenderer.cpp
     src/MapRenderer.cpp
+    src/PauseMenuRenderer.cpp
     src/SvgTextureManager.cpp
     src/SessionTokenStorage.cpp
     src/TextRenderer.cpp

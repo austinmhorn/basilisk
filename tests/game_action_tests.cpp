@@ -13,6 +13,7 @@
 #include "ClientSessionController.hpp"
 #include "LocalGameSessionAdapter.hpp"
 #include "MapActionMenu.hpp"
+#include "PauseMenu.hpp"
 #include "SnapshotPresentation.hpp"
 #include "basilisk/systems/RoundController.hpp"
 #include "basilisk/systems/SnapshotSystem.hpp"
@@ -21,6 +22,23 @@ using namespace basilisk;
 using namespace basilisk::game;
 
 namespace {
+
+void pauseMenuBlocksGameplayUntilResumed() {
+    PauseMenuState pause;
+    assert(!pause.active());
+    assert(!pause.blocksGameplayInput());
+    pause.open();
+    assert(pause.active());
+    assert(pause.blocksGameplayInput());
+    assert(pause.activateSelected() == PauseMenuResult::Resume);
+    pause.moveSelection(1);
+    assert(pause.activateSelected() == PauseMenuResult::QuitGame);
+    pause.moveSelection(-1);
+    assert(pause.activateSelected() == PauseMenuResult::Resume);
+    pause.close();
+    assert(!pause.active());
+    assert(!pause.blocksGameplayInput());
+}
 
 client::ClientViewContext playingView() {
     return client::ClientViewContext{
@@ -1015,6 +1033,7 @@ void navigationMenuChoiceDoesNotCreateActionDraft() {
 } // namespace
 
 int main() {
+    pauseMenuBlocksGameplayUntilResumed();
     everyActionShapeCopiesExactly();
     rowsComeDirectlyFromEveryAvailableAction();
     actionPresentationUsesUnifiedCopyAndTargetDetails();

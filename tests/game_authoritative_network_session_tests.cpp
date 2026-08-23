@@ -238,7 +238,7 @@ void spoofedMalformedAndForgedCommandsAreRejected() {
     assert(!p1.endpoint->takeNextServerFrame().has_value());
 }
 
-void quitAndWatchUseExistingLifecycle() {
+void explicitQuitEliminatesImmediatelyAndSurvivorContinues() {
     std::string error;
     auto host = AuthoritativeInMemoryMatch::create(
         MapSeed{20260816}, MatchSeed{424242}, profiles(), error);
@@ -247,10 +247,6 @@ void quitAndWatchUseExistingLifecycle() {
     ConnectedClient p2 = connectClient(*host, PlayerId{2});
 
     assert(p2.session->controller().quit());
-    p1.ingestUpdates();
-    p2.ingestUpdates();
-
-    host->advanceTime(30'000);
     p1.ingestUpdates();
     p2.ingestUpdates();
     assert(!p2.session->controller().displayedSnapshot()->alive);
@@ -268,16 +264,18 @@ void quitAndWatchUseExistingLifecycle() {
     assert(p2.session->controller().displayedSnapshot()->player == PlayerId{1});
     assert(!p2.session->controller().canSubmitActions());
 
+    const RoundNumber priorRound =
+        p1.session->controller().displayedSnapshot()->round;
     const AvailableAction survivorSearch = actionOfType(
         *p1.session->controller().displayedSnapshot(), ActionType::Search);
     assert(p1.session->controller().submitAndLock(survivorSearch));
-    assert(host->authoritativeRound() == RoundNumber{2});
+    assert(host->authoritativeRound() == priorRound + 1);
     p1.ingestUpdates();
     p2.ingestUpdates();
     assert(p1.session->controller().displayedSnapshot()->round ==
-           RoundNumber{2});
+           priorRound + 1);
     assert(p2.session->controller().displayedSnapshot()->round ==
-           RoundNumber{2});
+           priorRound + 1);
 }
 
 void authenticatedServerReturnsOnlyPublicLeaderboardFields() {
@@ -345,7 +343,7 @@ int main() {
     twoClientsAdvanceOneAuthoritativeRound();
     noOpTimeTickPreservesResolvedRoundObservations();
     spoofedMalformedAndForgedCommandsAreRejected();
-    quitAndWatchUseExistingLifecycle();
+    explicitQuitEliminatesImmediatelyAndSurvivorContinues();
     authenticatedServerReturnsOnlyPublicLeaderboardFields();
     return 0;
 }

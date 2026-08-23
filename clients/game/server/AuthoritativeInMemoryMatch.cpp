@@ -208,6 +208,15 @@ public:
         publishAll(events);
     }
 
+    void disconnect(PlayerId player) {
+        endpoints_.erase(player);
+        coordinator_.disconnect(player);
+        const auto& events = coordinator_.authoritativeEvents();
+        recordTrophyEvents(events);
+        refreshContexts();
+        publishAll(events);
+    }
+
 private:
     [[nodiscard]] bool handle(
         PlayerId authenticatedPlayer,
@@ -293,7 +302,7 @@ private:
             error = "Authenticated player does not match quit request.";
             return false;
         }
-        coordinator_.disconnect(authenticatedPlayer);
+        coordinator_.forfeit(authenticatedPlayer);
         recordTrophyEvents(coordinator_.authoritativeEvents());
         refreshContexts();
         publishAll(coordinator_.authoritativeEvents());
@@ -485,6 +494,10 @@ InMemoryMatchEndpoint::takeNextServerFrame() {
     network::WireBytes frame = std::move(serverFrames_.front());
     serverFrames_.erase(serverFrames_.begin());
     return frame;
+}
+
+void InMemoryMatchEndpoint::disconnect() {
+    if (state_ != nullptr) state_->disconnect(authenticatedPlayer_);
 }
 
 void InMemoryMatchEndpoint::enqueue(network::WireBytes frame) {

@@ -826,10 +826,15 @@ private:
     void disconnectClient(Client& client, bool preserveReservation) {
         if (!client.active) return;
         client.active = false;
-        if (client.endpoint->send(network::ClientCommand{
-            network::kProtocolVersion,
-            network::QuitCommand{client.player},
-        })) ++processedDisconnectCount_;
+        if (preserveReservation) {
+            client.endpoint->disconnect();
+            ++processedDisconnectCount_;
+        } else if (client.endpoint->send(network::ClientCommand{
+                       network::kProtocolVersion,
+                       network::QuitCommand{client.player},
+                   })) {
+            ++processedDisconnectCount_;
+        }
         reportTrophyError();
         updateAssignedReservation(client, preserveReservation);
     }

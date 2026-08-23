@@ -93,6 +93,28 @@ void reconnectWithinGracePreservesHunterAndActionState() {
     assert(coordinator.hostSession(2)->disconnectGraceRemainingMs == 30000);
 }
 
+void explicitForfeitEliminatesImmediatelyAndDoesNotUseGrace() {
+    auto state = MapGenerator::generate(506, 607);
+    state.rules.disconnectGraceMs = 30000;
+    MatchCoordinator coordinator(state);
+
+    coordinator.forfeit(PlayerId{2});
+    assert(!playerById(state, PlayerId{2}).alive);
+    assert(playerById(state, PlayerId{1}).alive);
+    assert(!coordinator.hostSession(PlayerId{2})->connected);
+    assert(!hasEvent(
+        coordinator.authoritativeEvents(), GameEventType::PlayerDisconnected));
+    assert(!hasEvent(coordinator.authoritativeEvents(),
+        GameEventType::PlayerDisconnectTimedOut));
+    assert(hasEvent(coordinator.authoritativeEvents(), GameEventType::PlayerKilled));
+    assert(hasEvent(coordinator.authoritativeEvents(), GameEventType::BodyCreated));
+
+    const RoundNumber priorRound = state.round;
+    assert(coordinator.submitAction(search(PlayerId{1})));
+    assert(coordinator.lockAction(PlayerId{1}));
+    assert(state.round == priorRound + 1);
+}
+
 void disconnectTimeoutKillsHunterAndLeavesRecoverableBody() {
     auto state = MapGenerator::generate(707, 808);
     state.rules.disconnectGraceMs = 1000;
@@ -179,6 +201,7 @@ int main() {
     actionsCanChangeUntilLockedAndTwoLocksResolve();
     reserveRunsOnlyForHunterMakingLockedOpponentWait();
     reconnectWithinGracePreservesHunterAndActionState();
+    explicitForfeitEliminatesImmediatelyAndDoesNotUseGrace();
     disconnectTimeoutKillsHunterAndLeavesRecoverableBody();
     reserveExpirationKillsWaitingHunterAndResolvesLockedSurvivor();
     deadPlayerDisconnectDoesNotBlockLivingHunter();
