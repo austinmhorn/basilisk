@@ -6,6 +6,7 @@
 #include <string>
 
 #include "basilisk/client/PlayerProfile.hpp"
+#include "basilisk/client/AccountCosmetics.hpp"
 
 namespace basilisk::game {
 
@@ -80,6 +81,8 @@ public:
     void matchmakingCancelled();
     void selectCallingCard(client::CallingCardId callingCard);
     void selectEmblem(client::EmblemId emblem);
+    void applyConfirmedCosmeticLoadout(
+        const client::AccountCosmeticLoadout& loadout);
 
 private:
     void setPage(MainMenuPage page) noexcept;

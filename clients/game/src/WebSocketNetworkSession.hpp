@@ -52,9 +52,14 @@ public:
     leaderboardPage() const noexcept;
     [[nodiscard]] bool authenticate(const network::AuthenticationRequest& request);
     [[nodiscard]] bool logout(const std::string& sessionToken);
+    [[nodiscard]] bool updateCosmeticLoadout(
+        const network::CosmeticLoadoutUpdateRequest& request);
     [[nodiscard]] bool requestLobby(const network::LobbyRequest& request);
     [[nodiscard]] const std::optional<network::AuthenticationResponse>&
     authenticationResponse() const noexcept;
+    [[nodiscard]] const std::optional<network::CosmeticLoadoutUpdateResponse>&
+    cosmeticLoadoutResponse() const noexcept;
+    [[nodiscard]] std::size_t cosmeticLoadoutResponseRevision() const noexcept;
     [[nodiscard]] const std::optional<network::LobbyResponse>&
     lobbyResponse() const noexcept;
     [[nodiscard]] std::size_t lobbyResponseRevision() const noexcept;

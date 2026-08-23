@@ -707,6 +707,23 @@ bool readPublicAccountProfile(
     return true;
 }
 
+bool writeCosmeticLoadout(
+    Writer& writer, const client::AccountCosmeticLoadout& loadout) {
+    return !loadout.callingCardId.value.empty() &&
+           !loadout.emblemId.value.empty() &&
+           writer.string(loadout.callingCardId.value) &&
+           writer.string(loadout.emblemId.value);
+}
+
+bool readCosmeticLoadout(
+    Reader& reader, client::AccountCosmeticLoadout& loadout) {
+    if (!reader.string(loadout.callingCardId.value) ||
+        !reader.string(loadout.emblemId.value)) return false;
+    if (loadout.callingCardId.value.empty() || loadout.emblemId.value.empty())
+        return reader.fail("Invalid account cosmetic loadout.");
+    return true;
+}
+
 bool writeViewContext(Writer& writer, const client::ClientViewContext& context) {
     writeId(writer, context.localPlayer);
     writeId(writer, context.viewedPlayer);
@@ -765,6 +782,8 @@ bool readHeader(
         case WireMessageType::LobbyFailure:
         case WireMessageType::MatchmakingQueued:
         case WireMessageType::MatchmakingCancelled:
+        case WireMessageType::CosmeticLoadoutUpdated:
+        case WireMessageType::CosmeticLoadoutUpdateFailed:
         case WireMessageType::SubmitAction:
         case WireMessageType::LockAction:
         case WireMessageType::WatchRemainingHunter:
@@ -779,6 +798,7 @@ bool readHeader(
         case WireMessageType::CancelHostedLobby:
         case WireMessageType::FindMatch:
         case WireMessageType::CancelFindMatch:
+        case WireMessageType::UpdateCosmeticLoadout:
             break;
         default:
             return reader.fail("Unknown wire message type.");
@@ -844,6 +864,8 @@ bool inspectWireMessageType(
         case WireMessageType::LobbyFailure:
         case WireMessageType::MatchmakingQueued:
         case WireMessageType::MatchmakingCancelled:
+        case WireMessageType::CosmeticLoadoutUpdated:
+        case WireMessageType::CosmeticLoadoutUpdateFailed:
         case WireMessageType::SubmitAction:
         case WireMessageType::LockAction:
         case WireMessageType::WatchRemainingHunter:
@@ -858,6 +880,7 @@ bool inspectWireMessageType(
         case WireMessageType::CancelHostedLobby:
         case WireMessageType::FindMatch:
         case WireMessageType::CancelFindMatch:
+        case WireMessageType::UpdateCosmeticLoadout:
             type = candidate;
             return true;
     }
@@ -1027,7 +1050,8 @@ bool encodeWire(
         if constexpr (std::is_same_v<T, AuthenticationSuccess>) {
             return !response.sessionToken.empty() &&
                 writer.string(response.sessionToken) &&
-                writePublicAccountProfile(writer, response.profile);
+                writePublicAccountProfile(writer, response.profile) &&
+                writeCosmeticLoadout(writer, response.cosmeticLoadout);
         } else if constexpr (std::is_same_v<T, AuthenticationFailure>) {
             return !response.message.empty() && writer.string(response.message);
         } else {
@@ -1038,6 +1062,48 @@ bool encodeWire(
     if (!writer.finish()) return false;
     AuthenticationResponse validated;
     return decodeAuthenticationResponse(bytes, validated, error);
+}
+
+bool encodeWire(
+    const CosmeticLoadoutUpdateRequest& message,
+    WireBytes& bytes,
+    std::string& error) {
+    Writer writer(bytes, error);
+    if (message.protocolVersion != kProtocolVersion)
+        return writer.fail("Unsupported Basilisk network protocol version.");
+    writeHeader(writer, WireMessageType::UpdateCosmeticLoadout,
+        message.protocolVersion);
+    if (message.sessionToken.empty() || !writer.string(message.sessionToken) ||
+        !writeCosmeticLoadout(writer, message.loadout))
+        return writer.fail("Invalid cosmetic loadout update request.");
+    if (!writer.finish()) return false;
+    CosmeticLoadoutUpdateRequest validated;
+    return decodeCosmeticLoadoutUpdateRequest(bytes, validated, error);
+}
+
+bool encodeWire(
+    const CosmeticLoadoutUpdateResponse& message,
+    WireBytes& bytes,
+    std::string& error) {
+    Writer writer(bytes, error);
+    if (message.protocolVersion != kProtocolVersion)
+        return writer.fail("Unsupported Basilisk network protocol version.");
+    const WireMessageType type =
+        std::holds_alternative<CosmeticLoadoutUpdateSuccess>(message.payload)
+        ? WireMessageType::CosmeticLoadoutUpdated
+        : WireMessageType::CosmeticLoadoutUpdateFailed;
+    writeHeader(writer, type, message.protocolVersion);
+    const bool written = std::visit([&](const auto& response) {
+        using T = std::decay_t<decltype(response)>;
+        if constexpr (std::is_same_v<T, CosmeticLoadoutUpdateSuccess>)
+            return writeCosmeticLoadout(writer, response.loadout);
+        else
+            return !response.message.empty() && writer.string(response.message);
+    }, message.payload);
+    if (!written) return writer.fail("Invalid cosmetic loadout update response.");
+    if (!writer.finish()) return false;
+    CosmeticLoadoutUpdateResponse validated;
+    return decodeCosmeticLoadoutUpdateResponse(bytes, validated, error);
 }
 
 bool encodeWire(const LobbyRequest& message, WireBytes& bytes, std::string& error) {
@@ -1341,7 +1407,8 @@ bool decodeAuthenticationResponse(
     if (type == WireMessageType::AuthenticationSuccess) {
         AuthenticationSuccess response;
         if (!reader.string(response.sessionToken) ||
-            !readPublicAccountProfile(reader, response.profile)) return false;
+            !readPublicAccountProfile(reader, response.profile) ||
+            !readCosmeticLoadout(reader, response.cosmeticLoadout)) return false;
         if (response.sessionToken.empty())
             return reader.fail("Invalid authentication response.");
         decoded.payload = std::move(response);
@@ -1353,6 +1420,52 @@ bool decodeAuthenticationResponse(
         decoded.payload = std::move(response);
     } else {
         decoded.payload = LogoutSuccess{};
+    }
+    if (!finishRead(reader)) return false;
+    message = std::move(decoded);
+    return true;
+}
+
+bool decodeCosmeticLoadoutUpdateRequest(
+    std::span<const std::uint8_t> bytes,
+    CosmeticLoadoutUpdateRequest& message,
+    std::string& error) {
+    Reader reader(bytes, error);
+    CosmeticLoadoutUpdateRequest decoded;
+    if (!readHeader(reader, WireMessageType::UpdateCosmeticLoadout,
+            decoded.protocolVersion) ||
+        !reader.string(decoded.sessionToken) ||
+        !readCosmeticLoadout(reader, decoded.loadout)) return false;
+    if (decoded.sessionToken.empty())
+        return reader.fail("Invalid cosmetic loadout update request.");
+    if (!finishRead(reader)) return false;
+    message = std::move(decoded);
+    return true;
+}
+
+bool decodeCosmeticLoadoutUpdateResponse(
+    std::span<const std::uint8_t> bytes,
+    CosmeticLoadoutUpdateResponse& message,
+    std::string& error) {
+    WireMessageType type{};
+    if (!inspectWireMessageType(bytes, type, error)) return false;
+    if (type != WireMessageType::CosmeticLoadoutUpdated &&
+        type != WireMessageType::CosmeticLoadoutUpdateFailed) {
+        error = "Unexpected wire message type.";
+        return false;
+    }
+    Reader reader(bytes, error);
+    CosmeticLoadoutUpdateResponse decoded;
+    if (!readHeader(reader, type, decoded.protocolVersion)) return false;
+    if (type == WireMessageType::CosmeticLoadoutUpdated) {
+        CosmeticLoadoutUpdateSuccess response;
+        if (!readCosmeticLoadout(reader, response.loadout)) return false;
+        decoded.payload = std::move(response);
+    } else {
+        CosmeticLoadoutUpdateFailure response;
+        if (!reader.string(response.message) || response.message.empty())
+            return reader.fail("Invalid cosmetic loadout update response.");
+        decoded.payload = std::move(response);
     }
     if (!finishRead(reader)) return false;
     message = std::move(decoded);

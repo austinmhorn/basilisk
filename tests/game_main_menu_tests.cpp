@@ -93,13 +93,20 @@ int main() {
     menu.selectEmblem(basilisk::client::EmblemId{"rounded-square-green"});
     assert(menu.selectedEmblem() ==
            basilisk::client::EmblemId{"rounded-square-green"});
+    menu.applyConfirmedCosmeticLoadout({
+        basilisk::client::CallingCardId{"diamonds-flag-white"},
+        basilisk::client::EmblemId{"circle-green"}});
+    assert(menu.selectedCallingCard() ==
+           basilisk::client::CallingCardId{"diamonds-flag-white"});
+    assert(menu.selectedEmblem() ==
+           basilisk::client::EmblemId{"circle-green"});
     assert(menu.selectedAction() == MainMenuAction::Back);
     assert(menu.activateSelected() == MainMenuResult::None);
     assert(menu.page() == MainMenuPage::Main);
     assert(menu.selectedCallingCard() ==
-           basilisk::client::CallingCardId{"slanted-rectangles-white"});
+           basilisk::client::CallingCardId{"diamonds-flag-white"});
     assert(menu.selectedEmblem() ==
-           basilisk::client::EmblemId{"rounded-square-green"});
+           basilisk::client::EmblemId{"circle-green"});
 
     menu.moveSelection(-1);
     assert(menu.selectedAction() == MainMenuAction::EditProfile);

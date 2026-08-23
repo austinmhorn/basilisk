@@ -12,11 +12,12 @@
 #include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/PublicMatchMetadata.hpp"
 #include "basilisk/client/ClientViewContext.hpp"
+#include "basilisk/client/AccountCosmetics.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
 
 namespace basilisk::game::network {
 
-inline constexpr std::uint32_t kProtocolVersion{3};
+inline constexpr std::uint32_t kProtocolVersion{4};
 
 struct CreateAccountRequest {
     std::string email;
@@ -46,6 +47,7 @@ struct AuthenticationRequest {
 struct AuthenticationSuccess {
     std::string sessionToken;
     PublicAccountProfile profile;
+    client::AccountCosmeticLoadout cosmeticLoadout;
 };
 
 struct AuthenticationFailure { std::string message; };
@@ -59,6 +61,23 @@ using AuthenticationResponsePayload = std::variant<
 struct AuthenticationResponse {
     std::uint32_t protocolVersion{kProtocolVersion};
     AuthenticationResponsePayload payload;
+};
+
+struct CosmeticLoadoutUpdateRequest {
+    std::uint32_t protocolVersion{kProtocolVersion};
+    std::string sessionToken;
+    client::AccountCosmeticLoadout loadout;
+};
+
+struct CosmeticLoadoutUpdateSuccess {
+    client::AccountCosmeticLoadout loadout;
+};
+struct CosmeticLoadoutUpdateFailure { std::string message; };
+using CosmeticLoadoutUpdateResponsePayload = std::variant<
+    CosmeticLoadoutUpdateSuccess, CosmeticLoadoutUpdateFailure>;
+struct CosmeticLoadoutUpdateResponse {
+    std::uint32_t protocolVersion{kProtocolVersion};
+    CosmeticLoadoutUpdateResponsePayload payload;
 };
 
 struct HostLobbyRequest {};

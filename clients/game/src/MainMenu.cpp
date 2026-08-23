@@ -219,6 +219,12 @@ void MainMenuState::selectEmblem(client::EmblemId emblem) {
     selectedEmblem_ = std::move(emblem);
 }
 
+void MainMenuState::applyConfirmedCosmeticLoadout(
+    const client::AccountCosmeticLoadout& loadout) {
+    selectedCallingCard_ = loadout.callingCardId;
+    selectedEmblem_ = loadout.emblemId;
+}
+
 void MainMenuState::setPage(MainMenuPage page) noexcept {
     page_ = page;
     selectedIndex_ = 0;

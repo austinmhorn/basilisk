@@ -133,7 +133,7 @@ std::unique_ptr<IncompatibleServer> startIncompatibleServer() {
     assert(endpoint != nullptr);
     auto frame = endpoint->takeNextServerFrame();
     assert(frame.has_value() && frame->size() > 8);
-    (*frame)[8] = 4; // V3's big-endian version header becomes unsupported V4.
+    (*frame)[8] = 5; // V4's big-endian version header becomes unsupported V5.
 
     for (int attempt = 0; attempt < 10; ++attempt) {
         const auto port = static_cast<std::uint16_t>(ix::getFreePort());
@@ -466,6 +466,21 @@ void authenticatedUnboundAccountCanHostLobby() {
         return client->authenticationResponse().has_value();
     }));
     assert(client->controller() == nullptr);
+    const client::AccountCosmeticLoadout requestedLoadout{
+        client::CallingCardId{"arrow-right-white"},
+        client::EmblemId{"circle-green"}};
+    assert(client->updateCosmeticLoadout({
+        network::kProtocolVersion, token.value, requestedLoadout}));
+    assert(waitUntil([&] {
+        client->pump();
+        return client->cosmeticLoadoutResponse().has_value();
+    }));
+    const auto* update = std::get_if<network::CosmeticLoadoutUpdateSuccess>(
+        &client->cosmeticLoadoutResponse()->payload);
+    assert(update != nullptr && update->loadout == requestedLoadout);
+    client::AccountCosmeticLoadout persistedLoadout;
+    assert(auth->cosmeticLoadout(account, persistedLoadout, error));
+    assert(persistedLoadout == requestedLoadout);
     assert(client->requestLobby({network::kProtocolVersion,
         network::HostLobbyRequest{}}));
     assert(waitUntil([&] {
@@ -620,6 +635,12 @@ void authenticatedAssignmentLaunchesAuthoritativeGameplay() {
                               "correct horse battery staple", hostToken, error));
     assert(auth->authenticate(EmailAddress{"assigned-guest@example.test"},
                               "correct horse battery staple", guestToken, error));
+    const client::AccountCosmeticLoadout hostLoadout{
+        client::CallingCardId{"slanted-rectangles-white"},
+        client::EmblemId{"rounded-square-green"}};
+    client::AccountCosmeticLoadout confirmedLoadout;
+    assert(auth->updateCosmeticLoadout(
+        hostToken, hostLoadout, confirmedLoadout, error));
 
     LocalWebSocketServerConfig config;
     config.port = static_cast<std::uint16_t>(ix::getFreePort());
@@ -674,6 +695,14 @@ void authenticatedAssignmentLaunchesAuthoritativeGameplay() {
     }));
     assert(host->controller()->viewContext().localPlayer == PlayerId{1});
     assert(guest->controller()->viewContext().localPlayer == PlayerId{2});
+    const auto& hostProfiles = host->controller()->profiles();
+    const auto hostProfile = std::ranges::find_if(
+        hostProfiles, [](const client::PublicPlayerProfile& profile) {
+            return profile.player == PlayerId{1};
+        });
+    assert(hostProfile != hostProfiles.end());
+    assert(hostProfile->callingCardId == hostLoadout.callingCardId);
+    assert(hostProfile->emblemId == hostLoadout.emblemId);
     const RoundNumber initialRound =
         host->controller()->displayedSnapshot()->round;
     assert(guest->controller()->displayedSnapshot()->round == initialRound);

@@ -8,6 +8,7 @@
 
 #include "TrophyScoring.hpp"
 #include "PublicLeaderboard.hpp"
+#include "basilisk/client/AccountCosmetics.hpp"
 
 struct sqlite3;
 
@@ -80,6 +81,15 @@ public:
     [[nodiscard]] bool publicProfile(
         const AccountIdentity& account,
         PublicAccountProfile& profile,
+        std::string& error);
+    [[nodiscard]] bool cosmeticLoadout(
+        const AccountIdentity& account,
+        client::AccountCosmeticLoadout& loadout,
+        std::string& error);
+    [[nodiscard]] bool updateCosmeticLoadout(
+        const AuthSessionToken& token,
+        const client::AccountCosmeticLoadout& requested,
+        client::AccountCosmeticLoadout& confirmed,
         std::string& error);
     [[nodiscard]] bool invalidateSession(
         const AuthSessionToken& token,

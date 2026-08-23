@@ -73,7 +73,7 @@ concept HasLedgerRows = requires(T value) { value.ledgerRows; };
 template <typename T>
 concept HasTrophyMatchId = requires(T value) { value.trophyMatchId; };
 
-static_assert(kProtocolVersion == 3);
+static_assert(kProtocolVersion == 4);
 static_assert(std::variant_size_v<ClientCommandPayload> == 5);
 static_assert(!HasWorld<ServerBootstrap>);
 static_assert(!HasAuthoritativeState<ServerBootstrap>);
@@ -444,6 +444,29 @@ void publicLeaderboardRequestAndResponseRoundTrip() {
             0, kMaximumLeaderboardPageSize + 1}}, bytes, error));
 }
 
+void cosmeticLoadoutMessagesRoundTrip() {
+    const client::AccountCosmeticLoadout loadout{
+        client::CallingCardId{"slanted-rectangles-white"},
+        client::EmblemId{"rounded-square-green"}};
+    WireBytes bytes;
+    std::string error;
+    const CosmeticLoadoutUpdateRequest request{
+        kProtocolVersion, "session_opaque", loadout};
+    assert(encodeWire(request, bytes, error));
+    CosmeticLoadoutUpdateRequest decodedRequest;
+    assert(decodeCosmeticLoadoutUpdateRequest(bytes, decodedRequest, error));
+    assert(decodedRequest.sessionToken == request.sessionToken);
+    assert(decodedRequest.loadout == loadout);
+
+    const CosmeticLoadoutUpdateResponse response{
+        kProtocolVersion, CosmeticLoadoutUpdateSuccess{loadout}};
+    assert(encodeWire(response, bytes, error));
+    CosmeticLoadoutUpdateResponse decodedResponse;
+    assert(decodeCosmeticLoadoutUpdateResponse(bytes, decodedResponse, error));
+    assert(std::get<CosmeticLoadoutUpdateSuccess>(decodedResponse.payload)
+               .loadout == loadout);
+}
+
 void goldenFixtureIsStable() {
     const ClientCommand quit{
         kProtocolVersion,
@@ -455,7 +478,7 @@ void goldenFixtureIsStable() {
     const WireBytes expected{
         0x42, 0x53, 0x4b, 0x31,
         0x13,
-        0x00, 0x00, 0x00, 0x03,
+        0x00, 0x00, 0x00, 0x04,
         0x00, 0x00, 0x00, 0x2a,
     };
     assert(bytes == expected);
@@ -486,7 +509,7 @@ void malformedWireIsRejected() {
     assert(!decodeClientCommand(malformed, command, error));
 
     malformed = valid;
-    malformed[8] = 0x04;
+    malformed[8] = 0x05;
     assert(!decodeClientCommand(malformed, command, error));
 
     PlayerAction action;
@@ -516,7 +539,7 @@ void malformedWireIsRejected() {
     assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
 
     malformedBootstrap = bootstrapBytes;
-    malformedBootstrap[8] = 0x04;
+    malformedBootstrap[8] = 0x05;
     assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
 
     malformedBootstrap = bootstrapBytes;
@@ -762,6 +785,7 @@ int main() {
     allServerFieldsRoundTripExactly();
     everyClientCommandRoundTrips();
     publicLeaderboardRequestAndResponseRoundTrip();
+    cosmeticLoadoutMessagesRoundTrip();
     goldenFixtureIsStable();
     malformedWireIsRejected();
     byteTransportAndDecodedServerDataReachController();

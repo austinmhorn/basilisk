@@ -80,6 +80,27 @@ int main() {
     assert(auth->resolveSession(session, resolved, error));
     assert(resolved == created);
 
+    basilisk::client::AccountCosmeticLoadout loadout;
+    assert(auth->cosmeticLoadout(created, loadout, error));
+    assert(loadout == basilisk::client::AccountCosmeticLoadout{});
+    const basilisk::client::AccountCosmeticLoadout equipped{
+        basilisk::client::CallingCardId{"honeycomb-flag-green"},
+        basilisk::client::EmblemId{"circle-green"}};
+    // Unsupported IDs never replace the stored loadout.
+    basilisk::client::AccountCosmeticLoadout confirmed;
+    assert(!auth->updateCosmeticLoadout(session, equipped, confirmed, error));
+    const basilisk::client::AccountCosmeticLoadout supported{
+        basilisk::client::CallingCardId{"honeycomb-flag-black"},
+        basilisk::client::EmblemId{"circle-green"}};
+    assert(auth->updateCosmeticLoadout(
+        session, supported, confirmed, error));
+    assert(confirmed == supported);
+    auth.reset();
+    auth = SQLiteAccountAuth::open(
+        database.path(), error, [&now] { return now; });
+    assert(auth != nullptr && auth->cosmeticLoadout(created, loadout, error));
+    assert(loadout == supported);
+
     const std::int64_t sessionCreatedAt = now;
     now += 16 * 60;
     assert(auth->resolveSession(session, resolved, error));
@@ -108,6 +129,8 @@ int main() {
         std::get_if<AuthenticationSuccess>(&response.payload);
     assert(createdResponse != nullptr);
     assert(createdResponse->profile == profile);
+    assert(createdResponse->cosmeticLoadout ==
+           basilisk::client::AccountCosmeticLoadout{});
     const std::string createdSession = createdResponse->sessionToken;
 
     assert(encodeWire(AuthenticationRequest{
@@ -121,6 +144,23 @@ int main() {
         std::get_if<AuthenticationSuccess>(&response.payload);
     assert(loginResponse != nullptr);
     assert(loginResponse->profile == profile);
+    assert(loginResponse->cosmeticLoadout ==
+           basilisk::client::AccountCosmeticLoadout{});
+
+    const basilisk::client::AccountCosmeticLoadout protocolLoadout{
+        basilisk::client::CallingCardId{"diamonds-flag-white"},
+        basilisk::client::EmblemId{"rounded-square-green"}};
+    assert(encodeWire(CosmeticLoadoutUpdateRequest{
+        kProtocolVersion, createdSession, protocolLoadout},
+        requestBytes, error));
+    assert(protocol.processCosmeticUpdate(requestBytes, responseBytes, error));
+    CosmeticLoadoutUpdateResponse cosmeticResponse;
+    assert(decodeCosmeticLoadoutUpdateResponse(
+        responseBytes, cosmeticResponse, error));
+    const auto* cosmeticSuccess = std::get_if<CosmeticLoadoutUpdateSuccess>(
+        &cosmeticResponse.payload);
+    assert(cosmeticSuccess != nullptr &&
+           cosmeticSuccess->loadout == protocolLoadout);
 
     AccountIdentity duplicateUsername;
     assert(auth->createAccount(
@@ -138,6 +178,7 @@ int main() {
     assert(authenticated != nullptr);
     assert(authenticated->sessionToken == createdSession);
     assert(authenticated->profile == profile);
+    assert(authenticated->cosmeticLoadout == protocolLoadout);
 
     assert(encodeWire(AuthenticationRequest{
         kProtocolVersion,
@@ -154,4 +195,14 @@ int main() {
     assert(std::holds_alternative<LogoutSuccess>(response.payload));
     assert(!auth->resolveSession(
         AuthSessionToken{createdSession}, resolved, error));
+
+    assert(encodeWire(AuthenticationRequest{
+        kProtocolVersion,
+        LoginRequest{"mara2@example.test",
+                     "another correct horse battery staple"}},
+        requestBytes, error));
+    assert(protocol.process(requestBytes, responseBytes, error));
+    assert(decodeAuthenticationResponse(responseBytes, response, error));
+    const auto* relogged = std::get_if<AuthenticationSuccess>(&response.payload);
+    assert(relogged != nullptr && relogged->cosmeticLoadout == protocolLoadout);
 }
