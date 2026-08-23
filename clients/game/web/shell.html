@@ -105,6 +105,29 @@
             text-align: center;
         }
 
+        #reload-game {
+            display: none;
+            min-width: 180px;
+            padding: 11px 22px;
+            border: 1px solid #e1b85b;
+            border-radius: 999px;
+            color: #e1b85b;
+            background: #171d25;
+            font: inherit;
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            cursor: pointer;
+        }
+
+        #loader.manual-reload {
+            pointer-events: auto;
+        }
+
+        #loader.manual-reload #reload-game {
+            display: block;
+        }
+
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
@@ -126,13 +149,56 @@
         <div class="brand">BASILISK</div>
         <div class="spinner" aria-hidden="true"></div>
         <div id="status">Loading...</div>
+        <button id="reload-game" type="button">Reload Game</button>
     </div>
     <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
     <script>
         const canvas = document.getElementById('canvas');
         const loader = document.getElementById('loader');
         const status = document.getElementById('status');
+        const reloadGame = document.getElementById('reload-game');
+        const fatalRecoveryKey = 'basilisk.fatal-recovery.v1';
+        const fatalRecoveryWindowMs = 60_000;
+        const fatalReloadDelayMs = 1_000;
         let runtimeReady = false;
+        let fatalReloadTimer = null;
+
+        const fatalReasonText = (reason) => {
+            if (reason instanceof Error) return reason.message;
+            if (reason === undefined || reason === null) return 'Unknown failure';
+            return String(reason);
+        };
+        const readFatalRecord = () => {
+            try {
+                const record = JSON.parse(
+                    sessionStorage.getItem(fatalRecoveryKey) || 'null');
+                return record && typeof record.source === 'string' &&
+                    typeof record.reason === 'string' &&
+                    Number.isFinite(record.timestamp)
+                    ? record : null;
+            } catch (error) {
+                console.warn('Unable to read Basilisk fatal recovery state:', error);
+                return null;
+            }
+        };
+        const writeFatalRecord = (record) => {
+            try {
+                sessionStorage.setItem(fatalRecoveryKey, JSON.stringify(record));
+                return true;
+            } catch (error) {
+                console.warn('Unable to store Basilisk fatal recovery state:', error);
+                return false;
+            }
+        };
+
+        const priorFatal = readFatalRecord();
+        if (priorFatal) {
+            console.info(
+                'Previous Basilisk fatal event:',
+                priorFatal.source,
+                priorFatal.reason,
+                new Date(priorFatal.timestamp).toISOString());
+        }
 
         const showGame = () => {
             runtimeReady = true;
@@ -140,10 +206,39 @@
             loader.classList.add('hidden');
             canvas.focus({preventScroll: true});
         };
-        const showFailure = () => {
+        const showFailure = (manualReload = false) => {
             loader.classList.remove('hidden');
             loader.classList.add('failed');
+            loader.classList.toggle('manual-reload', manualReload);
             status.textContent = 'Unable to load Basilisk. Please refresh and try again.';
+        };
+        const handleFatalBrowserFailure = (source, reason) => {
+            const timestamp = Date.now();
+            const reasonText = fatalReasonText(reason);
+            const previous = readFatalRecord();
+            const recentlyFailed = previous !== null &&
+                timestamp >= previous.timestamp &&
+                timestamp - previous.timestamp < fatalRecoveryWindowMs;
+            console.error('Basilisk fatal browser event:', source, reasonText);
+            const recoveryStored = writeFatalRecord({
+                source,
+                reason: reasonText,
+                timestamp,
+            });
+
+            if (recentlyFailed || !recoveryStored) {
+                if (fatalReloadTimer !== null) {
+                    clearTimeout(fatalReloadTimer);
+                    fatalReloadTimer = null;
+                }
+                showFailure(true);
+                return;
+            }
+
+            showFailure(false);
+            fatalReloadTimer = setTimeout(() => {
+                location.reload();
+            }, fatalReloadDelayMs);
         };
 
         canvas.addEventListener('pointerdown', () => {
@@ -151,8 +246,10 @@
         });
         canvas.addEventListener('webglcontextlost', (event) => {
             event.preventDefault();
-            showFailure();
+            handleFatalBrowserFailure(
+                'webglcontextlost', 'WebGL rendering context lost');
         });
+        reloadGame.addEventListener('click', () => location.reload());
         window.addEventListener('error', (event) => {
             console.error('Basilisk browser error:',
                 event.error || event.message || event);
@@ -184,7 +281,7 @@
             },
             onAbort(reason) {
                 console.error('Basilisk runtime aborted:', reason);
-                showFailure();
+                handleFatalBrowserFailure('onAbort', reason);
             }
         };
     </script>
