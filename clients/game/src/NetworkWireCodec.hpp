@@ -38,6 +38,9 @@ enum class WireMessageType : std::uint8_t {
     CancelHostedLobby = 38,
     FindMatch = 39,
     CancelFindMatch = 40,
+    UpdateCosmeticLoadout = 41,
+    CosmeticLoadoutUpdated = 13,
+    CosmeticLoadoutUpdateFailed = 14,
 };
 
 [[nodiscard]] bool inspectWireMessageType(
@@ -55,6 +58,14 @@ enum class WireMessageType : std::uint8_t {
     std::string& error);
 [[nodiscard]] bool encodeWire(
     const AuthenticationResponse& message,
+    WireBytes& bytes,
+    std::string& error);
+[[nodiscard]] bool encodeWire(
+    const CosmeticLoadoutUpdateRequest& message,
+    WireBytes& bytes,
+    std::string& error);
+[[nodiscard]] bool encodeWire(
+    const CosmeticLoadoutUpdateResponse& message,
     WireBytes& bytes,
     std::string& error);
 [[nodiscard]] bool encodeWire(
@@ -97,6 +108,14 @@ enum class WireMessageType : std::uint8_t {
 [[nodiscard]] bool decodeAuthenticationResponse(
     std::span<const std::uint8_t> bytes,
     AuthenticationResponse& message,
+    std::string& error);
+[[nodiscard]] bool decodeCosmeticLoadoutUpdateRequest(
+    std::span<const std::uint8_t> bytes,
+    CosmeticLoadoutUpdateRequest& message,
+    std::string& error);
+[[nodiscard]] bool decodeCosmeticLoadoutUpdateResponse(
+    std::span<const std::uint8_t> bytes,
+    CosmeticLoadoutUpdateResponse& message,
     std::string& error);
 [[nodiscard]] bool decodeLobbyRequest(
     std::span<const std::uint8_t> bytes, LobbyRequest& message,

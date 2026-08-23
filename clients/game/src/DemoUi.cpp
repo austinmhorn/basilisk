@@ -21,13 +21,13 @@ std::unique_ptr<ClientSessionController> makeDemoSessionController() {
         client::PublicPlayerProfile{
             PlayerId{1},
             "Mara Voss",
-            client::CallingCardId{"ember-field"},
-            client::EmblemId{"wayfinder"}},
+            client::CallingCardId{"arrow-right-black"},
+            client::EmblemId{"rounded-square-black"}},
         client::PublicPlayerProfile{
             PlayerId{2},
             "Elias Thorn",
-            client::CallingCardId{"blue-ward"},
-            client::EmblemId{"ward"}},
+            client::CallingCardId{"honeycomb-flag-white"},
+            client::EmblemId{"circle-green"}},
     };
     const client::ClientViewContext viewContext{
         PlayerId{1},

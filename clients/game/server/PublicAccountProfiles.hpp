@@ -11,7 +11,7 @@
 
 namespace basilisk::game::server {
 
-using ::basilisk::game::PublicProfileHandle;
+using ::basilisk::game::Username;
 using ::basilisk::game::PublicTrophyLeaderboardEntry;
 
 using ::basilisk::game::PublicAccountProfile;
@@ -20,7 +20,7 @@ enum class PublicProfileStoreResult {
     Stored,
     AlreadyStored,
     AccountConflict,
-    DuplicateHandle,
+    DuplicateUsername,
     Error,
 };
 
@@ -45,7 +45,7 @@ makeInMemoryPublicAccountProfileStore();
 
 // Read-only join of public account profiles with authoritative ledger totals.
 // Accounts without a public profile are intentionally omitted. Equal totals
-// share a competition rank and are ordered by public handle.
+// share a competition rank and are ordered by username.
 class PublicTrophyReadModel {
 public:
     PublicTrophyReadModel(

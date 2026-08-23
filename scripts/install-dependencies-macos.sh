@@ -35,6 +35,14 @@ verify_cmake_version() {
     fi
 }
 
+cmake_satisfies_minimum() {
+    local version major minor
+    command -v cmake >/dev/null 2>&1 || return 1
+    version="$(cmake --version | head -n 1 | awk '{print $3}')"
+    IFS=. read -r major minor _ <<<"$version"
+    ((major > 3 || (major == 3 && minor >= 25)))
+}
+
 [[ "$(uname -s)" == "Darwin" ]] || fail "This installer supports macOS only."
 
 if ! command -v xcode-select >/dev/null 2>&1; then
@@ -52,9 +60,6 @@ if ! command -v brew >/dev/null 2>&1; then
     fail "Homebrew is required but was not found. Install it using the official instructions at ${HOMEBREW_INSTALL_URL}, then rerun this script."
 fi
 
-log "Updating Homebrew package metadata..."
-brew update
-
 required_packages=(git cmake python)
 if [[ "$install_web" == true ]]; then
     required_packages+=(emscripten)
@@ -69,16 +74,29 @@ for package in "${required_packages[@]}"; do
     fi
 done
 
+cmake_needs_upgrade=false
+if brew list --versions cmake >/dev/null 2>&1 &&
+    ! cmake_satisfies_minimum; then
+    cmake_needs_upgrade=true
+fi
+
+if ((${#packages[@]})) || [[ "$cmake_needs_upgrade" == true ]]; then
+    log "Updating Homebrew package metadata..."
+    brew update
+else
+    log "Homebrew package metadata is current enough; skipping update."
+fi
+
 if ((${#packages[@]})); then
     log "Installing: ${packages[*]}"
-    brew install "${packages[@]}"
+    HOMEBREW_NO_AUTO_UPDATE=1 brew install "${packages[@]}"
 else
     log "Homebrew dependencies are already installed."
 fi
 
-if brew outdated --quiet cmake | grep -qx 'cmake'; then
+if [[ "$cmake_needs_upgrade" == true ]]; then
     log "Upgrading CMake to satisfy the project's current minimum version..."
-    brew upgrade cmake
+    HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade cmake
 fi
 
 log "Verifying development tools..."

@@ -13,6 +13,7 @@ constexpr std::array mainActions{
     MainMenuAction::Leaderboards,
     MainMenuAction::Settings,
     MainMenuAction::Exit,
+    MainMenuAction::EditProfile,
 };
 constexpr std::array startActions{
     MainMenuAction::FindGame,
@@ -26,6 +27,7 @@ constexpr std::array leaderboardActions{
     MainMenuAction::Back,
 };
 constexpr std::array settingsActions{MainMenuAction::Logout, MainMenuAction::Back};
+constexpr std::array cosmeticsActions{MainMenuAction::Back};
 constexpr std::array hostLobbyActions{
     MainMenuAction::CancelLobby, MainMenuAction::Back};
 constexpr std::array joinLobbyActions{
@@ -44,6 +46,7 @@ std::span<const MainMenuAction> MainMenuState::actions() const noexcept {
         case MainMenuPage::StartGame: return startActions;
         case MainMenuPage::Leaderboards: return leaderboardActions;
         case MainMenuPage::Settings: return settingsActions;
+        case MainMenuPage::Cosmetics: return cosmeticsActions;
         case MainMenuPage::HostLobby: return hostLobbyActions;
         case MainMenuPage::JoinLobby: return joinLobbyActions;
         case MainMenuPage::MatchReady: return matchReadyActions;
@@ -66,6 +69,12 @@ std::uint32_t MainMenuState::leaderboardOffset() const noexcept {
 const std::string& MainMenuState::lobbyCode() const noexcept { return lobbyCode_; }
 const std::string& MainMenuState::lobbyError() const noexcept { return lobbyError_; }
 bool MainMenuState::lobbyWaiting() const noexcept { return lobbyWaiting_; }
+const client::CallingCardId& MainMenuState::selectedCallingCard() const noexcept {
+    return selectedCallingCard_;
+}
+const client::EmblemId& MainMenuState::selectedEmblem() const noexcept {
+    return selectedEmblem_;
+}
 
 void MainMenuState::select(std::size_t index) noexcept {
     if (index < actions().size()) selectedIndex_ = index;
@@ -95,6 +104,9 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
             return MainMenuResult::RequestLeaderboard;
         case MainMenuAction::Settings:
             setPage(MainMenuPage::Settings);
+            break;
+        case MainMenuAction::EditProfile:
+            setPage(MainMenuPage::Cosmetics);
             break;
         case MainMenuAction::Exit:
             return MainMenuResult::Exit;
@@ -198,6 +210,19 @@ void MainMenuState::lobbyFailed(std::string error) {
 void MainMenuState::matchmakingCancelled() {
     lobbyCode_.clear(); lobbyError_.clear(); lobbyWaiting_ = false;
     setPage(MainMenuPage::StartGame);
+}
+
+void MainMenuState::selectCallingCard(client::CallingCardId callingCard) {
+    selectedCallingCard_ = std::move(callingCard);
+}
+void MainMenuState::selectEmblem(client::EmblemId emblem) {
+    selectedEmblem_ = std::move(emblem);
+}
+
+void MainMenuState::applyConfirmedCosmeticLoadout(
+    const client::AccountCosmeticLoadout& loadout) {
+    selectedCallingCard_ = loadout.callingCardId;
+    selectedEmblem_ = loadout.emblemId;
 }
 
 void MainMenuState::setPage(MainMenuPage page) noexcept {

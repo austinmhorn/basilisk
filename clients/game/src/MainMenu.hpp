@@ -5,6 +5,9 @@
 #include <span>
 #include <string>
 
+#include "basilisk/client/PlayerProfile.hpp"
+#include "basilisk/client/AccountCosmetics.hpp"
+
 namespace basilisk::game {
 
 enum class MainMenuPage {
@@ -12,6 +15,7 @@ enum class MainMenuPage {
     StartGame,
     Leaderboards,
     Settings,
+    Cosmetics,
     HostLobby,
     JoinLobby,
     MatchReady,
@@ -22,6 +26,7 @@ enum class MainMenuAction {
     StartGame,
     Leaderboards,
     Settings,
+    EditProfile,
     Exit,
     FindGame,
     HostGame,
@@ -59,6 +64,8 @@ public:
     [[nodiscard]] const std::string& lobbyCode() const noexcept;
     [[nodiscard]] const std::string& lobbyError() const noexcept;
     [[nodiscard]] bool lobbyWaiting() const noexcept;
+    [[nodiscard]] const client::CallingCardId& selectedCallingCard() const noexcept;
+    [[nodiscard]] const client::EmblemId& selectedEmblem() const noexcept;
 
     void select(std::size_t index) noexcept;
     void moveSelection(int delta) noexcept;
@@ -72,6 +79,10 @@ public:
     void lobbyCancelled();
     void lobbyFailed(std::string error);
     void matchmakingCancelled();
+    void selectCallingCard(client::CallingCardId callingCard);
+    void selectEmblem(client::EmblemId emblem);
+    void applyConfirmedCosmeticLoadout(
+        const client::AccountCosmeticLoadout& loadout);
 
 private:
     void setPage(MainMenuPage page) noexcept;
@@ -82,6 +93,8 @@ private:
     std::string lobbyCode_;
     std::string lobbyError_;
     bool lobbyWaiting_{false};
+    client::CallingCardId selectedCallingCard_{"arrow-right-black"};
+    client::EmblemId selectedEmblem_{"circle-black"};
 };
 
 } // namespace basilisk::game

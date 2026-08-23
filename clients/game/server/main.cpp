@@ -24,10 +24,10 @@ void stopServer(int) { running = false; }
 std::vector<basilisk::client::PublicPlayerProfile> profiles() {
     using namespace basilisk;
     return {
-        {PlayerId{1}, "Mara Voss", client::CallingCardId{"ember-field"},
-         client::EmblemId{"wayfinder"}},
-        {PlayerId{2}, "Elias Thorn", client::CallingCardId{"blue-ward"},
-         client::EmblemId{"ward"}},
+        {PlayerId{1}, "Mara Voss", client::CallingCardId{"arrow-right-black"},
+         client::EmblemId{"rounded-square-black"}},
+        {PlayerId{2}, "Elias Thorn", client::CallingCardId{"honeycomb-flag-white"},
+         client::EmblemId{"circle-green"}},
     };
 }
 
@@ -49,10 +49,8 @@ int main(int argc, char** argv) {
     std::optional<std::string> trophyMatch;
     std::optional<std::string> p1Account;
     std::optional<std::string> p2Account;
-    std::optional<std::string> p1PublicHandle;
-    std::optional<std::string> p2PublicHandle;
-    std::optional<std::string> p1DisplayName;
-    std::optional<std::string> p2DisplayName;
+    std::optional<std::string> p1Username;
+    std::optional<std::string> p2Username;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument{argv[index]};
         if (argument != "--bind" && argument != "--port" &&
@@ -61,9 +59,7 @@ int main(int argc, char** argv) {
             argument != "--trophy-db" && argument != "--match-id" &&
             argument != "--auth-db" &&
             argument != "--p1-account" && argument != "--p2-account" &&
-            argument != "--p1-handle" && argument != "--p2-handle" &&
-            argument != "--p1-display-name" &&
-            argument != "--p2-display-name") {
+            argument != "--p1-username" && argument != "--p2-username") {
             std::fprintf(stderr, "Unknown argument: %s\n", argv[index]);
             return 2;
         }
@@ -89,10 +85,8 @@ int main(int argc, char** argv) {
         else if (argument == "--match-id") trophyMatch = argv[index];
         else if (argument == "--p1-account") p1Account = argv[index];
         else if (argument == "--p2-account") p2Account = argv[index];
-        else if (argument == "--p1-handle") p1PublicHandle = argv[index];
-        else if (argument == "--p2-handle") p2PublicHandle = argv[index];
-        else if (argument == "--p1-display-name") p1DisplayName = argv[index];
-        else if (argument == "--p2-display-name") p2DisplayName = argv[index];
+        else if (argument == "--p1-username") p1Username = argv[index];
+        else if (argument == "--p2-username") p2Username = argv[index];
         else {
             std::uint64_t value = 0;
             if (!parseUnsigned(argv[index], value)) {
@@ -104,9 +98,7 @@ int main(int argc, char** argv) {
         }
     }
     const bool fixedTrophyScoringRequested = trophyMatch.has_value() ||
-        p1PublicHandle.has_value() ||
-        p2PublicHandle.has_value() || p1DisplayName.has_value() ||
-        p2DisplayName.has_value();
+        p1Username.has_value() || p2Username.has_value();
     if ((p1Account.has_value() || p2Account.has_value()) &&
         !fixedTrophyScoringRequested && !authenticationDatabase.has_value()) {
         std::fprintf(stderr,
@@ -123,17 +115,15 @@ int main(int argc, char** argv) {
                 "--p2-account.\n");
             return 2;
         }
-        const bool anyPublicProfile = p1PublicHandle.has_value() ||
-            p2PublicHandle.has_value() || p1DisplayName.has_value() ||
-            p2DisplayName.has_value();
-        const bool completePublicProfiles = p1PublicHandle.has_value() &&
-            p2PublicHandle.has_value() && p1DisplayName.has_value() &&
-            p2DisplayName.has_value();
+        const bool anyPublicProfile = p1Username.has_value() ||
+            p2Username.has_value();
+        const bool completePublicProfiles = p1Username.has_value() &&
+            p2Username.has_value();
         if (trophyDatabase.has_value() != completePublicProfiles ||
             anyPublicProfile != completePublicProfiles) {
             std::fprintf(stderr,
-                "SQLite trophy persistence requires --trophy-db, --p1-handle, "
-                "--p2-handle, --p1-display-name, and --p2-display-name together.\n");
+                "SQLite trophy persistence requires --trophy-db, --p1-username, "
+                "and --p2-username together.\n");
             return 2;
         }
         config.trophies = basilisk::game::server::LocalServerTrophyConfig{
@@ -145,15 +135,11 @@ int main(int argc, char** argv) {
         if (completePublicProfiles) {
             config.trophies->p1PublicProfile =
                 basilisk::game::server::PublicAccountProfile{
-                    basilisk::game::PublicProfileHandle{
-                        std::move(*p1PublicHandle)},
-                    std::move(*p1DisplayName),
+                    basilisk::game::Username{std::move(*p1Username)},
                 };
             config.trophies->p2PublicProfile =
                 basilisk::game::server::PublicAccountProfile{
-                    basilisk::game::PublicProfileHandle{
-                        std::move(*p2PublicHandle)},
-                    std::move(*p2DisplayName),
+                    basilisk::game::Username{std::move(*p2Username)},
                 };
         }
     }

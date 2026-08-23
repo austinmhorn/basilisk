@@ -13,10 +13,19 @@ int main() {
     auth.append("secret");
     network::AuthenticationRequest authRequest;
     assert(auth.request(authRequest));
-    assert(std::holds_alternative<network::LoginRequest>(authRequest.payload));
+    const auto* login = std::get_if<network::LoginRequest>(&authRequest.payload);
+    assert(login != nullptr && login->email == "hunter@example.test");
     auth.setWaiting(false);
     auth.switchMode();
     assert(auth.mode() == AuthMode::CreateAccount);
+    auth.nextField();
+    auth.nextField();
+    auth.append("cave-hunter");
+    assert(auth.request(authRequest));
+    const auto* create =
+        std::get_if<network::CreateAccountRequest>(&authRequest.payload);
+    assert(create != nullptr && create->email == "hunter@example.test");
+    assert(create->username == "cave-hunter");
 
     MainMenuState menu;
     assert(menu.page() == MainMenuPage::Main);
@@ -71,6 +80,36 @@ int main() {
     assert(menu.activateSelected() == MainMenuResult::Logout);
 
     (void)menu.back();
+    assert(menu.activate(MainMenuAction::EditProfile) == MainMenuResult::None);
+    assert(menu.page() == MainMenuPage::Cosmetics);
+    assert(menu.selectedCallingCard() ==
+           basilisk::client::CallingCardId{"arrow-right-black"});
+    assert(menu.selectedEmblem() ==
+           basilisk::client::EmblemId{"circle-black"});
+    menu.selectCallingCard(
+        basilisk::client::CallingCardId{"slanted-rectangles-white"});
+    assert(menu.selectedCallingCard() ==
+           basilisk::client::CallingCardId{"slanted-rectangles-white"});
+    menu.selectEmblem(basilisk::client::EmblemId{"rounded-square-green"});
+    assert(menu.selectedEmblem() ==
+           basilisk::client::EmblemId{"rounded-square-green"});
+    menu.applyConfirmedCosmeticLoadout({
+        basilisk::client::CallingCardId{"diamonds-flag-white"},
+        basilisk::client::EmblemId{"circle-green"}});
+    assert(menu.selectedCallingCard() ==
+           basilisk::client::CallingCardId{"diamonds-flag-white"});
+    assert(menu.selectedEmblem() ==
+           basilisk::client::EmblemId{"circle-green"});
+    assert(menu.selectedAction() == MainMenuAction::Back);
+    assert(menu.activateSelected() == MainMenuResult::None);
+    assert(menu.page() == MainMenuPage::Main);
+    assert(menu.selectedCallingCard() ==
+           basilisk::client::CallingCardId{"diamonds-flag-white"});
+    assert(menu.selectedEmblem() ==
+           basilisk::client::EmblemId{"circle-green"});
+
+    menu.moveSelection(-1);
+    assert(menu.selectedAction() == MainMenuAction::EditProfile);
     menu.moveSelection(-1);
     assert(menu.selectedAction() == MainMenuAction::Exit);
     assert(menu.activateSelected() == MainMenuResult::Exit);

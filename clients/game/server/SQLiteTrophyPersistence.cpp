@@ -26,10 +26,8 @@ CREATE INDEX IF NOT EXISTS trophy_ledger_account
     ON trophy_ledger(account_id);
 CREATE TABLE IF NOT EXISTS public_account_profiles (
     account_id TEXT PRIMARY KEY NOT NULL,
-    public_handle TEXT UNIQUE NOT NULL,
-    display_name TEXT NOT NULL,
-    CHECK (length(public_handle) > 0),
-    CHECK (length(display_name) > 0)
+    username TEXT UNIQUE NOT NULL,
+    CHECK (length(username) > 0)
 );
 CREATE TRIGGER IF NOT EXISTS trophy_ledger_no_update
 BEFORE UPDATE ON trophy_ledger BEGIN
@@ -309,14 +307,13 @@ PublicProfileStoreResult SQLiteTrophyPersistence::storeProfile(
     std::string& error) {
 
     std::lock_guard lock(mutex_);
-    if (account.value.empty() || profile.handle.value.empty() ||
-        profile.displayName.empty()) {
-        error = "Account, public handle, and display name must not be empty.";
+    if (account.value.empty() || profile.username.value.empty()) {
+        error = "Account and username must not be empty.";
         return PublicProfileStoreResult::Error;
     }
     Statement existing(
         database_,
-        "SELECT public_handle, display_name FROM public_account_profiles "
+        "SELECT username FROM public_account_profiles "
         "WHERE account_id = ?",
         error);
     if (existing.get() == nullptr ||
@@ -327,10 +324,8 @@ PublicProfileStoreResult SQLiteTrophyPersistence::storeProfile(
     const int existingResult = sqlite3_step(existing.get());
     if (existingResult == SQLITE_ROW) {
         const PublicAccountProfile stored{
-            PublicProfileHandle{reinterpret_cast<const char*>(
+            Username{reinterpret_cast<const char*>(
                 sqlite3_column_text(existing.get(), 0))},
-            reinterpret_cast<const char*>(
-                sqlite3_column_text(existing.get(), 1)),
         };
         error.clear();
         return stored == profile
@@ -345,19 +340,18 @@ PublicProfileStoreResult SQLiteTrophyPersistence::storeProfile(
     Statement insert(
         database_,
         "INSERT INTO public_account_profiles"
-        "(account_id, public_handle, display_name) VALUES(?, ?, ?)",
+        "(account_id, username) VALUES(?, ?)",
         error);
     if (insert.get() == nullptr ||
         !bindText(insert.get(), 1, account.value) ||
-        !bindText(insert.get(), 2, profile.handle.value) ||
-        !bindText(insert.get(), 3, profile.displayName)) {
+        !bindText(insert.get(), 2, profile.username.value)) {
         if (error.empty()) error = sqlite3_errmsg(database_);
         return PublicProfileStoreResult::Error;
     }
     const int result = sqlite3_step(insert.get());
     if (result == SQLITE_CONSTRAINT) {
         error.clear();
-        return PublicProfileStoreResult::DuplicateHandle;
+        return PublicProfileStoreResult::DuplicateUsername;
     }
     if (result != SQLITE_DONE) {
         error = sqlite3_errmsg(database_);
@@ -375,7 +369,7 @@ bool SQLiteTrophyPersistence::profileForAccount(
     std::lock_guard lock(mutex_);
     Statement query(
         database_,
-        "SELECT public_handle, display_name FROM public_account_profiles "
+        "SELECT username FROM public_account_profiles "
         "WHERE account_id = ?",
         error);
     if (query.get() == nullptr ||
@@ -394,9 +388,8 @@ bool SQLiteTrophyPersistence::profileForAccount(
         return false;
     }
     profile = PublicAccountProfile{
-        PublicProfileHandle{reinterpret_cast<const char*>(
+        Username{reinterpret_cast<const char*>(
             sqlite3_column_text(query.get(), 0))},
-        reinterpret_cast<const char*>(sqlite3_column_text(query.get(), 1)),
     };
     error.clear();
     return true;

@@ -72,8 +72,8 @@ systemd-managed persistent `/var/lib/basilisk` state directory.
 The server-wide `--trophy-db` configures the durable trophy ledger, public
 profiles, and leaderboard for authenticated dynamically assigned matches. The
 existing fixed-match development mode remains available by additionally
-supplying `--match-id`, both `--p*-account`, `--p*-handle`, and
-`--p*-display-name` arguments.
+supplying `--match-id`, both `--p*-account`, and both `--p*-username`
+arguments.
 
 After installing the files:
 

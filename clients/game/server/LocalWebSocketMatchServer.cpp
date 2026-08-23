@@ -238,6 +238,7 @@ private:
     struct PreMatchClient {
         AccountIdentity account;
         PublicAccountProfile profile;
+        client::AccountCosmeticLoadout cosmeticLoadout;
     };
 
     struct AssignedMatch {
@@ -357,6 +358,28 @@ private:
             drainAll();
             return;
         }
+        if (authentication_ != nullptr && found->second.account.has_value() &&
+            network::inspectWireMessageType(bytes, type, error) &&
+            type == network::WireMessageType::UpdateCosmeticLoadout) {
+            network::CosmeticLoadoutUpdateRequest request;
+            AccountIdentity requestedAccount;
+            network::WireBytes response;
+            if (!network::decodeCosmeticLoadoutUpdateRequest(
+                    bytes, request, error) ||
+                !authentication_->resolveSession(
+                    AuthSessionToken{request.sessionToken}, requestedAccount, error) ||
+                requestedAccount != *found->second.account ||
+                !authenticationProtocol_.processCosmeticUpdate(
+                    bytes, response, error)) {
+                if (error.empty()) error = "Cosmetic session does not match connection.";
+                reject(socket, found->second, 1008, error);
+                return;
+            }
+            const std::string payload(
+                reinterpret_cast<const char*>(response.data()), response.size());
+            (void)socket.sendBinary(payload);
+            return;
+        }
         if (found->second.account.has_value() &&
             network::inspectWireMessageType(bytes, type, error) &&
             (type == network::WireMessageType::HostLobby ||
@@ -383,8 +406,11 @@ private:
         if (explicitQuit && found->second.account.has_value() &&
             found->second.assignedMatch.has_value()) {
             PublicAccountProfile profile;
+            client::AccountCosmeticLoadout loadout;
             if (!authentication_->publicProfile(
-                    *found->second.account, profile, error)) {
+                    *found->second.account, profile, error) ||
+                !authentication_->cosmeticLoadout(
+                    *found->second.account, loadout, error)) {
                 reject(socket, found->second, 1008, error);
                 return;
             }
@@ -394,7 +420,8 @@ private:
             found->second.active = false;
             clients_.erase(found);
             authenticatedPreMatch_.emplace(
-                &socket, PreMatchClient{account, std::move(profile)});
+                &socket, PreMatchClient{
+                    account, std::move(profile), std::move(loadout)});
             reportTrophyError();
             drainAll();
             return;
@@ -438,6 +465,39 @@ private:
             lobbies_.cancelHostedBy(account);
             authenticatedPreMatch_.erase(&socket);
             pendingAuthentication_.insert(&socket);
+            return;
+        }
+        if (type == network::WireMessageType::UpdateCosmeticLoadout) {
+            network::CosmeticLoadoutUpdateRequest request;
+            AccountIdentity requestedAccount;
+            network::WireBytes response;
+            if (!network::decodeCosmeticLoadoutUpdateRequest(
+                    bytes, request, error) ||
+                !authentication_->resolveSession(
+                    AuthSessionToken{request.sessionToken}, requestedAccount, error) ||
+                requestedAccount != account ||
+                !authenticationProtocol_.processCosmeticUpdate(
+                    bytes, response, error)) {
+                socket.close(1008, error.empty()
+                    ? "Cosmetic session does not match connection." : error);
+                return;
+            }
+            network::CosmeticLoadoutUpdateResponse decoded;
+            if (!network::decodeCosmeticLoadoutUpdateResponse(
+                    response, decoded, error)) {
+                socket.close(1008, error);
+                return;
+            }
+            if (const auto* success =
+                    std::get_if<network::CosmeticLoadoutUpdateSuccess>(
+                        &decoded.payload)) {
+                auto found = authenticatedPreMatch_.find(&socket);
+                if (found != authenticatedPreMatch_.end())
+                    found->second.cosmeticLoadout = success->loadout;
+            }
+            const std::string payload(
+                reinterpret_cast<const char*>(response.data()), response.size());
+            (void)socket.sendBinary(payload);
             return;
         }
         if (type != network::WireMessageType::HostLobby &&
@@ -514,10 +574,12 @@ private:
         }
 
         std::vector<client::PublicPlayerProfile> profiles{
-            {PlayerId{1}, hostConnection->second.profile.displayName,
-             client::CallingCardId{"default"}, client::EmblemId{"default"}},
-            {PlayerId{2}, guestConnection->second.profile.displayName,
-             client::CallingCardId{"default"}, client::EmblemId{"default"}},
+            {PlayerId{1}, hostConnection->second.profile.username.value,
+             hostConnection->second.cosmeticLoadout.callingCardId,
+             hostConnection->second.cosmeticLoadout.emblemId},
+            {PlayerId{2}, guestConnection->second.profile.username.value,
+             guestConnection->second.cosmeticLoadout.callingCardId,
+             guestConnection->second.cosmeticLoadout.emblemId},
         };
         const std::string matchId = "assigned-" +
             std::to_string(++nextMatchId_) + "-" + std::to_string(random_());
@@ -636,8 +698,8 @@ private:
             if (profileResult != PublicProfileStoreResult::Stored &&
                 profileResult != PublicProfileStoreResult::AlreadyStored) {
                 if (error.empty()) {
-                    error = profileResult == PublicProfileStoreResult::DuplicateHandle
-                        ? "Public profile handle is already in use."
+                    error = profileResult == PublicProfileStoreResult::DuplicateUsername
+                        ? "Username is already in use."
                         : "Unable to persist the authenticated public profile.";
                 }
                 socket.close(1008, error);
@@ -690,7 +752,8 @@ private:
             if (!sendResponse(response)) return;
             pendingAuthentication_.erase(&socket);
             authenticatedPreMatch_.emplace(
-                &socket, PreMatchClient{account, success->profile});
+                &socket, PreMatchClient{
+                    account, success->profile, success->cosmeticLoadout});
             return;
         }
         if (usedPlayers_.contains(bound->second)) {
@@ -910,9 +973,9 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
                     result == PublicProfileStoreResult::AlreadyStored)
                     return true;
                 const char* player = slot == PlayerSlot::P1 ? "P1" : "P2";
-                if (result == PublicProfileStoreResult::DuplicateHandle) {
-                    error = std::string{"Public handle '"} +
-                        profile.handle.value + "' for " + player +
+                if (result == PublicProfileStoreResult::DuplicateUsername) {
+                    error = std::string{"Username '"} +
+                        profile.username.value + "' for " + player +
                         " is already in use.";
                 } else if (result == PublicProfileStoreResult::AccountConflict) {
                     error = std::string{"Public profile for "} + player +

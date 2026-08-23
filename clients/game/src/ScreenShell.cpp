@@ -163,6 +163,17 @@ struct DrawingContext {
         SDL_Log("SVG aspect-fit fallback: %s", assetError.c_str());
         return false;
     }
+
+    bool authoredAspectFitAsset(
+        SvgAssetId id,
+        const SDL_FRect& destination,
+        float opacity = 1.0F) const {
+        std::string assetError;
+        if (svg->drawAuthoredAspectFit(id, destination, opacity, assetError))
+            return true;
+        SDL_Log("Authored SVG aspect-fit fallback: %s", assetError.c_str());
+        return false;
+    }
 };
 
 std::optional<std::vector<std::string>> wrapTextLines(
@@ -316,13 +327,14 @@ bool drawPlayerCard(
     const DrawingContext& context,
     SDL_FRect card,
     std::string_view designation,
-    std::string_view displayName,
+    std::string_view username,
+    const client::CallingCardId* callingCardId,
     const client::EmblemId* emblemId,
     bool local,
     bool firstPlayer) {
 
     const float scale = context.scale;
-    const SDL_Color fill = firstPlayer
+    const SDL_Color fallbackFill = firstPlayer
         ? SDL_Color{30, 24, 24, SDL_ALPHA_OPAQUE}
         : SDL_Color{21, 29, 33, SDL_ALPHA_OPAQUE};
     const SDL_Color border = firstPlayer
@@ -331,7 +343,42 @@ bool drawPlayerCard(
     const SDL_Color accent = firstPlayer
         ? SDL_Color{181, 104, 93, SDL_ALPHA_OPAQUE}
         : SDL_Color{93, 145, 166, SDL_ALPHA_OPAQUE};
-    drawPanel(context.renderer, card, 10.0F * scale, fill, border, scale);
+    const std::optional<SvgAssetId> mappedCard = callingCardId == nullptr
+        ? std::nullopt : callingCardAsset(*callingCardId);
+    if (!mappedCard.has_value() ||
+        !context.authoredAspectFitAsset(*mappedCard, card)) {
+        drawPanel(context.renderer, card, 8.0F * scale,
+            fallbackFill, border, scale);
+    }
+
+    constexpr float emblemGap = 8.0F;
+    const SDL_FRect emblem{
+        card.x - card.h - emblemGap * scale,
+        card.y,
+        card.h,
+        card.h,
+    };
+    drawPanel(context.renderer, emblem, 8.0F * scale,
+        ui::Theme::surface, border, scale);
+    const std::optional<SvgAssetId> mappedEmblem =
+        emblemId == nullptr ? std::nullopt : emblemAsset(*emblemId);
+    const SDL_FRect emblemArt = inset(emblem, 4.0F * scale);
+    const bool emblemDrawn = mappedEmblem.has_value() &&
+        context.authoredAspectFitAsset(*mappedEmblem, emblemArt);
+    if (!emblemDrawn) {
+        setColor(context.renderer, accent);
+        const SDL_FRect fallback = inset(emblem, 13.0F * scale);
+        SDL_RenderRect(context.renderer, &fallback);
+    }
+
+    const SDL_FRect nameplate{
+        card.x + 5.0F * scale,
+        card.y + 5.0F * scale,
+        std::min(card.w - 10.0F * scale, 148.0F * scale),
+        card.h - 10.0F * scale,
+    };
+    drawPanel(context.renderer, nameplate, 7.0F * scale,
+        ui::Theme::surface, ui::Theme::borderSoft, scale);
 
     if (local) {
         setColor(context.renderer, accent);
@@ -343,67 +390,20 @@ bool drawPlayerCard(
             card.y + card.h - 2.0F * scale);
     }
 
-    const SDL_FRect emblem{
-        card.x + 7.0F * scale,
-        card.y + 7.0F * scale,
-        31.0F * scale,
-        31.0F * scale,
-    };
-    drawPanel(
-        context.renderer,
-        emblem,
-        7.0F * scale,
-        ui::Theme::surface,
-        accent,
-        scale);
-    const std::optional<SvgAssetId> mappedEmblem =
-        emblemId == nullptr ? std::nullopt : emblemAsset(*emblemId);
-    const SDL_FRect emblemArt = inset(emblem, 5.0F * scale);
-    // The opaque profile ID is resolved only by the game-owned catalog.
-    const bool emblemDrawn =
-        mappedEmblem.has_value() && context.asset(*mappedEmblem, emblemArt);
-    if (!emblemDrawn && firstPlayer) {
-        setColor(context.renderer, accent);
-        const SDL_FPoint diamond[] = {
-            {emblem.x + emblem.w * 0.5F, emblem.y + 6.0F * scale},
-            {emblem.x + emblem.w - 6.0F * scale, emblem.y + emblem.h * 0.5F},
-            {emblem.x + emblem.w * 0.5F, emblem.y + emblem.h - 6.0F * scale},
-            {emblem.x + 6.0F * scale, emblem.y + emblem.h * 0.5F},
-            {emblem.x + emblem.w * 0.5F, emblem.y + 6.0F * scale},
-        };
-        SDL_RenderLines(context.renderer, diamond, 5);
-    } else if (!emblemDrawn) {
-        setColor(context.renderer, accent);
-        const SDL_FRect ward = inset(emblem, 8.0F * scale);
-        SDL_RenderRect(context.renderer, &ward);
-        SDL_RenderLine(
-            context.renderer,
-            emblem.x + emblem.w * 0.5F,
-            ward.y,
-            emblem.x + emblem.w * 0.5F,
-            ward.y + ward.h);
-        SDL_RenderLine(
-            context.renderer,
-            ward.x,
-            emblem.y + emblem.h * 0.5F,
-            ward.x + ward.w,
-            emblem.y + emblem.h * 0.5F);
-    }
-
     if (!context.label(
             designation,
             FontWeight::Bold,
             ui::Typography::playerDesignation,
             ui::Theme::muted,
-            card.x + 47.0F * scale,
-            card.y + 7.0F * scale) ||
+            nameplate.x + 8.0F * scale,
+            nameplate.y + 3.0F * scale) ||
         !context.label(
-            displayName,
+            username,
             FontWeight::SemiBold,
             ui::Typography::playerName,
             ui::Theme::text,
-            card.x + 47.0F * scale,
-            card.y + 21.0F * scale)) {
+            nameplate.x + 8.0F * scale,
+            nameplate.y + 17.0F * scale)) {
         return false;
     }
 
@@ -438,6 +438,10 @@ bool drawHeaderHud(
     if (!drawBrand(context, 26.0F * scale, top)) return false;
 
     const float matchX = 220.0F * scale;
+    constexpr float playerCardHeight = 46.0F;
+    constexpr float playerCardGap = 8.0F;
+    constexpr float playerCardWidth =
+        playerCardHeight * (400.0F / 75.0F);
     float hudX = matchX;
     const auto& matchPlayers = session.matchMetadata().players;
     if (matchPlayers.size() == 1) {
@@ -445,10 +449,10 @@ bool drawHeaderHud(
         const client::PublicPlayerProfile* profile =
             findProfile(session, onlySlot.player);
         const SDL_FRect playerCard{
-            matchX,
+            matchX + (playerCardHeight + playerCardGap) * scale,
             top,
-            250.0F * scale,
-            46.0F * scale,
+            playerCardWidth * scale,
+            playerCardHeight * scale,
         };
         const std::string_view designation = onlySlot.slot == PlayerSlot::P1
             ? "P1 \xC2\xB7 SOLO"
@@ -457,7 +461,8 @@ bool drawHeaderHud(
                 context,
                 playerCard,
                 designation,
-                profile == nullptr ? "Player" : profile->displayName,
+                profile == nullptr ? "Player" : profile->username,
+                profile == nullptr ? nullptr : &profile->callingCardId,
                 profile == nullptr ? nullptr : &profile->emblemId,
                 onlySlot.player == session.viewContext().localPlayer,
                 onlySlot.slot == PlayerSlot::P1)) {
@@ -471,7 +476,11 @@ bool drawHeaderHud(
             p1Slot == nullptr ? nullptr : findProfile(session, p1Slot->player);
         const client::PublicPlayerProfile* p2 =
             p2Slot == nullptr ? nullptr : findProfile(session, p2Slot->player);
-        const SDL_FRect p1Card{matchX, top, 203.0F * scale, 46.0F * scale};
+        const SDL_FRect p1Card{
+            matchX + (playerCardHeight + playerCardGap) * scale,
+            top,
+            playerCardWidth * scale,
+            playerCardHeight * scale};
         const SDL_FRect versus{
             p1Card.x + p1Card.w + 8.0F * scale,
             top + 9.0F * scale,
@@ -479,16 +488,18 @@ bool drawHeaderHud(
             28.0F * scale,
         };
         const SDL_FRect p2Card{
-            versus.x + versus.w + 8.0F * scale,
+            versus.x + versus.w +
+                (8.0F + playerCardHeight + playerCardGap) * scale,
             top,
-            203.0F * scale,
-            46.0F * scale,
+            playerCardWidth * scale,
+            playerCardHeight * scale,
         };
         if (!drawPlayerCard(
                 context,
                 p1Card,
                 "P1",
-                p1 == nullptr ? "Player One" : p1->displayName,
+                p1 == nullptr ? "Player One" : p1->username,
+                p1 == nullptr ? nullptr : &p1->callingCardId,
                 p1 == nullptr ? nullptr : &p1->emblemId,
                 p1Slot != nullptr &&
                     p1Slot->player == session.viewContext().localPlayer,
@@ -499,7 +510,8 @@ bool drawHeaderHud(
                 context,
                 p2Card,
                 "P2",
-                p2 == nullptr ? "Player Two" : p2->displayName,
+                p2 == nullptr ? "Player Two" : p2->username,
+                p2 == nullptr ? nullptr : &p2->callingCardId,
                 p2 == nullptr ? nullptr : &p2->emblemId,
                 p2Slot != nullptr &&
                     p2Slot->player == session.viewContext().localPlayer,

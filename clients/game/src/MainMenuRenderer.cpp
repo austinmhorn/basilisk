@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "UITheme.hpp"
 
@@ -29,10 +32,213 @@ void panel(SDL_Renderer* renderer, PresentationRect bounds, SDL_Color fill,
     SDL_RenderRect(renderer, &area);
 }
 
+void filledCircle(SDL_Renderer* renderer, float centerX, float centerY,
+                  float radius, SDL_Color color) {
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    const int extent = static_cast<int>(std::ceil(radius));
+    for (int y = -extent; y <= extent; ++y) {
+        const float vertical = static_cast<float>(y);
+        const float horizontal = std::sqrt(std::max(
+            0.0F, radius * radius - vertical * vertical));
+        SDL_RenderLine(renderer, centerX - horizontal, centerY + vertical,
+                       centerX + horizontal, centerY + vertical);
+    }
+}
+
+void filledPill(SDL_Renderer* renderer, PresentationRect bounds, SDL_Color color) {
+    const float x = static_cast<float>(bounds.x);
+    const float y = static_cast<float>(bounds.y);
+    const float width = static_cast<float>(bounds.width);
+    const float height = static_cast<float>(bounds.height);
+    const float radius = height * 0.5F;
+    SDL_FRect center{x + radius, y, std::max(0.0F, width - height), height};
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    SDL_RenderFillRect(renderer, &center);
+    filledCircle(renderer, x + radius, y + radius, radius, color);
+    filledCircle(renderer, x + width - radius, y + radius, radius, color);
+}
+
+void pill(SDL_Renderer* renderer, PresentationRect bounds, SDL_Color fill,
+          SDL_Color border) {
+    filledPill(renderer, bounds, border);
+    constexpr double inset = 1.0;
+    const PresentationRect interior{
+        bounds.x + inset, bounds.y + inset,
+        std::max(0.0, bounds.width - inset * 2.0),
+        std::max(0.0, bounds.height - inset * 2.0),
+    };
+    filledPill(renderer, interior, fill);
+}
+
+void filledRoundedRect(SDL_Renderer* renderer, PresentationRect bounds,
+                       double radius, SDL_Color color) {
+    radius = std::clamp(radius, 0.0,
+        std::min(bounds.width, bounds.height) * 0.5);
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    SDL_FRect horizontal{
+        static_cast<float>(bounds.x + radius), static_cast<float>(bounds.y),
+        static_cast<float>(std::max(0.0, bounds.width - radius * 2.0)),
+        static_cast<float>(bounds.height),
+    };
+    SDL_FRect vertical{
+        static_cast<float>(bounds.x), static_cast<float>(bounds.y + radius),
+        static_cast<float>(bounds.width),
+        static_cast<float>(std::max(0.0, bounds.height - radius * 2.0)),
+    };
+    SDL_RenderFillRect(renderer, &horizontal);
+    SDL_RenderFillRect(renderer, &vertical);
+    const float r = static_cast<float>(radius);
+    filledCircle(renderer, static_cast<float>(bounds.x + radius),
+        static_cast<float>(bounds.y + radius), r, color);
+    filledCircle(renderer, static_cast<float>(bounds.x + bounds.width - radius),
+        static_cast<float>(bounds.y + radius), r, color);
+    filledCircle(renderer, static_cast<float>(bounds.x + radius),
+        static_cast<float>(bounds.y + bounds.height - radius), r, color);
+    filledCircle(renderer,
+        static_cast<float>(bounds.x + bounds.width - radius),
+        static_cast<float>(bounds.y + bounds.height - radius), r, color);
+}
+
+void roundedPanel(SDL_Renderer* renderer, PresentationRect bounds, double radius,
+                  SDL_Color fill, SDL_Color border) {
+    filledRoundedRect(renderer, bounds, radius, border);
+    constexpr double inset = 1.0;
+    filledRoundedRect(renderer,
+        PresentationRect{bounds.x + inset, bounds.y + inset,
+            std::max(0.0, bounds.width - inset * 2.0),
+            std::max(0.0, bounds.height - inset * 2.0)},
+        std::max(0.0, radius - inset), fill);
+}
+
 bool label(TextRenderer& text, std::string_view value, FontWeight weight,
            float size, SDL_Color color, double x, double y, std::string& error) {
     return text.drawText(value, weight, size, color,
         SDL_FPoint{static_cast<float>(x), static_cast<float>(y)}, error);
+}
+
+bool labelCentered(TextRenderer& text, std::string_view value, FontWeight weight,
+                   float size, SDL_Color color, double centerX, double y,
+                   std::string& error) {
+    const auto measured = text.measureText(value, weight, size, error);
+    if (!measured.has_value()) return false;
+    return label(text, value, weight, size, color,
+        centerX - static_cast<double>(measured->width) * 0.5, y, error);
+}
+
+bool trackedLabelCentered(TextRenderer& text, std::string_view value,
+                          FontWeight weight, float size, SDL_Color color,
+                          double centerX, double y, float trackingEm,
+                          std::string& error) {
+    if (value.empty()) return true;
+    const float tracking = size * trackingEm;
+    float width = tracking * static_cast<float>(value.size() - 1);
+    std::vector<TextSize> sizes(value.size());
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        const auto measured = text.measureText(value.substr(index, 1), weight, size, error);
+        if (!measured.has_value()) return false;
+        sizes[index] = *measured;
+        width += static_cast<float>(measured->width);
+    }
+    float x = static_cast<float>(centerX) - width * 0.5F;
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        if (!text.drawText(value.substr(index, 1), weight, size, color,
+                SDL_FPoint{x, static_cast<float>(y)}, error)) return false;
+        x += static_cast<float>(sizes[index].width) + tracking;
+    }
+    return true;
+}
+
+bool drawCallingCardArt(SvgTextureManager& svgTextures,
+                        const client::CallingCardId& callingCard,
+                        const PresentationRect& bounds, double scale,
+                        std::string& error) {
+    const auto asset = callingCardAsset(callingCard);
+    if (!asset.has_value()) {
+        error = "Selected calling card has no registered asset.";
+        return false;
+    }
+    const SDL_FRect art{
+        static_cast<float>(bounds.x),
+        static_cast<float>(bounds.y),
+        static_cast<float>(bounds.width),
+        static_cast<float>(bounds.height)};
+    return svgTextures.drawAuthoredAspectFit(*asset, art, 1.0F, error);
+}
+
+bool drawProfileEmblemSlot(
+    SDL_Renderer* renderer, SvgTextureManager& svgTextures,
+    const PresentationRect& card, const client::EmblemId& emblemId,
+    double scale, std::string& error) {
+    constexpr double slotSize = 75.0;
+    constexpr double slotGap = 8.0;
+    constexpr double emblemSize = 63.0;
+    constexpr double emblemInset = (slotSize - emblemSize) * 0.5;
+    const PresentationRect slot{
+        card.x - (slotSize + slotGap) * scale, card.y,
+        slotSize * scale, slotSize * scale};
+    roundedPanel(renderer, slot, 8.0 * scale,
+        ui::Theme::surfaceRaised, ui::Theme::borderSoft);
+    const SDL_FRect emblem{
+        static_cast<float>(slot.x + emblemInset * scale),
+        static_cast<float>(slot.y + emblemInset * scale),
+        static_cast<float>(emblemSize * scale),
+        static_cast<float>(emblemSize * scale)};
+    const auto asset = emblemAsset(emblemId);
+    if (asset.has_value()) {
+        return svgTextures.drawAuthoredAspectFit(*asset, emblem, 1.0F, error);
+    }
+    // Safe presentation fallback for an absent or unknown profile cosmetic.
+    filledCircle(renderer, emblem.x + emblem.w * 0.5F,
+        emblem.y + emblem.h * 0.5F, emblem.w * 0.28F, ui::Theme::mutedBright);
+    return true;
+}
+
+bool drawCallingCardNameplate(
+    SDL_Renderer* renderer, TextRenderer& text,
+    const PresentationRect& card, double scale,
+    const std::optional<PublicAccountProfile>& authenticatedProfile,
+    std::optional<std::int64_t> trophyTotal, std::string& error) {
+    const std::string name = authenticatedProfile.has_value()
+        ? authenticatedProfile->username.value : "PLAYER PROFILE";
+    const std::string trophies = trophyTotal.has_value()
+        ? std::to_string(*trophyTotal) : "--";
+    const float nameSizeValue = static_cast<float>(10.0 * scale);
+    const float trophyLabelSize = static_cast<float>(6.5 * scale);
+    const float trophyValueSize = static_cast<float>(11.0 * scale);
+    const auto nameSize = text.measureText(
+        name, FontWeight::SemiBold, nameSizeValue, error);
+    const auto trophyLabel = text.measureText(
+        "TROPHIES", FontWeight::SemiBold, trophyLabelSize, error);
+    const auto trophyValue = text.measureText(
+        trophies, FontWeight::Bold, trophyValueSize, error);
+    if (!nameSize.has_value() ||
+        !trophyLabel.has_value() || !trophyValue.has_value()) return false;
+
+    const double identityWidth = nameSize->width;
+    const double trophyWidth = std::max(trophyLabel->width, trophyValue->width);
+    constexpr double artworkWidth = 400.0;
+    constexpr double artworkHeight = 75.0;
+    constexpr double nameplateHeight = 54.0;
+    constexpr double uniformInset = (artworkHeight - nameplateHeight) * 0.5;
+    const double nameplateX = card.x +
+        (card.width - artworkWidth * scale) * 0.5 + uniformInset * scale;
+    const double nameplateY = card.y + uniformInset * scale;
+    const PresentationRect nameplate{
+        nameplateX, nameplateY,
+        12.0 * scale + identityWidth + 12.0 * scale + trophyWidth +
+            22.0 * scale,
+        (artworkHeight - uniformInset * 2.0) * scale};
+    roundedPanel(renderer, nameplate, 8.0 * scale,
+        ui::Theme::surface, ui::Theme::borderSoft);
+
+    const double nameX = nameplate.x + 12.0 * scale;
+    const double trophyX = nameX + identityWidth + 12.0 * scale;
+    return label(text, name, FontWeight::SemiBold, nameSizeValue,
+               ui::Theme::text, nameX, nameplate.y + 18.0 * scale, error) &&
+        label(text, "TROPHIES", FontWeight::SemiBold, trophyLabelSize,
+               ui::Theme::gold, trophyX, nameplate.y + 8.0 * scale, error) &&
+        label(text, trophies, FontWeight::Bold, trophyValueSize,
+               ui::Theme::gold, trophyX, nameplate.y + 26.0 * scale, error);
 }
 
 std::string_view actionLabel(MainMenuAction action) {
@@ -40,6 +246,7 @@ std::string_view actionLabel(MainMenuAction action) {
         case MainMenuAction::StartGame: return "START GAME";
         case MainMenuAction::Leaderboards: return "LEADERBOARDS";
         case MainMenuAction::Settings: return "SETTINGS";
+        case MainMenuAction::EditProfile: return "EDIT";
         case MainMenuAction::Exit: return "EXIT";
         case MainMenuAction::FindGame: return "FIND GAME";
         case MainMenuAction::HostGame: return "HOST GAME";
@@ -61,6 +268,7 @@ std::string_view pageTitle(MainMenuPage page) {
         case MainMenuPage::StartGame: return "START GAME";
         case MainMenuPage::Leaderboards: return "TROPHY LEADERBOARD";
         case MainMenuPage::Settings: return "SETTINGS";
+        case MainMenuPage::Cosmetics: return "COSMETICS";
         case MainMenuPage::HostLobby: return "HOST GAME";
         case MainMenuPage::JoinLobby: return "JOIN GAME";
         case MainMenuPage::MatchReady: return "MATCH READY";
@@ -68,6 +276,34 @@ std::string_view pageTitle(MainMenuPage page) {
     }
     return {};
 }
+
+struct CallingCardOption {
+    std::string_view id;
+    std::string_view name;
+};
+
+constexpr std::array callingCardOptions{
+    CallingCardOption{"arrow-right-black", "Arrow Right · Black"},
+    CallingCardOption{"arrow-right-white", "Arrow Right · White"},
+    CallingCardOption{"diamonds-flag-black", "Diamonds Flag · Black"},
+    CallingCardOption{"diamonds-flag-white", "Diamonds Flag · White"},
+    CallingCardOption{"honeycomb-flag-black", "Honeycomb Flag · Black"},
+    CallingCardOption{"honeycomb-flag-white", "Honeycomb Flag · White"},
+    CallingCardOption{"slanted-rectangles-black", "Slanted Rectangles · Black"},
+    CallingCardOption{"slanted-rectangles-white", "Slanted Rectangles · White"},
+};
+
+struct EmblemOption {
+    std::string_view id;
+    std::string_view name;
+};
+
+constexpr std::array emblemOptions{
+    EmblemOption{"circle-black", "Circle · Black"},
+    EmblemOption{"circle-green", "Circle · Green"},
+    EmblemOption{"rounded-square-black", "Rounded Square · Black"},
+    EmblemOption{"rounded-square-green", "Rounded Square · Green"},
+};
 
 } // namespace
 
@@ -80,9 +316,28 @@ std::optional<std::size_t> hitTestMainMenu(
     return std::nullopt;
 }
 
+std::optional<client::CallingCardId> hitTestCallingCardGallery(
+    const MainMenuGeometry& geometry,
+    PresentationPoint point) {
+    for (const MainMenuGeometry::CallingCardTile& tile : geometry.callingCards) {
+        if (contains(tile.bounds, point)) return tile.callingCard;
+    }
+    return std::nullopt;
+}
+
+std::optional<client::EmblemId> hitTestEmblemGallery(
+    const MainMenuGeometry& geometry,
+    PresentationPoint point) {
+    for (const MainMenuGeometry::EmblemTile& tile : geometry.emblems) {
+        if (contains(tile.bounds, point)) return tile.emblem;
+    }
+    return std::nullopt;
+}
+
 bool renderMainMenu(
     SDL_Renderer* renderer,
     TextRenderer& text,
+    SvgTextureManager& svgTextures,
     const MainMenuState& menu,
     std::optional<std::int64_t> trophyTotal,
     const std::optional<PublicAccountProfile>& authenticatedProfile,
@@ -109,18 +364,40 @@ bool renderMainMenu(
     };
     panel(renderer, shell, ui::Theme::surface, ui::Theme::border);
     const double left = shell.x + 48.0 * scale;
-    if (!label(text, "BASILISK", FontWeight::Bold,
-            static_cast<float>(30.0 * scale), ui::Theme::gold,
-            left, shell.y + 40.0 * scale, error) ||
-        !label(text, "PLAYER FIELD OPERATIONS", FontWeight::Medium,
-            static_cast<float>(10.0 * scale), ui::Theme::muted,
-            left, shell.y + 82.0 * scale, error) ||
-        !label(text, pageTitle(menu.page()), FontWeight::SemiBold,
-            static_cast<float>(17.0 * scale), ui::Theme::text,
-            left, shell.y + 125.0 * scale, error)) return false;
-    if (authenticatedProfile.has_value()) {
-        const std::string identity = authenticatedProfile->displayName +
-            "  @" + authenticatedProfile->handle.value;
+    const double centerX = shell.x + shell.width * 0.5;
+    if (menu.page() == MainMenuPage::Main) {
+        constexpr double heroDiameter = 104.0;
+        const float heroSize = static_cast<float>(heroDiameter * scale);
+        const float heroCenterY = static_cast<float>(shell.y + 91.0 * scale);
+        filledCircle(renderer, static_cast<float>(centerX), heroCenterY,
+                     heroSize * 0.5F, ui::Theme::gold);
+        const SDL_FRect iconBounds{
+            static_cast<float>(centerX) - heroSize * 0.32F,
+            heroCenterY - heroSize * 0.32F,
+            heroSize * 0.64F,
+            heroSize * 0.64F,
+        };
+        if (!svgTextures.drawAuthoredAspectFit(
+                SvgAssetId::ObjectiveBasilisk, iconBounds, 1.0F, error) ||
+            !trackedLabelCentered(text, "BASILISK", FontWeight::Bold,
+                static_cast<float>(42.0 * scale), ui::Theme::gold,
+                centerX, shell.y + 157.0 * scale, 0.28F, error) ||
+            !labelCentered(text, pageTitle(menu.page()), FontWeight::SemiBold,
+                static_cast<float>(13.0 * scale), ui::Theme::text,
+                centerX, shell.y + 221.0 * scale, error)) return false;
+    } else if (!trackedLabelCentered(text, "BASILISK", FontWeight::Bold,
+                   static_cast<float>(30.0 * scale), ui::Theme::gold,
+                   shell.x + 131.0 * scale, shell.y + 40.0 * scale, 0.28F, error) ||
+               !label(text, "PLAYER FIELD OPERATIONS", FontWeight::Medium,
+                   static_cast<float>(10.0 * scale), ui::Theme::muted,
+                   left, shell.y + 82.0 * scale, error) ||
+               !label(text, pageTitle(menu.page()), FontWeight::SemiBold,
+                   static_cast<float>(17.0 * scale), ui::Theme::text,
+                   left, shell.y + 125.0 * scale, error)) {
+        return false;
+    }
+    if (menu.page() != MainMenuPage::Main && authenticatedProfile.has_value()) {
+        const std::string identity = authenticatedProfile->username.value;
         if (!label(text, identity, FontWeight::Medium,
                 static_cast<float>(10.0 * scale), ui::Theme::mutedBright,
                 shell.x + shell.width - 300.0 * scale,
@@ -128,7 +405,10 @@ bool renderMainMenu(
     }
 
     geometry.buttons.clear();
-    double buttonY = shell.y + 180.0 * scale;
+    geometry.callingCards.clear();
+    geometry.emblems.clear();
+    double buttonY = shell.y +
+        (menu.page() == MainMenuPage::Main ? 275.0 : 180.0) * scale;
     if (menu.page() == MainMenuPage::Leaderboards) {
         const std::string trophies = trophyTotal.has_value()
             ? "YOUR TROPHIES  " + std::to_string(*trophyTotal)
@@ -137,8 +417,8 @@ bool renderMainMenu(
                 static_cast<float>(13.0 * scale), ui::Theme::gold,
                 left, buttonY, error)) return false;
         buttonY += 42.0 * scale;
-        const std::array headings{"RANK", "HUNTER", "HANDLE", "TROPHIES"};
-        const std::array<double, 4> columns{0.0, 90.0, 330.0, 550.0};
+        const std::array headings{"RANK", "USERNAME", "TROPHIES"};
+        const std::array<double, 3> columns{0.0, 90.0, 550.0};
         for (std::size_t index = 0; index < headings.size(); ++index) {
             if (!label(text, headings[index], FontWeight::SemiBold,
                     static_cast<float>(9.0 * scale), ui::Theme::muted,
@@ -159,8 +439,8 @@ bool renderMainMenu(
                 char rank[24]{};
                 std::snprintf(rank, sizeof(rank), "%zu", entry.rank);
                 const std::array values{
-                    std::string{rank}, entry.displayName,
-                    "@" + entry.handle.value, std::to_string(entry.trophyTotal)};
+                    std::string{rank}, entry.username.value,
+                    std::to_string(entry.trophyTotal)};
                 for (std::size_t index = 0; index < values.size(); ++index) {
                     if (!label(text, values[index], FontWeight::Medium,
                             static_cast<float>(11.0 * scale), ui::Theme::text,
@@ -182,6 +462,99 @@ bool renderMainMenu(
                 static_cast<float>(12.0 * scale), ui::Theme::mutedBright,
                 left, buttonY, error)) return false;
         buttonY += 54.0 * scale;
+    } else if (menu.page() == MainMenuPage::Cosmetics) {
+        if (!label(text, "YOUR CARD", FontWeight::SemiBold,
+                static_cast<float>(10.0 * scale), ui::Theme::muted,
+                left, buttonY - 10.0 * scale, error)) return false;
+        const PresentationRect preview{
+            centerX - 200.0 * scale, buttonY + 12.0 * scale,
+            400.0 * scale, 75.0 * scale};
+        if (!drawProfileEmblemSlot(renderer, svgTextures, preview,
+                menu.selectedEmblem(), scale, error) ||
+            !drawCallingCardArt(svgTextures, menu.selectedCallingCard(),
+                preview, scale, error) ||
+            !drawCallingCardNameplate(renderer, text, preview, scale,
+                authenticatedProfile, trophyTotal, error))
+            return false;
+
+        const double galleryLabelY = buttonY + 108.0 * scale;
+        if (!label(text, "CALLING CARDS", FontWeight::SemiBold,
+                static_cast<float>(10.0 * scale), ui::Theme::muted,
+                left, galleryLabelY, error)) return false;
+        constexpr double tileWidth = 151.0;
+        constexpr double tileHeight = 72.0;
+        constexpr double columnGap = 10.0;
+        constexpr double rowGap = 10.0;
+        const double gridTop = galleryLabelY + 22.0 * scale;
+        for (std::size_t index = 0; index < callingCardOptions.size(); ++index) {
+            const std::size_t column = index % 4;
+            const std::size_t row = index / 4;
+            const PresentationRect tile{
+                left + static_cast<double>(column) *
+                    (tileWidth + columnGap) * scale,
+                gridTop + static_cast<double>(row) *
+                    (tileHeight + rowGap) * scale,
+                tileWidth * scale, tileHeight * scale};
+            const client::CallingCardId id{std::string{callingCardOptions[index].id}};
+            const bool selected = id == menu.selectedCallingCard();
+            roundedPanel(renderer, tile, 8.0 * scale, ui::Theme::surfaceRaised,
+                selected ? ui::Theme::gold : ui::Theme::borderSoft);
+            const auto asset = callingCardAsset(id);
+            if (!asset.has_value()) {
+                error = "Calling-card gallery contains an unregistered asset.";
+                return false;
+            }
+            const SDL_FRect art{
+                static_cast<float>(tile.x + 4.0 * scale),
+                static_cast<float>(tile.y + 9.0 * scale),
+                static_cast<float>(tile.width - 8.0 * scale),
+                static_cast<float>((tileWidth - 8.0) * (75.0 / 400.0) * scale)};
+            if (!svgTextures.drawAuthoredAspectFit(*asset, art, 1.0F, error) ||
+                !labelCentered(text, callingCardOptions[index].name,
+                    FontWeight::Medium, static_cast<float>(8.0 * scale),
+                    selected ? ui::Theme::gold : ui::Theme::mutedBright,
+                    tile.x + tile.width * 0.5,
+                    tile.y + 52.0 * scale, error)) return false;
+            geometry.callingCards.push_back({id, tile});
+        }
+        const double emblemsY = gridTop +
+            (tileHeight * 2.0 + rowGap + 18.0) * scale;
+        if (!label(text, "EMBLEMS", FontWeight::SemiBold,
+                static_cast<float>(10.0 * scale), ui::Theme::muted,
+                left, emblemsY, error)) return false;
+        constexpr double emblemTileWidth = 151.0;
+        constexpr double emblemTileHeight = 68.0;
+        const double emblemGridTop = emblemsY + 18.0 * scale;
+        for (std::size_t index = 0; index < emblemOptions.size(); ++index) {
+            const PresentationRect tile{
+                left + static_cast<double>(index) *
+                    (emblemTileWidth + columnGap) * scale,
+                emblemGridTop,
+                emblemTileWidth * scale,
+                emblemTileHeight * scale};
+            const client::EmblemId id{std::string{emblemOptions[index].id}};
+            const bool selected = id == menu.selectedEmblem();
+            roundedPanel(renderer, tile, 8.0 * scale, ui::Theme::surfaceRaised,
+                selected ? ui::Theme::gold : ui::Theme::borderSoft);
+            const auto asset = emblemAsset(id);
+            if (!asset.has_value()) {
+                error = "Emblem gallery contains an unregistered asset.";
+                return false;
+            }
+            const SDL_FRect art{
+                static_cast<float>(tile.x + (tile.width - 42.0 * scale) * 0.5),
+                static_cast<float>(tile.y + 4.0 * scale),
+                static_cast<float>(42.0 * scale),
+                static_cast<float>(42.0 * scale)};
+            if (!svgTextures.drawAuthoredAspectFit(*asset, art, 1.0F, error) ||
+                !labelCentered(text, emblemOptions[index].name,
+                    FontWeight::Medium, static_cast<float>(7.0 * scale),
+                    selected ? ui::Theme::gold : ui::Theme::mutedBright,
+                    tile.x + tile.width * 0.5,
+                    tile.y + 50.0 * scale, error)) return false;
+            geometry.emblems.push_back({id, tile});
+        }
+        buttonY = shell.y + shell.height - 70.0 * scale;
     } else if (menu.page() == MainMenuPage::HostLobby) {
         if (!menu.lobbyCode().empty()) {
             if (!label(text, "LOBBY CODE", FontWeight::SemiBold,
@@ -238,11 +611,15 @@ bool renderMainMenu(
     const double buttonWidth = compact ? 170.0 * scale : 430.0 * scale;
     const double buttonHeight = 48.0 * scale;
     for (std::size_t index = 0; index < actions.size(); ++index) {
+        if (actions[index] == MainMenuAction::EditProfile) continue;
         const PresentationRect bounds{
-            left + (compact ? index * 184.0 * scale : 0.0), buttonY,
+            menu.page() == MainMenuPage::Main
+                ? centerX - buttonWidth * 0.5
+                : left + (compact ? index * 184.0 * scale : 0.0),
+            buttonY,
             buttonWidth, buttonHeight};
         const bool selected = index == menu.selectedIndex();
-        panel(renderer, bounds,
+        pill(renderer, bounds,
             selected ? ui::Theme::surfaceSoft : ui::Theme::surfaceRaised,
             selected ? ui::Theme::gold : ui::Theme::border);
         if (!label(text, actionLabel(actions[index]), FontWeight::SemiBold,
@@ -252,6 +629,42 @@ bool renderMainMenu(
             return false;
         geometry.buttons.push_back({actions[index], bounds});
         if (!compact) buttonY += 62.0 * scale;
+    }
+
+    if (menu.page() == MainMenuPage::Main) {
+        constexpr double profileWidth = 400.0;
+        constexpr double editGap = 14.0;
+        constexpr double editWidth = 60.0;
+        const PresentationRect profile{
+            centerX - profileWidth * 0.5 * scale,
+            shell.y + shell.height - 105.0 * scale,
+            profileWidth * scale,
+            75.0 * scale,
+        };
+        const bool editSelected = menu.selectedAction() == MainMenuAction::EditProfile;
+        if (!drawProfileEmblemSlot(renderer, svgTextures, profile,
+                menu.selectedEmblem(), scale, error) ||
+            !drawCallingCardArt(svgTextures, menu.selectedCallingCard(),
+                profile, scale, error) ||
+            !drawCallingCardNameplate(renderer, text, profile, scale,
+                authenticatedProfile, trophyTotal, error))
+            return false;
+
+        const PresentationRect edit{
+            profile.x + profile.width + editGap * scale,
+            profile.y + 21.5 * scale,
+            editWidth * scale,
+            32.0 * scale,
+        };
+        pill(renderer, edit,
+            editSelected ? ui::Theme::surfaceSoft : ui::Theme::surface,
+            editSelected ? ui::Theme::gold : ui::Theme::border);
+        if (!labelCentered(text, actionLabel(MainMenuAction::EditProfile),
+                FontWeight::SemiBold, static_cast<float>(9.0 * scale),
+                editSelected ? ui::Theme::gold : ui::Theme::text,
+                edit.x + edit.width * 0.5, edit.y + 9.0 * scale, error))
+            return false;
+        geometry.buttons.push_back({MainMenuAction::EditProfile, edit});
     }
     error.clear();
     return true;

@@ -502,6 +502,9 @@ function(basilisk_add_game_executable target)
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/assets/emblems"
             "${_asset_root}/emblems"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/calling-cards"
+            "${_asset_root}/calling-cards"
         COMMENT "Packaging SVG UI assets for ${target}"
     )
     unset(_asset_root)
@@ -544,7 +547,7 @@ elseif(WIN32)
         DESTINATION assets/fonts
         COMPONENT BasiliskGame
     )
-    foreach(_asset_directory IN ITEMS ui items emblems)
+    foreach(_asset_directory IN ITEMS ui items emblems calling-cards)
         install(DIRECTORY
             "${CMAKE_CURRENT_SOURCE_DIR}/assets/${_asset_directory}/"
             DESTINATION "assets/${_asset_directory}"
@@ -630,6 +633,7 @@ if(EMSCRIPTEN)
             "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets/ui@/assets/ui"
             "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets/items@/assets/items"
             "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets/emblems@/assets/emblems"
+            "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets/calling-cards@/assets/calling-cards"
     )
 
     set(BASILISK_WEB_PACKAGE_DIR

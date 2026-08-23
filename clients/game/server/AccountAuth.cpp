@@ -3,6 +3,7 @@
 #include <argon2.h>
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cerrno>
@@ -35,7 +36,7 @@ constexpr std::string_view schema = R"sql(
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS accounts (
     account_id TEXT PRIMARY KEY NOT NULL,
-    login_identity TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
@@ -49,10 +50,20 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at);
 CREATE TABLE IF NOT EXISTS public_account_profiles (
     account_id TEXT PRIMARY KEY NOT NULL,
-    public_handle TEXT UNIQUE NOT NULL,
-    display_name TEXT NOT NULL,
+    username TEXT UNIQUE NOT NULL,
     FOREIGN KEY (account_id) REFERENCES accounts(account_id)
 );
+CREATE TABLE IF NOT EXISTS account_cosmetic_loadouts (
+    account_id TEXT PRIMARY KEY NOT NULL,
+    calling_card_id TEXT NOT NULL,
+    emblem_id TEXT NOT NULL,
+    FOREIGN KEY (account_id) REFERENCES accounts(account_id)
+);
+CREATE TRIGGER IF NOT EXISTS account_default_cosmetic_loadout
+AFTER INSERT ON accounts BEGIN
+    INSERT INTO account_cosmetic_loadouts(account_id, calling_card_id, emblem_id)
+    VALUES(NEW.account_id, 'arrow-right-black', 'circle-black');
+END;
 )sql";
 
 class Statement {
@@ -123,10 +134,34 @@ std::string hex(std::span<const unsigned char> bytes) {
 }
 
 bool validCredentialsInput(
-    const LoginIdentity& login,
+    const EmailAddress& email,
     const std::string& password) {
-    return !login.value.empty() && login.value.size() <= 254 &&
+    return !email.value.empty() && email.value.size() <= 254 &&
            password.size() >= 8 && password.size() <= 1024;
+}
+
+bool validCallingCardId(std::string_view value) {
+    constexpr std::array allowed{
+        std::string_view{"arrow-right-black"},
+        std::string_view{"arrow-right-white"},
+        std::string_view{"diamonds-flag-black"},
+        std::string_view{"diamonds-flag-white"},
+        std::string_view{"honeycomb-flag-black"},
+        std::string_view{"honeycomb-flag-white"},
+        std::string_view{"slanted-rectangles-black"},
+        std::string_view{"slanted-rectangles-white"},
+    };
+    return std::ranges::find(allowed, value) != allowed.end();
+}
+
+bool validEmblemId(std::string_view value) {
+    constexpr std::array allowed{
+        std::string_view{"circle-black"},
+        std::string_view{"circle-green"},
+        std::string_view{"rounded-square-black"},
+        std::string_view{"rounded-square-green"},
+    };
+    return std::ranges::find(allowed, value) != allowed.end();
 }
 
 bool passwordHash(
@@ -199,12 +234,12 @@ std::shared_ptr<SQLiteAccountAuth> SQLiteAccountAuth::open(
 }
 
 CreateAccountResult SQLiteAccountAuth::createAccount(
-    const LoginIdentity& login,
+    const EmailAddress& email,
     const std::string& password,
     AccountIdentity& account,
     std::string& error) {
-    if (!validCredentialsInput(login, password)) {
-        error = "Login must be non-empty and password must contain 8-1024 bytes.";
+    if (!validCredentialsInput(email, password)) {
+        error = "Email must be non-empty and password must contain 8-1024 bytes.";
         return CreateAccountResult::InvalidInput;
     }
     std::string encoded;
@@ -216,11 +251,11 @@ CreateAccountResult SQLiteAccountAuth::createAccount(
         return CreateAccountResult::Error;
     }
     Statement insert(database_,
-        "INSERT INTO accounts(account_id, login_identity, password_hash, "
+        "INSERT INTO accounts(account_id, email, password_hash, "
         "created_at) VALUES(?, ?, ?, ?)", error);
     if (insert.get() == nullptr ||
         !bindText(insert.get(), 1, created.value) ||
-        !bindText(insert.get(), 2, login.value) ||
+        !bindText(insert.get(), 2, email.value) ||
         !bindText(insert.get(), 3, encoded) ||
         sqlite3_bind_int64(insert.get(), 4, clock_()) != SQLITE_OK) {
         if (error.empty()) error = sqlite3_errmsg(database_);
@@ -228,8 +263,8 @@ CreateAccountResult SQLiteAccountAuth::createAccount(
     }
     const int result = sqlite3_step(insert.get());
     if (result == SQLITE_CONSTRAINT) {
-        error = "Login identity is already registered.";
-        return CreateAccountResult::DuplicateLogin;
+        error = "Email is already registered.";
+        return CreateAccountResult::DuplicateEmail;
     }
     if (result != SQLITE_DONE) {
         error = sqlite3_errmsg(database_);
@@ -241,40 +276,41 @@ CreateAccountResult SQLiteAccountAuth::createAccount(
 }
 
 CreateAccountResult SQLiteAccountAuth::createAccount(
-    const LoginIdentity& login,
+    const EmailAddress& email,
     const std::string& password,
     const PublicAccountProfile& profile,
     AccountIdentity& account,
     std::string& error) {
-    if (profile.handle.value.empty() || profile.displayName.empty()) {
-        error = "Public handle and display name must not be empty.";
+    if (profile.username.value.empty()) {
+        error = "Username must not be empty.";
         return CreateAccountResult::InvalidInput;
     }
     if (!execute(database_, "BEGIN IMMEDIATE", error))
         return CreateAccountResult::Error;
     AccountIdentity created;
     const CreateAccountResult createdResult = createAccount(
-        login, password, created, error);
+        email, password, created, error);
     if (createdResult != CreateAccountResult::Created) {
         std::string ignored;
         (void)execute(database_, "ROLLBACK", ignored);
         return createdResult;
     }
     Statement insert(database_,
-        "INSERT INTO public_account_profiles(account_id, public_handle, "
-        "display_name) VALUES(?, ?, ?)", error);
+        "INSERT INTO public_account_profiles(account_id, username) VALUES(?, ?)",
+        error);
     if (insert.get() == nullptr ||
         !bindText(insert.get(), 1, created.value) ||
-        !bindText(insert.get(), 2, profile.handle.value) ||
-        !bindText(insert.get(), 3, profile.displayName) ||
+        !bindText(insert.get(), 2, profile.username.value) ||
         sqlite3_step(insert.get()) != SQLITE_DONE) {
         if (error.empty()) error = sqlite3_errmsg(database_);
         std::string ignored;
         (void)execute(database_, "ROLLBACK", ignored);
-        if (error.find("UNIQUE constraint failed: public_account_profiles.public_handle") !=
+        if (error.find("UNIQUE constraint failed: public_account_profiles.username") !=
             std::string::npos)
-            error = "Public handle is already registered.";
-        return CreateAccountResult::Error;
+            error = "Username is already registered.";
+        return error == "Username is already registered."
+            ? CreateAccountResult::DuplicateUsername
+            : CreateAccountResult::Error;
     }
     if (!execute(database_, "COMMIT", error)) {
         std::string ignored;
@@ -286,26 +322,26 @@ CreateAccountResult SQLiteAccountAuth::createAccount(
 }
 
 bool SQLiteAccountAuth::authenticate(
-    const LoginIdentity& login,
+    const EmailAddress& email,
     const std::string& password,
     AuthSessionToken& token,
     std::string& error,
     std::chrono::seconds lifetime) {
-    if (!validCredentialsInput(login, password) || lifetime.count() <= 0 ||
+    if (!validCredentialsInput(email, password) || lifetime.count() <= 0 ||
         lifetime > defaultSessionLifetime) {
-        error = "Invalid login credentials or session lifetime.";
+        error = "Invalid email credentials or session lifetime.";
         return false;
     }
     Statement query(database_,
-        "SELECT account_id, password_hash FROM accounts WHERE login_identity = ?",
+        "SELECT account_id, password_hash FROM accounts WHERE email = ?",
         error);
-    if (query.get() == nullptr || !bindText(query.get(), 1, login.value)) {
+    if (query.get() == nullptr || !bindText(query.get(), 1, email.value)) {
         if (error.empty()) error = sqlite3_errmsg(database_);
         return false;
     }
     const int result = sqlite3_step(query.get());
     if (result != SQLITE_ROW) {
-        error = result == SQLITE_DONE ? "Invalid login credentials."
+        error = result == SQLITE_DONE ? "Invalid email or password."
                                       : sqlite3_errmsg(database_);
         return false;
     }
@@ -314,7 +350,7 @@ bool SQLiteAccountAuth::authenticate(
     const char* encoded = reinterpret_cast<const char*>(
         sqlite3_column_text(query.get(), 1));
     if (argon2id_verify(encoded, password.data(), password.size()) != ARGON2_OK) {
-        error = "Invalid login credentials.";
+        error = "Invalid email or password.";
         return false;
     }
     AuthSessionToken created;
@@ -374,7 +410,7 @@ bool SQLiteAccountAuth::publicProfile(
     PublicAccountProfile& profile,
     std::string& error) {
     Statement query(database_,
-        "SELECT public_handle, display_name FROM public_account_profiles "
+        "SELECT username FROM public_account_profiles "
         "WHERE account_id = ?", error);
     if (query.get() == nullptr || !bindText(query.get(), 1, account.value)) {
         if (error.empty()) error = sqlite3_errmsg(database_);
@@ -386,10 +422,70 @@ bool SQLiteAccountAuth::publicProfile(
                                       : sqlite3_errmsg(database_);
         return false;
     }
-    profile.handle.value = reinterpret_cast<const char*>(
+    profile.username.value = reinterpret_cast<const char*>(
         sqlite3_column_text(query.get(), 0));
-    profile.displayName = reinterpret_cast<const char*>(
+    error.clear();
+    return true;
+}
+
+bool SQLiteAccountAuth::cosmeticLoadout(
+    const AccountIdentity& account,
+    client::AccountCosmeticLoadout& loadout,
+    std::string& error) {
+    Statement query(database_,
+        "SELECT calling_card_id, emblem_id FROM account_cosmetic_loadouts "
+        "WHERE account_id = ?", error);
+    if (query.get() == nullptr || !bindText(query.get(), 1, account.value)) {
+        if (error.empty()) error = sqlite3_errmsg(database_);
+        return false;
+    }
+    const int result = sqlite3_step(query.get());
+    if (result != SQLITE_ROW) {
+        error = result == SQLITE_DONE ? "Account cosmetic loadout is unavailable."
+                                      : sqlite3_errmsg(database_);
+        return false;
+    }
+    loadout.callingCardId.value = reinterpret_cast<const char*>(
+        sqlite3_column_text(query.get(), 0));
+    loadout.emblemId.value = reinterpret_cast<const char*>(
         sqlite3_column_text(query.get(), 1));
+    if (!validCallingCardId(loadout.callingCardId.value) ||
+        !validEmblemId(loadout.emblemId.value)) {
+        error = "Stored account cosmetic loadout is invalid.";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool SQLiteAccountAuth::updateCosmeticLoadout(
+    const AuthSessionToken& token,
+    const client::AccountCosmeticLoadout& requested,
+    client::AccountCosmeticLoadout& confirmed,
+    std::string& error) {
+    if (!validCallingCardId(requested.callingCardId.value) ||
+        !validEmblemId(requested.emblemId.value)) {
+        error = "Unsupported account cosmetic ID.";
+        return false;
+    }
+    AccountIdentity account;
+    if (!resolveSession(token, account, error)) return false;
+    Statement update(database_,
+        "UPDATE account_cosmetic_loadouts SET calling_card_id = ?, emblem_id = ? "
+        "WHERE account_id = ?", error);
+    if (update.get() == nullptr ||
+        !bindText(update.get(), 1, requested.callingCardId.value) ||
+        !bindText(update.get(), 2, requested.emblemId.value) ||
+        !bindText(update.get(), 3, account.value) ||
+        sqlite3_step(update.get()) != SQLITE_DONE) {
+        if (error.empty()) error = sqlite3_errmsg(database_);
+        return false;
+    }
+    if (sqlite3_changes(database_) != 1) {
+        error = "Account cosmetic loadout is unavailable.";
+        return false;
+    }
+    confirmed = requested;
     error.clear();
     return true;
 }

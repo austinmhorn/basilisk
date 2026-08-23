@@ -40,13 +40,42 @@ void testAllItemMappings() {
 }
 
 void testEmblemMappingsAndFallback() {
-    const auto wayfinder = emblemAsset(client::EmblemId{"wayfinder"});
-    const auto ward = emblemAsset(client::EmblemId{"ward"});
-    assert(wayfinder == SvgAssetId::EmblemRoundedSquare);
-    assert(ward == SvgAssetId::EmblemCircle);
-    assert(assetRelativePath(*wayfinder) == "emblems/rounded-square.svg");
-    assert(assetRelativePath(*ward) == "emblems/circle.svg");
+    const std::array expected{
+        std::pair{"circle-black", "emblems/circle-black.svg"},
+        std::pair{"circle-green", "emblems/circle-green.svg"},
+        std::pair{"rounded-square-black", "emblems/rounded-square-black.svg"},
+        std::pair{"rounded-square-green", "emblems/rounded-square-green.svg"},
+    };
+    for (const auto& [id, path] : expected) {
+        const auto asset = emblemAsset(client::EmblemId{id});
+        assert(asset.has_value());
+        assert(assetRelativePath(*asset) == path);
+        assert(!assetUsesUiTint(*asset));
+    }
     assert(!emblemAsset(client::EmblemId{"future-uninstalled-emblem"}).has_value());
+}
+
+void testCallingCardMappingsAndFallback() {
+    const std::array expected{
+        std::pair{"arrow-right-black", "calling-cards/arrow-right-black.svg"},
+        std::pair{"arrow-right-white", "calling-cards/arrow-right-white.svg"},
+        std::pair{"diamonds-flag-black", "calling-cards/diamonds-flag-black.svg"},
+        std::pair{"diamonds-flag-white", "calling-cards/diamonds-flag-white.svg"},
+        std::pair{"honeycomb-flag-black", "calling-cards/honeycomb-flag-black.svg"},
+        std::pair{"honeycomb-flag-white", "calling-cards/honeycomb-flag-white.svg"},
+        std::pair{"slanted-rectangles-black",
+                  "calling-cards/slanted-rectangles-black.svg"},
+        std::pair{"slanted-rectangles-white",
+                  "calling-cards/slanted-rectangles-white.svg"},
+    };
+    for (const auto& [id, path] : expected) {
+        const auto asset = callingCardAsset(client::CallingCardId{id});
+        assert(asset.has_value());
+        assert(assetRelativePath(*asset) == path);
+        assert(!assetUsesUiTint(*asset));
+    }
+    assert(!callingCardAsset(
+        client::CallingCardId{"future-uninstalled-card"}).has_value());
 }
 
 void testEveryRequiredAssetHasAnInternalPath() {
@@ -60,8 +89,10 @@ void testEveryRequiredAssetHasAnInternalPath() {
 
 void testTintPolicyKeepsCosmeticsAndBrandColors() {
     assert(!assetUsesUiTint(SvgAssetId::BasiliskLogo));
-    assert(!assetUsesUiTint(SvgAssetId::EmblemRoundedSquare));
-    assert(!assetUsesUiTint(SvgAssetId::EmblemCircle));
+    assert(!assetUsesUiTint(SvgAssetId::EmblemCircleBlack));
+    assert(!assetUsesUiTint(SvgAssetId::EmblemCircleGreen));
+    assert(!assetUsesUiTint(SvgAssetId::EmblemRoundedSquareBlack));
+    assert(!assetUsesUiTint(SvgAssetId::EmblemRoundedSquareGreen));
     assert(assetUsesUiTint(SvgAssetId::Arrow));
     assert(assetUsesUiTint(SvgAssetId::HuntersSigil));
     for (const ItemType item : std::array{
@@ -80,6 +111,7 @@ void testTintPolicyKeepsCosmeticsAndBrandColors() {
 int main() {
     testAllItemMappings();
     testEmblemMappingsAndFallback();
+    testCallingCardMappingsAndFallback();
     testEveryRequiredAssetHasAnInternalPath();
     testTintPolicyKeepsCosmeticsAndBrandColors();
     return 0;

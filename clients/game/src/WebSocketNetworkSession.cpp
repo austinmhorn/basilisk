@@ -210,6 +210,21 @@ public:
         for (network::WireBytes& frame : frames) {
             std::string decodeError;
             network::WireMessageType frameType{};
+            if (network::inspectWireMessageType(frame, frameType, decodeError) &&
+                (frameType == network::WireMessageType::CosmeticLoadoutUpdated ||
+                 frameType == network::WireMessageType::CosmeticLoadoutUpdateFailed)) {
+                network::CosmeticLoadoutUpdateResponse response;
+                if (!network::decodeCosmeticLoadoutUpdateResponse(
+                        frame, response, decodeError)) {
+                    fail("Invalid cosmetic loadout response: " + decodeError);
+                    shutdownSocket();
+                    return;
+                }
+                cosmeticLoadoutResponse_ = std::move(response);
+                ++cosmeticLoadoutResponseRevision_;
+                continue;
+            }
+            decodeError.clear();
             if (network::inspectWireMessageType(
                     frame, frameType, decodeError) &&
                 frameType == network::WireMessageType::LogoutSuccess) {
@@ -418,8 +433,24 @@ public:
         return true;
     }
 
+    bool updateCosmeticLoadout(
+        const network::CosmeticLoadoutUpdateRequest& request) {
+        network::WireBytes bytes;
+        std::string encodeError;
+        if (!authenticated_ || !network::encodeWire(request, bytes, encodeError))
+            return false;
+        std::lock_guard lock(socketState_->mutex);
+        return !socketState_->closed && socketState_->sendBinary &&
+            socketState_->sendBinary(bytes);
+    }
+
     const std::optional<network::AuthenticationResponse>&
     authenticationResponse() const noexcept { return authenticationResponse_; }
+    const std::optional<network::CosmeticLoadoutUpdateResponse>&
+    cosmeticLoadoutResponse() const noexcept { return cosmeticLoadoutResponse_; }
+    std::size_t cosmeticLoadoutResponseRevision() const noexcept {
+        return cosmeticLoadoutResponseRevision_;
+    }
     const std::optional<network::LobbyResponse>& lobbyResponse() const noexcept {
         return lobbyResponse_;
     }
@@ -550,6 +581,9 @@ private:
     std::unique_ptr<NetworkGameSessionAdapter> adapter_;
     std::string url_;
     std::optional<network::AuthenticationResponse> authenticationResponse_;
+    std::optional<network::CosmeticLoadoutUpdateResponse>
+        cosmeticLoadoutResponse_;
+    std::size_t cosmeticLoadoutResponseRevision_{0};
     std::optional<network::LobbyResponse> lobbyResponse_;
     std::size_t lobbyResponseRevision_{0};
     bool authenticationMode_{false};
@@ -635,6 +669,10 @@ bool WebSocketNetworkSession::authenticate(
 bool WebSocketNetworkSession::logout(const std::string& sessionToken) {
     return impl_->logout(sessionToken);
 }
+bool WebSocketNetworkSession::updateCosmeticLoadout(
+    const network::CosmeticLoadoutUpdateRequest& request) {
+    return impl_->updateCosmeticLoadout(request);
+}
 bool WebSocketNetworkSession::requestLobby(
     const network::LobbyRequest& request) {
     return impl_->requestLobby(request);
@@ -642,6 +680,13 @@ bool WebSocketNetworkSession::requestLobby(
 const std::optional<network::AuthenticationResponse>&
 WebSocketNetworkSession::authenticationResponse() const noexcept {
     return impl_->authenticationResponse();
+}
+const std::optional<network::CosmeticLoadoutUpdateResponse>&
+WebSocketNetworkSession::cosmeticLoadoutResponse() const noexcept {
+    return impl_->cosmeticLoadoutResponse();
+}
+std::size_t WebSocketNetworkSession::cosmeticLoadoutResponseRevision() const noexcept {
+    return impl_->cosmeticLoadoutResponseRevision();
 }
 const std::optional<network::LobbyResponse>&
 WebSocketNetworkSession::lobbyResponse() const noexcept {

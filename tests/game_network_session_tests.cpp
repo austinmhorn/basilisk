@@ -73,7 +73,7 @@ concept HasLedgerRows = requires(T value) { value.ledgerRows; };
 template <typename T>
 concept HasTrophyMatchId = requires(T value) { value.trophyMatchId; };
 
-static_assert(kProtocolVersion == 2);
+static_assert(kProtocolVersion == 4);
 static_assert(std::variant_size_v<ClientCommandPayload> == 5);
 static_assert(!HasWorld<ServerBootstrap>);
 static_assert(!HasAuthoritativeState<ServerBootstrap>);
@@ -311,7 +311,7 @@ void allServerFieldsRoundTripExactly() {
     assert(decoded.matchMetadata.totalCaves == 40);
     assert(decoded.matchMetadata.players.size() == 2);
     assert(decoded.matchMetadata.players[1].slot == PlayerSlot::P2);
-    assert(decoded.profiles[0].displayName == "Mara Voss");
+    assert(decoded.profiles[0].username == "Mara Voss");
     assert(decoded.profiles[0].callingCardId.value == "ember-field");
     assert(decoded.profiles[1].emblemId.value == "ward");
     assert(decoded.viewContext.mode == client::ClientViewMode::Playing);
@@ -420,8 +420,8 @@ void publicLeaderboardRequestAndResponseRoundTrip() {
         kProtocolVersion,
         25,
         {
-            {1, PublicProfileHandle{"mara"}, "Mara Voss", 42},
-            {2, PublicProfileHandle{"elias"}, "Elias Thorn", -3},
+            {1, Username{"mara"}, 42},
+            {2, Username{"elias"}, -3},
         },
     };
     assertStableRoundTrip(response, decodeLeaderboardPageResponse);
@@ -444,6 +444,29 @@ void publicLeaderboardRequestAndResponseRoundTrip() {
             0, kMaximumLeaderboardPageSize + 1}}, bytes, error));
 }
 
+void cosmeticLoadoutMessagesRoundTrip() {
+    const client::AccountCosmeticLoadout loadout{
+        client::CallingCardId{"slanted-rectangles-white"},
+        client::EmblemId{"rounded-square-green"}};
+    WireBytes bytes;
+    std::string error;
+    const CosmeticLoadoutUpdateRequest request{
+        kProtocolVersion, "session_opaque", loadout};
+    assert(encodeWire(request, bytes, error));
+    CosmeticLoadoutUpdateRequest decodedRequest;
+    assert(decodeCosmeticLoadoutUpdateRequest(bytes, decodedRequest, error));
+    assert(decodedRequest.sessionToken == request.sessionToken);
+    assert(decodedRequest.loadout == loadout);
+
+    const CosmeticLoadoutUpdateResponse response{
+        kProtocolVersion, CosmeticLoadoutUpdateSuccess{loadout}};
+    assert(encodeWire(response, bytes, error));
+    CosmeticLoadoutUpdateResponse decodedResponse;
+    assert(decodeCosmeticLoadoutUpdateResponse(bytes, decodedResponse, error));
+    assert(std::get<CosmeticLoadoutUpdateSuccess>(decodedResponse.payload)
+               .loadout == loadout);
+}
+
 void goldenFixtureIsStable() {
     const ClientCommand quit{
         kProtocolVersion,
@@ -455,7 +478,7 @@ void goldenFixtureIsStable() {
     const WireBytes expected{
         0x42, 0x53, 0x4b, 0x31,
         0x13,
-        0x00, 0x00, 0x00, 0x02,
+        0x00, 0x00, 0x00, 0x04,
         0x00, 0x00, 0x00, 0x2a,
     };
     assert(bytes == expected);
@@ -486,7 +509,7 @@ void malformedWireIsRejected() {
     assert(!decodeClientCommand(malformed, command, error));
 
     malformed = valid;
-    malformed[8] = 0x03;
+    malformed[8] = 0x05;
     assert(!decodeClientCommand(malformed, command, error));
 
     PlayerAction action;
@@ -516,7 +539,7 @@ void malformedWireIsRejected() {
     assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
 
     malformedBootstrap = bootstrapBytes;
-    malformedBootstrap[8] = 0x03;
+    malformedBootstrap[8] = 0x05;
     assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
 
     malformedBootstrap = bootstrapBytes;
@@ -589,7 +612,7 @@ void byteTransportAndDecodedServerDataReachController() {
     LeaderboardPageResponse leaderboard{
         kProtocolVersion,
         10,
-        {{2, PublicProfileHandle{"mara"}, "Mara Voss", 17}},
+        {{2, Username{"mara"}, 17}},
     };
     assert(adapter->ingest(std::move(leaderboard), error));
     assert(adapter->leaderboardPage().has_value());
@@ -762,6 +785,7 @@ int main() {
     allServerFieldsRoundTripExactly();
     everyClientCommandRoundTrips();
     publicLeaderboardRequestAndResponseRoundTrip();
+    cosmeticLoadoutMessagesRoundTrip();
     goldenFixtureIsStable();
     malformedWireIsRejected();
     byteTransportAndDecodedServerDataReachController();

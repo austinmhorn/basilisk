@@ -69,6 +69,7 @@ struct AppState {
     basilisk::game::MainMenuState mainMenu;
     basilisk::game::MainMenuGeometry mainMenuGeometry;
     std::size_t handledLobbyResponseRevision{0};
+    std::size_t handledCosmeticLoadoutResponseRevision{0};
     bool cancelLobbyWhenHosted{false};
 
     std::unique_ptr<basilisk::game::ClientSessionController> ownedSession;
@@ -216,6 +217,19 @@ void submitAuthentication(AppState& state) {
     state.authResponseHandled = false;
     if (!state.networkSession->authenticate(request))
         state.authScreen.setError("Unable to send authentication request.");
+}
+
+void requestCosmeticLoadout(
+    AppState& state,
+    basilisk::client::AccountCosmeticLoadout requested) {
+    if (state.networkSession == nullptr ||
+        !state.authenticatedSessionToken.has_value() ||
+        !state.networkSession->updateCosmeticLoadout({
+            basilisk::game::network::kProtocolVersion,
+            *state.authenticatedSessionToken,
+            std::move(requested)})) {
+        SDL_Log("Unable to update account cosmetics");
+    }
 }
 
 } // namespace
@@ -528,6 +542,23 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             const auto hit = basilisk::game::hitTestMainMenu(
                 state->mainMenuGeometry, pointer);
             if (hit.has_value()) state->mainMenu.select(*hit);
+            if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+                const auto callingCard =
+                    basilisk::game::hitTestCallingCardGallery(
+                        state->mainMenuGeometry, pointer);
+                if (callingCard.has_value()) {
+                    requestCosmeticLoadout(*state, {
+                        *callingCard, state->mainMenu.selectedEmblem()});
+                    return SDL_APP_CONTINUE;
+                }
+                const auto emblem = basilisk::game::hitTestEmblemGallery(
+                    state->mainMenuGeometry, pointer);
+                if (emblem.has_value()) {
+                    requestCosmeticLoadout(*state, {
+                        state->mainMenu.selectedCallingCard(), *emblem});
+                    return SDL_APP_CONTINUE;
+                }
+            }
             if (hit.has_value() &&
                 event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
                 const auto result = state->mainMenu.activateSelected();
@@ -1031,6 +1062,8 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     state->networkSession->lobbyResponseRevision();
                 state->cancelLobbyWhenHosted = false;
                 state->authenticatedProfile = success->profile;
+                state->mainMenu.applyConfirmedCosmeticLoadout(
+                    success->cosmeticLoadout);
                 state->authenticatedSessionToken = success->sessionToken;
                 std::string storageError;
                 if (!basilisk::game::SessionTokenStorage::save(
@@ -1060,6 +1093,26 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 state->authScreen.setWaiting(false);
             }
         }
+        if (state->networkSession->cosmeticLoadoutResponseRevision() !=
+                state->handledCosmeticLoadoutResponseRevision) {
+            state->handledCosmeticLoadoutResponseRevision =
+                state->networkSession->cosmeticLoadoutResponseRevision();
+            const auto& response =
+                state->networkSession->cosmeticLoadoutResponse();
+            if (response.has_value()) {
+                if (const auto* success = std::get_if<
+                        basilisk::game::network::CosmeticLoadoutUpdateSuccess>(
+                            &response->payload)) {
+                    state->mainMenu.applyConfirmedCosmeticLoadout(
+                        success->loadout);
+                } else if (const auto* failure = std::get_if<
+                        basilisk::game::network::CosmeticLoadoutUpdateFailure>(
+                            &response->payload)) {
+                    SDL_Log("Cosmetic update rejected: %s",
+                        failure->message.c_str());
+                }
+            }
+        }
         if (!state->networkFailureLogged &&
             (state->networkSession->state() ==
                  basilisk::game::NetworkConnectionState::Error ||
@@ -1083,8 +1136,9 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         if (state->view == AppView::Authentication) {
             std::string authError;
             if (!basilisk::game::renderAuthScreen(
-                    state->renderer, *state->textRenderer, state->authScreen,
-                    state->authGeometry, outputWidth, outputHeight, authError)) {
+                    state->renderer, *state->textRenderer, *state->svgTextures,
+                    state->authScreen, state->authGeometry,
+                    outputWidth, outputHeight, authError)) {
                 SDL_Log("Authentication rendering failed: %s", authError.c_str());
                 return SDL_APP_FAILURE;
             }
@@ -1103,6 +1157,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             if (!basilisk::game::renderMainMenu(
                     state->renderer,
                     *state->textRenderer,
+                    *state->svgTextures,
                     state->mainMenu,
                     trophies,
                     state->authenticatedProfile,

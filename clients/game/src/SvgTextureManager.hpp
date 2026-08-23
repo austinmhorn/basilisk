@@ -43,6 +43,14 @@ public:
         SDL_Color tint,
         std::string& error);
 
+    // Fits and renders the SVG with its authored colors intact. This is for
+    // presentation contexts that use a tintable gameplay asset as artwork.
+    [[nodiscard]] bool drawAuthoredAspectFit(
+        SvgAssetId asset,
+        const SDL_FRect& destination,
+        float opacity,
+        std::string& error);
+
     void reset();
 
 private:
@@ -50,6 +58,7 @@ private:
         SvgAssetId asset{};
         int width{};
         int height{};
+        bool authoredColors{};
 
         auto operator<=>(const CacheKey&) const = default;
     };
@@ -58,7 +67,8 @@ private:
         SvgAssetId asset,
         int requestedWidth,
         int requestedHeight,
-        std::string& error);
+        std::string& error,
+        bool authoredColors = false);
     [[nodiscard]] bool loadIntrinsicSize(SvgAssetId asset, std::string& error);
 
     SDL_Renderer* renderer_{};

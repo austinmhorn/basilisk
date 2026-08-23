@@ -133,7 +133,7 @@ std::unique_ptr<IncompatibleServer> startIncompatibleServer() {
     assert(endpoint != nullptr);
     auto frame = endpoint->takeNextServerFrame();
     assert(frame.has_value() && frame->size() > 8);
-    (*frame)[8] = 3; // V2's big-endian version header becomes unsupported V3.
+    (*frame)[8] = 5; // V4's big-endian version header becomes unsupported V5.
 
     for (int attempt = 0; attempt < 10; ++attempt) {
         const auto port = static_cast<std::uint16_t>(ix::getFreePort());
@@ -391,15 +391,15 @@ void serverQueriesUseDurableAccountsAndSQLiteSurvivesRestart() {
     assert(reconnected->controller()->trophyTotal() == 2);
 }
 
-void serverPersistsPublicProfilesAndRejectsDuplicateHandles() {
+void serverPersistsPublicProfilesAndRejectsDuplicateUsernames() {
     TemporaryTrophyDatabase database;
     LocalServerTrophyConfig trophies{
         TrophyMatchId{"public-profile-match"},
         AccountIdentity{"durable-profile-p1"},
         AccountIdentity{"durable-profile-p2"},
         database.path(),
-        PublicAccountProfile{PublicProfileHandle{"mara"}, "Mara Voss"},
-        PublicAccountProfile{PublicProfileHandle{"elias"}, "Elias Thorn"},
+        PublicAccountProfile{Username{"mara"}},
+        PublicAccountProfile{Username{"elias"}},
     };
     auto server = startServer(trophies);
     server->stop();
@@ -417,10 +417,9 @@ void serverPersistsPublicProfilesAndRejectsDuplicateHandles() {
     persistence.reset();
 
     TemporaryTrophyDatabase conflictDatabase;
-    trophies.match = TrophyMatchId{"duplicate-handle-match"};
+    trophies.match = TrophyMatchId{"duplicate-username-match"};
     trophies.sqliteDatabasePath = conflictDatabase.path();
-    trophies.p2PublicProfile = PublicAccountProfile{
-        PublicProfileHandle{"mara"}, "Elias Thorn"};
+    trophies.p2PublicProfile = PublicAccountProfile{Username{"mara"}};
     LocalWebSocketServerConfig config;
     config.port = static_cast<std::uint16_t>(ix::getFreePort());
     config.p1Token = "distinct-token-p1";
@@ -429,7 +428,7 @@ void serverPersistsPublicProfilesAndRejectsDuplicateHandles() {
     config.trophies = trophies;
     auto rejected = LocalWebSocketMatchServer::start(std::move(config), error);
     assert(rejected == nullptr);
-    assert(error == "Public handle 'mara' for P2 is already in use.");
+    assert(error == "Username 'mara' for P2 is already in use.");
 }
 
 void authenticatedUnboundAccountCanHostLobby() {
@@ -439,12 +438,12 @@ void authenticatedUnboundAccountCanHostLobby() {
     assert(auth != nullptr && error.empty());
     AccountIdentity account;
     assert(auth->createAccount(
-        LoginIdentity{"lobby-host@example.test"}, "correct horse battery staple",
-        PublicAccountProfile{PublicProfileHandle{"lobby-host"}, "Lobby Host"},
+        EmailAddress{"lobby-host@example.test"}, "correct horse battery staple",
+        PublicAccountProfile{Username{"lobby-host"}},
         account, error) == CreateAccountResult::Created);
     AuthSessionToken token;
     assert(auth->authenticate(
-        LoginIdentity{"lobby-host@example.test"},
+        EmailAddress{"lobby-host@example.test"},
         "correct horse battery staple", token, error));
 
     LocalWebSocketServerConfig config;
@@ -467,6 +466,21 @@ void authenticatedUnboundAccountCanHostLobby() {
         return client->authenticationResponse().has_value();
     }));
     assert(client->controller() == nullptr);
+    const client::AccountCosmeticLoadout requestedLoadout{
+        client::CallingCardId{"arrow-right-white"},
+        client::EmblemId{"circle-green"}};
+    assert(client->updateCosmeticLoadout({
+        network::kProtocolVersion, token.value, requestedLoadout}));
+    assert(waitUntil([&] {
+        client->pump();
+        return client->cosmeticLoadoutResponse().has_value();
+    }));
+    const auto* update = std::get_if<network::CosmeticLoadoutUpdateSuccess>(
+        &client->cosmeticLoadoutResponse()->payload);
+    assert(update != nullptr && update->loadout == requestedLoadout);
+    client::AccountCosmeticLoadout persistedLoadout;
+    assert(auth->cosmeticLoadout(account, persistedLoadout, error));
+    assert(persistedLoadout == requestedLoadout);
     assert(client->requestLobby({network::kProtocolVersion,
         network::HostLobbyRequest{}}));
     assert(waitUntil([&] {
@@ -485,18 +499,18 @@ void rejectedSessionRestoreKeepsAuthenticationConnectionUsable() {
     AccountIdentity firstAccount;
     AccountIdentity secondAccount;
     assert(auth->createAccount(
-        LoginIdentity{"restore-first@example.test"}, "first secure password",
-        PublicAccountProfile{PublicProfileHandle{"restore-first"}, "First"},
+        EmailAddress{"restore-first@example.test"}, "first secure password",
+        PublicAccountProfile{Username{"restore-first"}},
         firstAccount, error) == CreateAccountResult::Created);
     assert(auth->createAccount(
-        LoginIdentity{"restore-second@example.test"}, "second secure password",
-        PublicAccountProfile{PublicProfileHandle{"restore-second"}, "Second"},
+        EmailAddress{"restore-second@example.test"}, "second secure password",
+        PublicAccountProfile{Username{"restore-second"}},
         secondAccount, error) == CreateAccountResult::Created);
     AuthSessionToken firstToken;
     AuthSessionToken secondToken;
-    assert(auth->authenticate(LoginIdentity{"restore-first@example.test"},
+    assert(auth->authenticate(EmailAddress{"restore-first@example.test"},
         "first secure password", firstToken, error));
-    assert(auth->authenticate(LoginIdentity{"restore-second@example.test"},
+    assert(auth->authenticate(EmailAddress{"restore-second@example.test"},
         "second secure password", secondToken, error));
 
     LocalWebSocketServerConfig config;
@@ -550,11 +564,11 @@ void logoutReturnsConnectionToUsableAuthenticationState() {
     assert(auth != nullptr && error.empty());
     AccountIdentity account;
     assert(auth->createAccount(
-        LoginIdentity{"logout@example.test"}, "logout secure password",
-        PublicAccountProfile{PublicProfileHandle{"logout-user"}, "Logout User"},
+        EmailAddress{"logout@example.test"}, "logout secure password",
+        PublicAccountProfile{Username{"logout-user"}},
         account, error) == CreateAccountResult::Created);
     AuthSessionToken token;
-    assert(auth->authenticate(LoginIdentity{"logout@example.test"},
+    assert(auth->authenticate(EmailAddress{"logout@example.test"},
         "logout secure password", token, error));
 
     LocalWebSocketServerConfig config;
@@ -606,21 +620,27 @@ void authenticatedAssignmentLaunchesAuthoritativeGameplay() {
     AccountIdentity hostAccount;
     AccountIdentity guestAccount;
     assert(auth->createAccount(
-        LoginIdentity{"assigned-host@example.test"},
+        EmailAddress{"assigned-host@example.test"},
         "correct horse battery staple",
-        PublicAccountProfile{PublicProfileHandle{"assigned-host"}, "Match Host"},
+        PublicAccountProfile{Username{"assigned-host"}},
         hostAccount, error) == CreateAccountResult::Created);
     assert(auth->createAccount(
-        LoginIdentity{"assigned-guest@example.test"},
+        EmailAddress{"assigned-guest@example.test"},
         "correct horse battery staple",
-        PublicAccountProfile{PublicProfileHandle{"assigned-guest"}, "Match Guest"},
+        PublicAccountProfile{Username{"assigned-guest"}},
         guestAccount, error) == CreateAccountResult::Created);
     AuthSessionToken hostToken;
     AuthSessionToken guestToken;
-    assert(auth->authenticate(LoginIdentity{"assigned-host@example.test"},
+    assert(auth->authenticate(EmailAddress{"assigned-host@example.test"},
                               "correct horse battery staple", hostToken, error));
-    assert(auth->authenticate(LoginIdentity{"assigned-guest@example.test"},
+    assert(auth->authenticate(EmailAddress{"assigned-guest@example.test"},
                               "correct horse battery staple", guestToken, error));
+    const client::AccountCosmeticLoadout hostLoadout{
+        client::CallingCardId{"slanted-rectangles-white"},
+        client::EmblemId{"rounded-square-green"}};
+    client::AccountCosmeticLoadout confirmedLoadout;
+    assert(auth->updateCosmeticLoadout(
+        hostToken, hostLoadout, confirmedLoadout, error));
 
     LocalWebSocketServerConfig config;
     config.port = static_cast<std::uint16_t>(ix::getFreePort());
@@ -675,6 +695,14 @@ void authenticatedAssignmentLaunchesAuthoritativeGameplay() {
     }));
     assert(host->controller()->viewContext().localPlayer == PlayerId{1});
     assert(guest->controller()->viewContext().localPlayer == PlayerId{2});
+    const auto& hostProfiles = host->controller()->profiles();
+    const auto hostProfile = std::ranges::find_if(
+        hostProfiles, [](const client::PublicPlayerProfile& profile) {
+            return profile.player == PlayerId{1};
+        });
+    assert(hostProfile != hostProfiles.end());
+    assert(hostProfile->callingCardId == hostLoadout.callingCardId);
+    assert(hostProfile->emblemId == hostLoadout.emblemId);
     const RoundNumber initialRound =
         host->controller()->displayedSnapshot()->round;
     assert(guest->controller()->displayedSnapshot()->round == initialRound);
@@ -712,24 +740,24 @@ void dynamicAssignedMatchesUsePersistentTrophyStore() {
     auto auth = SQLiteAccountAuth::open(authenticationDatabase.path(), error);
     assert(auth != nullptr && error.empty());
     const PublicAccountProfile hostProfile{
-        PublicProfileHandle{"persistent-host"}, "Persistent Host"};
+        Username{"persistent-host"}};
     const PublicAccountProfile guestProfile{
-        PublicProfileHandle{"persistent-guest"}, "Persistent Guest"};
+        Username{"persistent-guest"}};
     AccountIdentity hostAccount;
     AccountIdentity guestAccount;
     assert(auth->createAccount(
-        LoginIdentity{"persistent-host@example.test"},
+        EmailAddress{"persistent-host@example.test"},
         "correct horse battery staple", hostProfile, hostAccount, error) ==
         CreateAccountResult::Created);
     assert(auth->createAccount(
-        LoginIdentity{"persistent-guest@example.test"},
+        EmailAddress{"persistent-guest@example.test"},
         "correct horse battery staple", guestProfile, guestAccount, error) ==
         CreateAccountResult::Created);
     AuthSessionToken hostToken;
     AuthSessionToken guestToken;
-    assert(auth->authenticate(LoginIdentity{"persistent-host@example.test"},
+    assert(auth->authenticate(EmailAddress{"persistent-host@example.test"},
         "correct horse battery staple", hostToken, error));
-    assert(auth->authenticate(LoginIdentity{"persistent-guest@example.test"},
+    assert(auth->authenticate(EmailAddress{"persistent-guest@example.test"},
         "correct horse battery staple", guestToken, error));
 
     auto seededPersistence = SQLiteTrophyPersistence::open(
@@ -798,8 +826,8 @@ void dynamicAssignedMatchesUsePersistentTrophyStore() {
     }));
     const auto& publicEntries = host->leaderboardPage()->entries;
     assert(publicEntries.size() == 2);
-    assert(publicEntries.front().handle == hostProfile.handle);
-    assert(publicEntries.front().displayName == hostProfile.displayName);
+    assert(publicEntries.front().username == hostProfile.username);
+    assert(publicEntries.front().username == hostProfile.username);
     assert(publicEntries.front().trophyTotal == 2);
 
     host.reset();
@@ -828,7 +856,7 @@ void dynamicAssignedMatchesUsePersistentTrophyStore() {
     assert(reopenedReadModel.leaderboardPage(
         0, 10, reopenedLeaderboard, error));
     assert(reopenedLeaderboard.size() == 2);
-    assert(reopenedLeaderboard.front().handle == hostProfile.handle);
+    assert(reopenedLeaderboard.front().username == hostProfile.username);
 
     LocalWebSocketServerConfig restartedConfig;
     restartedConfig.port = static_cast<std::uint16_t>(ix::getFreePort());
@@ -851,20 +879,20 @@ void authenticatedPlayerReclaimsAssignedMatchWithinGrace() {
     AccountIdentity hostAccount;
     AccountIdentity guestAccount;
     assert(auth->createAccount(
-        LoginIdentity{"reconnect-host@example.test"},
+        EmailAddress{"reconnect-host@example.test"},
         "correct horse battery staple",
-        PublicAccountProfile{PublicProfileHandle{"reconnect-host"}, "Reconnect Host"},
+        PublicAccountProfile{Username{"reconnect-host"}},
         hostAccount, error) == CreateAccountResult::Created);
     assert(auth->createAccount(
-        LoginIdentity{"reconnect-guest@example.test"},
+        EmailAddress{"reconnect-guest@example.test"},
         "correct horse battery staple",
-        PublicAccountProfile{PublicProfileHandle{"reconnect-guest"}, "Reconnect Guest"},
+        PublicAccountProfile{Username{"reconnect-guest"}},
         guestAccount, error) == CreateAccountResult::Created);
     AuthSessionToken hostToken;
     AuthSessionToken guestToken;
-    assert(auth->authenticate(LoginIdentity{"reconnect-host@example.test"},
+    assert(auth->authenticate(EmailAddress{"reconnect-host@example.test"},
                               "correct horse battery staple", hostToken, error));
-    assert(auth->authenticate(LoginIdentity{"reconnect-guest@example.test"},
+    assert(auth->authenticate(EmailAddress{"reconnect-guest@example.test"},
                               "correct horse battery staple", guestToken, error));
 
     LocalWebSocketServerConfig config;
@@ -966,7 +994,7 @@ int main() {
     establishedSessionReportsConnectionLoss();
     callbacksAfterClientCloseAreIgnored();
     serverQueriesUseDurableAccountsAndSQLiteSurvivesRestart();
-    serverPersistsPublicProfilesAndRejectsDuplicateHandles();
+    serverPersistsPublicProfilesAndRejectsDuplicateUsernames();
     authenticatedUnboundAccountCanHostLobby();
     rejectedSessionRestoreKeepsAuthenticationConnectionUsable();
     logoutReturnsConnectionToUsableAuthenticationState();

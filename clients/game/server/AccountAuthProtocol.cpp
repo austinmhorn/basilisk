@@ -37,15 +37,18 @@ bool AccountAuthProtocol::process(
         using T = std::decay_t<decltype(payload)>;
         if constexpr (std::is_same_v<T, network::CreateAccountRequest>) {
             AccountIdentity account;
+            const PublicAccountProfile profile{Username{payload.username}};
             const CreateAccountResult result = auth_->createAccount(
-                LoginIdentity{payload.login}, payload.password, payload.profile,
+                EmailAddress{payload.email}, payload.password, profile,
                 account, authError);
             AuthSessionToken token;
+            client::AccountCosmeticLoadout loadout;
             if (result == CreateAccountResult::Created && auth_->authenticate(
-                    LoginIdentity{payload.login}, payload.password,
-                    token, authError)) {
+                    EmailAddress{payload.email}, payload.password,
+                    token, authError) &&
+                auth_->cosmeticLoadout(account, loadout, authError)) {
                 response.payload = network::AuthenticationSuccess{
-                    std::move(token.value), payload.profile};
+                    std::move(token.value), profile, std::move(loadout)};
             } else {
                 response = failure(authError);
             }
@@ -53,13 +56,16 @@ bool AccountAuthProtocol::process(
             AuthSessionToken token;
             AccountIdentity account;
             PublicAccountProfile profile;
+            client::AccountCosmeticLoadout loadout;
             if (auth_->authenticate(
-                    LoginIdentity{payload.login}, payload.password,
+                    EmailAddress{payload.email}, payload.password,
                     token, authError) &&
                 auth_->resolveSession(token, account, authError) &&
-                auth_->publicProfile(account, profile, authError)) {
+                auth_->publicProfile(account, profile, authError) &&
+                auth_->cosmeticLoadout(account, loadout, authError)) {
                 response.payload = network::AuthenticationSuccess{
-                    std::move(token.value), std::move(profile)};
+                    std::move(token.value), std::move(profile),
+                    std::move(loadout)};
             } else {
                 response = failure(authError);
             }
@@ -68,10 +74,16 @@ bool AccountAuthProtocol::process(
             const AuthSessionToken token{payload.sessionToken};
             AccountIdentity account;
             PublicAccountProfile profile;
+            client::AccountCosmeticLoadout loadout;
             if (auth_->resolveSession(token, account, authError) &&
                 auth_->publicProfile(account, profile, authError)) {
+                if (!auth_->cosmeticLoadout(account, loadout, authError)) {
+                    response = failure(authError);
+                    return;
+                }
                 response.payload = network::AuthenticationSuccess{
-                    payload.sessionToken, std::move(profile)};
+                    payload.sessionToken, std::move(profile),
+                    std::move(loadout)};
             } else {
                 response = failure(authError);
             }
@@ -84,6 +96,35 @@ bool AccountAuthProtocol::process(
             }
         }
     }, request.payload);
+    return network::encodeWire(response, responseBytes, error);
+}
+
+bool AccountAuthProtocol::processCosmeticUpdate(
+    std::span<const std::uint8_t> requestBytes,
+    network::WireBytes& responseBytes,
+    std::string& error) {
+    network::CosmeticLoadoutUpdateRequest request;
+    if (!network::decodeCosmeticLoadoutUpdateRequest(
+            requestBytes, request, error)) return false;
+    if (auth_ == nullptr) {
+        return network::encodeWire(network::CosmeticLoadoutUpdateResponse{
+            network::kProtocolVersion,
+            network::CosmeticLoadoutUpdateFailure{
+                "Account authentication is unavailable."}},
+            responseBytes, error);
+    }
+    client::AccountCosmeticLoadout confirmed;
+    std::string updateError;
+    network::CosmeticLoadoutUpdateResponse response;
+    if (auth_->updateCosmeticLoadout(
+            AuthSessionToken{request.sessionToken}, request.loadout,
+            confirmed, updateError)) {
+        response.payload = network::CosmeticLoadoutUpdateSuccess{
+            std::move(confirmed)};
+    } else {
+        response.payload = network::CosmeticLoadoutUpdateFailure{
+            std::move(updateError)};
+    }
     return network::encodeWire(response, responseBytes, error);
 }
 

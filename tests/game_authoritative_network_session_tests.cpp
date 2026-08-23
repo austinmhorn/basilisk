@@ -230,7 +230,7 @@ void spoofedMalformedAndForgedCommandsAreRejected() {
 
     command = ClientCommand{kProtocolVersion, QuitCommand{PlayerId{1}}};
     assert(encodeWire(command, bytes, error));
-    bytes[8] = 0x03;
+    bytes[8] = 0x05;
     assert(!p1.endpoint->sendBytes(bytes, error));
 
     assert(host->authoritativeRound() == RoundNumber{1});
@@ -304,11 +304,11 @@ void authenticatedServerReturnsOnlyPublicLeaderboardFields() {
     const auto profileStore = makeInMemoryPublicAccountProfileStore();
     assert(profileStore->storeProfile(
         first.account,
-        PublicAccountProfile{PublicProfileHandle{"mara"}, "Mara Voss"},
+        PublicAccountProfile{Username{"mara"}},
         error) == PublicProfileStoreResult::Stored);
     assert(profileStore->storeProfile(
         second.account,
-        PublicAccountProfile{PublicProfileHandle{"elias"}, "Elias Thorn"},
+        PublicAccountProfile{Username{"elias"}},
         error) == PublicProfileStoreResult::Stored);
     auto readModel = std::make_shared<PublicTrophyReadModel>(
         ledger, profileStore);
@@ -329,14 +329,13 @@ void authenticatedServerReturnsOnlyPublicLeaderboardFields() {
     LeaderboardPageResponse response;
     assert(decodeLeaderboardPageResponse(*frame, response, error));
     const std::vector<PublicTrophyLeaderboardEntry> expected{
-        {1, PublicProfileHandle{"mara"}, "Mara Voss", 9},
-        {2, PublicProfileHandle{"elias"}, "Elias Thorn", 3},
+        {1, Username{"mara"}, 9},
+        {2, Username{"elias"}, 3},
     };
     assert(response.offset == 0);
     assert(response.entries == expected);
     for (const auto& entry : response.entries) {
-        assert(entry.handle.value.find("private-account") == std::string::npos);
-        assert(entry.displayName.find("private-account") == std::string::npos);
+        assert(entry.username.value.find("private-account") == std::string::npos);
     }
 }
 

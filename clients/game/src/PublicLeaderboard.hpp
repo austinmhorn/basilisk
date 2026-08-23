@@ -7,15 +7,14 @@
 
 namespace basilisk::game {
 
-struct PublicProfileHandle {
+struct Username {
     std::string value;
 
-    auto operator<=>(const PublicProfileHandle&) const = default;
+    auto operator<=>(const Username&) const = default;
 };
 
 struct PublicAccountProfile {
-    PublicProfileHandle handle;
-    std::string displayName;
+    Username username;
 
     bool operator==(const PublicAccountProfile&) const = default;
 };
@@ -23,8 +22,7 @@ struct PublicAccountProfile {
 // Public read-model data contains no durable private account identity.
 struct PublicTrophyLeaderboardEntry {
     std::size_t rank{};
-    PublicProfileHandle handle;
-    std::string displayName;
+    Username username;
     std::int64_t trophyTotal{};
 
     bool operator==(const PublicTrophyLeaderboardEntry&) const = default;

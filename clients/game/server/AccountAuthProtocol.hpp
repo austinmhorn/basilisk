@@ -19,6 +19,10 @@ public:
         std::span<const std::uint8_t> request,
         network::WireBytes& response,
         std::string& error);
+    [[nodiscard]] bool processCosmeticUpdate(
+        std::span<const std::uint8_t> request,
+        network::WireBytes& response,
+        std::string& error);
 
 private:
     std::shared_ptr<SQLiteAccountAuth> auth_;

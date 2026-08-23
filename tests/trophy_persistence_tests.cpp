@@ -215,12 +215,11 @@ void leaderboardUsesTotalsAndDeterministicTies() {
     assert(leaderboard == expected);
 }
 
-void publicProfilesPersistAndEnforceStableUniqueHandles() {
+void publicProfilesPersistAndEnforceStableUniqueUsernames() {
     TemporaryDatabase database;
     const AccountIdentity firstAccount{"private-account-one"};
     const PublicAccountProfile firstProfile{
-        PublicProfileHandle{"hunter-one"},
-        "Mara Voss",
+        Username{"hunter-one"},
     };
     {
         const auto persistence = open(database);
@@ -233,12 +232,12 @@ void publicProfilesPersistAndEnforceStableUniqueHandles() {
             PublicProfileStoreResult::AlreadyStored);
         assert(persistence->storeProfile(
             firstAccount,
-            PublicAccountProfile{PublicProfileHandle{"changed"}, "Mara"},
+            PublicAccountProfile{Username{"changed"}},
             error) == PublicProfileStoreResult::AccountConflict);
         assert(persistence->storeProfile(
             AccountIdentity{"private-account-two"},
-            PublicAccountProfile{firstProfile.handle, "Elias Thorn"},
-            error) == PublicProfileStoreResult::DuplicateHandle);
+            PublicAccountProfile{firstProfile.username},
+            error) == PublicProfileStoreResult::DuplicateUsername);
     }
 
     const auto reopened = open(database);
@@ -266,15 +265,15 @@ void publicLeaderboardCombinesProfilesWithLedgerTotals() {
         TrophyAppendResult::Appended);
     assert(persistence->storeProfile(
         AccountIdentity{"private-zulu"},
-        PublicAccountProfile{PublicProfileHandle{"zulu"}, "Zara"},
+        PublicAccountProfile{Username{"zulu"}},
         error) == PublicProfileStoreResult::Stored);
     assert(persistence->storeProfile(
         AccountIdentity{"private-alpha"},
-        PublicAccountProfile{PublicProfileHandle{"alpha"}, "Arden"},
+        PublicAccountProfile{Username{"alpha"}},
         error) == PublicProfileStoreResult::Stored);
     assert(persistence->storeProfile(
         AccountIdentity{"private-low"},
-        PublicAccountProfile{PublicProfileHandle{"low"}, "Low Hunter"},
+        PublicAccountProfile{Username{"low"}},
         error) == PublicProfileStoreResult::Stored);
 
     auto ledger = std::make_shared<TrophyLedger>(persistence);
@@ -282,17 +281,16 @@ void publicLeaderboardCombinesProfilesWithLedgerTotals() {
     std::vector<PublicTrophyLeaderboardEntry> leaderboard;
     assert(readModel.leaderboardPage(0, 10, leaderboard, error));
     const std::vector<PublicTrophyLeaderboardEntry> expected{
-        {1, PublicProfileHandle{"alpha"}, "Arden", 5},
-        {1, PublicProfileHandle{"zulu"}, "Zara", 5},
-        {3, PublicProfileHandle{"low"}, "Low Hunter", 0},
+        {1, Username{"alpha"}, 5},
+        {1, Username{"zulu"}, 5},
+        {3, Username{"low"}, 0},
     };
     assert(leaderboard == expected);
 
     // Missing profiles are intentionally omitted, and private identifiers
     // cannot appear in the public model even when they have the highest total.
     assert(std::ranges::none_of(leaderboard, [](const auto& entry) {
-        return entry.handle.value.starts_with("private-") ||
-            entry.displayName.starts_with("private-");
+        return entry.username.value.starts_with("private-");
     }));
 
     std::vector<PublicTrophyLeaderboardEntry> page;
@@ -611,7 +609,7 @@ int main() {
     entriesAndTotalsSurviveReload();
     duplicateMatchIsRejectedAcrossReload();
     leaderboardUsesTotalsAndDeterministicTies();
-    publicProfilesPersistAndEnforceStableUniqueHandles();
+    publicProfilesPersistAndEnforceStableUniqueUsernames();
     publicLeaderboardCombinesProfilesWithLedgerTotals();
     unfinishedAuthoritativeMatchDoesNotClaimItsId();
     authoritativeZeroEntryDrawIsClaimedOnce();
