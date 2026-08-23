@@ -34,17 +34,29 @@ void filledCircle(SDL_Renderer* renderer, float centerX, float centerY,
     }
 }
 void filledPill(SDL_Renderer* renderer, PresentationRect bounds, SDL_Color color) {
-    const float radius = static_cast<float>(bounds.height * 0.5);
-    SDL_FRect center{
-        static_cast<float>(bounds.x) + radius, static_cast<float>(bounds.y),
-        static_cast<float>(std::max(0.0, bounds.width - bounds.height)),
-        static_cast<float>(bounds.height)};
+    if (bounds.width <= 0.0 || bounds.height <= 0.0) return;
+
+    const double radius = bounds.height * 0.5;
+    const double centerY = bounds.y + radius;
+    const int firstRow = static_cast<int>(std::floor(bounds.y));
+    const int lastRow = static_cast<int>(std::ceil(
+        bounds.y + bounds.height));
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-    SDL_RenderFillRect(renderer, &center);
-    filledCircle(renderer, static_cast<float>(bounds.x) + radius,
-        static_cast<float>(bounds.y) + radius, radius, color);
-    filledCircle(renderer, static_cast<float>(bounds.x + bounds.width) - radius,
-        static_cast<float>(bounds.y) + radius, radius, color);
+    for (int row = firstRow; row < lastRow; ++row) {
+        const double sampleY = static_cast<double>(row) + 0.5;
+        if (sampleY < bounds.y || sampleY >= bounds.y + bounds.height) continue;
+        const double vertical = std::abs(sampleY - centerY);
+        const double horizontal = std::sqrt(std::max(
+            0.0, radius * radius - vertical * vertical));
+        const double inset = radius - horizontal;
+        SDL_FRect span{
+            static_cast<float>(bounds.x + inset),
+            static_cast<float>(row),
+            static_cast<float>(std::max(0.0, bounds.width - inset * 2.0)),
+            1.0F,
+        };
+        SDL_RenderFillRect(renderer, &span);
+    }
 }
 void pill(SDL_Renderer* renderer, PresentationRect bounds, SDL_Color fill,
           SDL_Color border) {
