@@ -66,6 +66,8 @@ struct AppState {
     bool resumeGameplayOnBootstrap{false};
     std::optional<basilisk::game::PublicAccountProfile> authenticatedProfile;
     std::optional<std::string> authenticatedSessionToken;
+    std::optional<basilisk::client::AccountCosmeticLoadout>
+        confirmedCosmeticLoadout;
     basilisk::game::MainMenuState mainMenu;
     basilisk::game::MainMenuGeometry mainMenuGeometry;
     std::size_t handledLobbyResponseRevision{0};
@@ -144,6 +146,7 @@ SDL_AppResult handleMainMenuResult(
             SDL_Log("Unable to clear saved session: %s", storageError.c_str());
         state.authenticatedSessionToken.reset();
         state.authenticatedProfile.reset();
+        state.confirmedCosmeticLoadout.reset();
         state.authScreen = basilisk::game::AuthScreenState{};
         state.mainMenu = basilisk::game::MainMenuState{};
         state.handledLobbyResponseRevision =
@@ -808,14 +811,13 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                                state->lifecycleModalGeometry, pointer) &&
                            state->session->quit()) {
                     if (state->networkSession != nullptr) {
-                        const basilisk::client::AccountCosmeticLoadout loadout{
-                            state->mainMenu.selectedCallingCard(),
-                            state->mainMenu.selectedEmblem(),
-                        };
                         state->networkSession->clearGameplaySession();
                         state->session = nullptr;
                         state->mainMenu = basilisk::game::MainMenuState{};
-                        state->mainMenu.applyConfirmedCosmeticLoadout(loadout);
+                        if (state->confirmedCosmeticLoadout.has_value()) {
+                            state->mainMenu.applyConfirmedCosmeticLoadout(
+                                *state->confirmedCosmeticLoadout);
+                        }
                         state->screenShellEnabled = false;
                         state->view = AppView::MainMenu;
                         state->mapActionMenu.dismiss();
@@ -1081,8 +1083,9 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     state->networkSession->lobbyResponseRevision();
                 state->cancelLobbyWhenHosted = false;
                 state->authenticatedProfile = success->profile;
+                state->confirmedCosmeticLoadout = success->cosmeticLoadout;
                 state->mainMenu.applyConfirmedCosmeticLoadout(
-                    success->cosmeticLoadout);
+                    *state->confirmedCosmeticLoadout);
                 state->authenticatedSessionToken = success->sessionToken;
                 std::string storageError;
                 if (!basilisk::game::SessionTokenStorage::save(
@@ -1122,8 +1125,9 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 if (const auto* success = std::get_if<
                         basilisk::game::network::CosmeticLoadoutUpdateSuccess>(
                             &response->payload)) {
+                    state->confirmedCosmeticLoadout = success->loadout;
                     state->mainMenu.applyConfirmedCosmeticLoadout(
-                        success->loadout);
+                        *state->confirmedCosmeticLoadout);
                 } else if (const auto* failure = std::get_if<
                         basilisk::game::network::CosmeticLoadoutUpdateFailure>(
                             &response->payload)) {
