@@ -491,6 +491,76 @@ void authenticatedUnboundAccountCanHostLobby() {
         client->lobbyResponse()->payload));
 }
 
+void authenticatedIdleConnectionCanHostCancelAndHostAgain() {
+    static_assert(kServerWebSocketPingIntervalSeconds < 75);
+    TemporaryTrophyDatabase database;
+    std::string error;
+    auto auth = SQLiteAccountAuth::open(database.path(), error);
+    assert(auth != nullptr && error.empty());
+    AccountIdentity account;
+    assert(auth->createAccount(
+        EmailAddress{"idle-host@example.test"}, "correct horse battery staple",
+        PublicAccountProfile{Username{"idle-host"}},
+        account, error) == CreateAccountResult::Created);
+    AuthSessionToken token;
+    assert(auth->authenticate(
+        EmailAddress{"idle-host@example.test"},
+        "correct horse battery staple", token, error));
+
+    LocalWebSocketServerConfig config;
+    config.port = static_cast<std::uint16_t>(ix::getFreePort());
+    config.authentication = auth;
+    config.profiles = profiles();
+    config.webSocketPingIntervalSeconds = 1;
+    auto server = LocalWebSocketMatchServer::start(std::move(config), error);
+    assert(server != nullptr && error.empty());
+    auto client = WebSocketNetworkSession::connectForAuthentication(
+        url(*server), error);
+    assert(client != nullptr);
+    assert(waitUntil([&] {
+        client->pump();
+        return client->state() == NetworkConnectionState::Connected;
+    }));
+    assert(client->authenticate({network::kProtocolVersion,
+        network::AuthenticateSessionRequest{token.value}}));
+    assert(waitUntil([&] {
+        client->pump();
+        return client->authenticationResponse().has_value();
+    }));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(2200));
+    client->pump();
+    assert(client->state() == NetworkConnectionState::Connected);
+    assert(client->requestLobby({network::kProtocolVersion,
+        network::HostLobbyRequest{}}));
+    assert(waitUntil([&] {
+        client->pump();
+        return client->lobbyResponse().has_value() &&
+            std::holds_alternative<network::LobbyHosted>(
+                client->lobbyResponse()->payload);
+    }));
+    const std::string firstCode = std::get<network::LobbyHosted>(
+        client->lobbyResponse()->payload).lobbyCode;
+    const std::size_t hostedRevision = client->lobbyResponseRevision();
+    assert(client->requestLobby({network::kProtocolVersion,
+        network::CancelHostedLobbyRequest{firstCode}}));
+    assert(waitUntil([&] {
+        client->pump();
+        return client->lobbyResponseRevision() > hostedRevision &&
+            std::holds_alternative<network::LobbyCancelled>(
+                client->lobbyResponse()->payload);
+    }));
+    const std::size_t cancelledRevision = client->lobbyResponseRevision();
+    assert(client->requestLobby({network::kProtocolVersion,
+        network::HostLobbyRequest{}}));
+    assert(waitUntil([&] {
+        client->pump();
+        return client->lobbyResponseRevision() > cancelledRevision &&
+            std::holds_alternative<network::LobbyHosted>(
+                client->lobbyResponse()->payload);
+    }));
+}
+
 void rejectedSessionRestoreKeepsAuthenticationConnectionUsable() {
     TemporaryTrophyDatabase database;
     std::string error;
@@ -999,6 +1069,7 @@ int main() {
     serverQueriesUseDurableAccountsAndSQLiteSurvivesRestart();
     serverPersistsPublicProfilesAndRejectsDuplicateUsernames();
     authenticatedUnboundAccountCanHostLobby();
+    authenticatedIdleConnectionCanHostCancelAndHostAgain();
     rejectedSessionRestoreKeepsAuthenticationConnectionUsable();
     logoutReturnsConnectionToUsableAuthenticationState();
     authenticatedAssignmentLaunchesAuthoritativeGameplay();

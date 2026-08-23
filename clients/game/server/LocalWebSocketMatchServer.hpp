@@ -14,6 +14,11 @@
 
 namespace basilisk::game::server {
 
+// Keep authenticated idle sessions active through the 75-second production
+// reverse-proxy timeout. WebSocket ping control frames require no game protocol
+// traffic and browser clients answer them with pong automatically.
+inline constexpr int kServerWebSocketPingIntervalSeconds{25};
+
 struct LocalServerTrophyConfig {
     TrophyMatchId match;
     AccountIdentity p1Account;
@@ -28,6 +33,7 @@ struct LocalServerTrophyConfig {
 struct LocalWebSocketServerConfig {
     std::uint16_t port{8765};
     std::string bindAddress{"127.0.0.1"};
+    int webSocketPingIntervalSeconds{kServerWebSocketPingIntervalSeconds};
     std::string p1Token;
     std::string p2Token;
     MapSeed mapSeed{20260816};

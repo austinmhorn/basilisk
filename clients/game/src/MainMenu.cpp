@@ -207,6 +207,9 @@ void MainMenuState::lobbyFailed(std::string error) {
     lobbyWaiting_ = false;
     lobbyError_ = std::move(error);
 }
+void MainMenuState::connectionLost(std::string error) {
+    if (lobbyWaiting_) lobbyFailed(std::move(error));
+}
 void MainMenuState::matchmakingCancelled() {
     lobbyCode_.clear(); lobbyError_.clear(); lobbyWaiting_ = false;
     setPage(MainMenuPage::StartGame);

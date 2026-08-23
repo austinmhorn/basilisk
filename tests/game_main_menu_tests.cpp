@@ -37,6 +37,11 @@ int main() {
     assert(menu.activate(MainMenuAction::FindGame) ==
            MainMenuResult::RequestFindMatch);
     assert(menu.page() == MainMenuPage::FindMatch);
+    menu.connectionLost("Connection to the server was lost.");
+    assert(!menu.lobbyWaiting());
+    assert(menu.lobbyError() == "Connection to the server was lost.");
+    assert(menu.activate(MainMenuAction::FindGame) ==
+           MainMenuResult::RequestFindMatch);
     assert(menu.activate(MainMenuAction::CancelFindMatch) ==
            MainMenuResult::RequestCancelFindMatch);
     menu.matchmakingCancelled();
@@ -44,6 +49,11 @@ int main() {
     assert(menu.activate(MainMenuAction::HostGame) ==
            MainMenuResult::RequestHostLobby);
     assert(menu.page() == MainMenuPage::HostLobby);
+    menu.connectionLost("Connection to the server was lost.");
+    assert(!menu.lobbyWaiting());
+    assert(menu.lobbyError() == "Connection to the server was lost.");
+    assert(menu.activate(MainMenuAction::HostGame) ==
+           MainMenuResult::RequestHostLobby);
     menu.lobbyHosted("CAVE7X");
     assert(menu.lobbyCode() == "CAVE7X" && menu.lobbyWaiting());
     assert(menu.activate(MainMenuAction::CancelLobby) ==

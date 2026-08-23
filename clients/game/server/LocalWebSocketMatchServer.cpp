@@ -82,6 +82,7 @@ public:
         std::shared_ptr<PublicAccountProfileStore> publicProfiles,
         std::uint16_t port,
         std::string bindAddress,
+        int webSocketPingIntervalSeconds,
         std::map<std::string, PlayerId> tokens,
         std::shared_ptr<SQLiteAccountAuth> authentication,
         std::map<AccountIdentity, PlayerId> authenticatedAccounts
@@ -98,7 +99,14 @@ public:
           trophyLedger_(std::move(trophyLedger)),
           publicLeaderboard_(std::move(publicLeaderboard)),
           publicProfiles_(std::move(publicProfiles)),
-          server_(port, std::move(bindAddress), 5, 2),
+          server_(
+              port,
+              std::move(bindAddress),
+              5,
+              2,
+              ix::WebSocketServer::kDefaultHandShakeTimeoutSecs,
+              ix::SocketServer::kDefaultAddressFamily,
+              webSocketPingIntervalSeconds),
           tokens_(std::move(tokens)),
           authentication_(std::move(authentication)),
           authenticationProtocol_(authentication_),
@@ -1019,6 +1027,10 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
         error = "WebSocket server bind address must be non-empty.";
         return nullptr;
     }
+    if (config.webSocketPingIntervalSeconds <= 0) {
+        error = "WebSocket server ping interval must be positive.";
+        return nullptr;
+    }
 #if defined(_WIN32)
     auto networkRuntime = NativeNetworkRuntime::acquire(error);
     if (networkRuntime == nullptr) return nullptr;
@@ -1027,6 +1039,7 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
         std::move(match), std::move(trophyLedger), std::move(publicLeaderboard),
         std::move(publicProfiles),
         config.port, std::move(config.bindAddress),
+        config.webSocketPingIntervalSeconds,
         std::map<std::string, PlayerId>{
             {std::move(config.p1Token), PlayerId{1}},
             {std::move(config.p2Token), PlayerId{2}},
