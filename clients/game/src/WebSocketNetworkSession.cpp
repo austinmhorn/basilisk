@@ -183,9 +183,11 @@ public:
             socket_ = 0;
         }
 #else
-        socket_.setOnMessageCallback(
-            [](const ix::WebSocketMessagePtr&) {});
+        // IXWebSocket invokes its callback on the socket worker. Replacing the
+        // std::function before joining that worker races with an in-flight
+        // callback and can corrupt the callback object during teardown.
         socket_.stop();
+        socket_.setOnMessageCallback(nullptr);
 #endif
     }
 
