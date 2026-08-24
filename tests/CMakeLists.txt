@@ -95,6 +95,26 @@ if(TARGET BasiliskGameAssets)
     add_test(NAME BasiliskGameAssetCatalogTests COMMAND BasiliskGameAssetCatalogTests)
 endif()
 
+if(TARGET BasiliskGameRuntime)
+    add_executable(BasiliskGameTextRendererTests
+        game_text_renderer_tests.cpp
+    )
+    target_link_libraries(
+        BasiliskGameTextRendererTests
+        PRIVATE
+            BasiliskGameRuntime
+    )
+    target_compile_definitions(
+        BasiliskGameTextRendererTests
+        PRIVATE
+            BASILISK_TEST_FONT_DIR="${CMAKE_BINARY_DIR}/clients/game/font-assets"
+    )
+    add_test(
+        NAME BasiliskGameTextRendererTests
+        COMMAND BasiliskGameTextRendererTests
+    )
+endif()
+
 if(TARGET BasiliskGameDebugLocalSession)
     add_executable(BasiliskGameDebugMapTests
         game_debug_map_tests.cpp

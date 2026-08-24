@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <string>
+#include <utility>
 
 namespace basilisk::game {
 namespace {
@@ -113,16 +115,19 @@ bool TextRenderer::drawText(
         return true;
     }
 
-    const auto cached = std::find_if(
+    const float cachePointSize = normalizedPointSize(pointSize);
+    auto cached = std::find_if(
         textCache_.begin(),
         textCache_.end(),
         [&](const CachedText& entry) {
             return entry.text == text && entry.weight == weight &&
-                entry.pointSize == pointSize && entry.color.r == color.r &&
+                entry.pointSize == cachePointSize && entry.color.r == color.r &&
                 entry.color.g == color.g && entry.color.b == color.b &&
                 entry.color.a == color.a;
         });
     if (cached != textCache_.end()) {
+        ++cacheHits_;
+        cached->lastUse = ++useSequence_;
         const SDL_FRect destination{
             position.x,
             position.y,
@@ -137,7 +142,9 @@ bool TextRenderer::drawText(
         return true;
     }
 
-    TTF_Font* font = sizedFont(weight, pointSize, error);
+    ++cacheMisses_;
+
+    TTF_Font* font = sizedFont(weight, cachePointSize, error);
     if (font == nullptr) return false;
 
     SDL_Surface* surface =
@@ -156,8 +163,28 @@ bool TextRenderer::drawText(
         return false;
     }
 
-    textCache_.push_back(CachedText{
-        std::string{text}, weight, pointSize, color, texture, renderedSize});
+    CachedText newEntry{
+        std::string{text},
+        weight,
+        cachePointSize,
+        color,
+        texture,
+        renderedSize,
+        ++useSequence_,
+    };
+    if (textCache_.size() < kCacheCapacity) {
+        textCache_.push_back(std::move(newEntry));
+    } else {
+        const auto oldest = std::min_element(
+            textCache_.begin(),
+            textCache_.end(),
+            [](const CachedText& left, const CachedText& right) {
+                return left.lastUse < right.lastUse;
+            });
+        SDL_DestroyTexture(oldest->texture);
+        *oldest = std::move(newEntry);
+        ++cacheEvictions_;
+    }
     const SDL_FRect destination{
         position.x,
         position.y,
@@ -174,9 +201,18 @@ bool TextRenderer::drawText(
     return true;
 }
 
+TextCacheStats TextRenderer::cacheStats() const noexcept {
+    return TextCacheStats{
+        textCache_.size(), cacheHits_, cacheMisses_, cacheEvictions_};
+}
+
 void TextRenderer::reset() {
     for (CachedText& text : textCache_) SDL_DestroyTexture(text.texture);
     textCache_.clear();
+    useSequence_ = 0;
+    cacheHits_ = 0;
+    cacheMisses_ = 0;
+    cacheEvictions_ = 0;
 
     for (TTF_Font*& font : fonts_) {
         if (font != nullptr) {
@@ -208,11 +244,20 @@ TTF_Font* TextRenderer::sizedFont(
         error = "Text point size must be positive";
         return nullptr;
     }
-    if (!TTF_SetFontSize(font, pointSize)) {
+    if (!TTF_SetFontSize(font, normalizedPointSize(pointSize))) {
         error = errorWithSdlDetail("Unable to set text point size");
         return nullptr;
     }
     return font;
+}
+
+float TextRenderer::normalizedPointSize(float pointSize) {
+    // Render scaling can produce tiny floating-point differences for otherwise
+    // identical text. Quarter-point buckets are visually indistinguishable and
+    // prevent those differences from multiplying cache entries.
+    constexpr float kStepsPerPoint = 4.0F;
+    if (!std::isfinite(pointSize)) return pointSize;
+    return std::round(pointSize * kStepsPerPoint) / kStepsPerPoint;
 }
 
 } // namespace basilisk::game

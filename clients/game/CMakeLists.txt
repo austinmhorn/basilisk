@@ -629,6 +629,9 @@ if(EMSCRIPTEN)
     target_link_options(
         BasiliskGame
         PRIVATE
+            "-sALLOW_MEMORY_GROWTH=1"
+            "-sINITIAL_MEMORY=67108864"
+            "-sMAXIMUM_MEMORY=536870912"
             "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/web/network-arguments.js"
             "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
             "SHELL:--preload-file ${BASILISK_GAME_FONT_ASSET_DIR}@/assets/fonts"
