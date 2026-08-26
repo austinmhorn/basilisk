@@ -350,14 +350,19 @@ bool readTunnel(Reader& reader, TunnelView& tunnel) {
 
 bool writeCave(Writer& writer, const DiscoveredCaveView& cave) {
     writeId(writer, cave.cave);
-    return writeVector(writer, cave.exits,
-        [&](const TunnelView& tunnel) { return writeTunnel(writer, tunnel); });
+    if (!writeVector(writer, cave.exits,
+            [&](const TunnelView& tunnel) { return writeTunnel(writer, tunnel); })) {
+        return false;
+    }
+    writer.boolean(cave.surveyed);
+    return true;
 }
 
 bool readCave(Reader& reader, DiscoveredCaveView& cave) {
     return readId(reader, cave.cave) &&
            readVector(reader, cave.exits,
-               [&](TunnelView& tunnel) { return readTunnel(reader, tunnel); });
+               [&](TunnelView& tunnel) { return readTunnel(reader, tunnel); }) &&
+           reader.boolean(cave.surveyed);
 }
 
 bool writeMap(Writer& writer, const PlayerMapView& map) {

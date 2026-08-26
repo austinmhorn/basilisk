@@ -122,7 +122,9 @@ inline void writeWebDebugState(const PlayerRoundSnapshot& snapshot,
     out << "  \"caves\":[\n";
     for (std::size_t i = 0; i < snapshot.map.caves.size(); ++i) {
         const auto& cave = snapshot.map.caves[i];
-        out << "    {\"id\":" << cave.cave << ",\"exits\":[";
+        out << "    {\"id\":" << cave.cave
+            << ",\"surveyed\":" << (cave.surveyed ? "true" : "false")
+            << ",\"exits\":[";
         for (std::size_t j = 0; j < cave.exits.size(); ++j) {
             const auto& exit = cave.exits[j];
             if (j) out << ',';

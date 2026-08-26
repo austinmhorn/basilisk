@@ -561,6 +561,7 @@ endif()
 
 if(NOT EMSCRIPTEN)
     add_library(BasiliskGameDebugSupport STATIC
+        src/DebugInventoryMenu.cpp
         src/DebugMapProvider.cpp
         src/DebugMapRenderer.cpp
     )
@@ -578,6 +579,7 @@ if(NOT EMSCRIPTEN)
         BasiliskGameDebugSupport
         PUBLIC
             Basilisk::GameMapLayout
+            Basilisk::ClientPresentation
             SDL3::SDL3
             SDL3_ttf::SDL3_ttf
     )

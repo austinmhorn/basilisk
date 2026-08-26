@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cstdint>
 #include <memory>
 #include <new>
 #include <optional>
@@ -39,6 +40,7 @@
 #include "basilisk/Random.hpp"
 
 #if defined(BASILISK_GAME_DEBUG)
+#include "DebugInventoryMenu.hpp"
 #include "DebugMapProvider.hpp"
 #endif
 
@@ -98,6 +100,7 @@ struct AppState {
     std::unique_ptr<basilisk::game::debug::DebugMapProvider> debugMapProvider;
     basilisk::game::debug::DebugMapRevealState debugMapReveal;
     basilisk::game::debug::DebugMapRevealState debugGameplayReveal;
+    basilisk::game::debug::DebugInventoryMenuState debugInventoryMenu;
 #endif
 };
 
@@ -373,34 +376,48 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         } else if (argv != nullptr && argv[index] != nullptr &&
                    std::string_view{argv[index]} == "--local-game") {
             basilisk::MapSeed mapSeed{20260812};
+#if defined(BASILISK_GAME_DEBUG)
+            basilisk::MatchSeed matchSeed{424242};
+#endif
             for (int seedIndex = 1; seedIndex < argc; ++seedIndex) {
-                if (argv[seedIndex] == nullptr ||
-                    std::string_view{argv[seedIndex]} != "--map-seed") {
-                    continue;
-                }
+                if (argv[seedIndex] == nullptr) continue;
+                const std::string_view seedOption{argv[seedIndex]};
+                const bool mapSeedOption = seedOption == "--map-seed";
+#if defined(BASILISK_GAME_DEBUG)
+                const bool matchSeedOption = seedOption == "--match-seed";
+                if (!mapSeedOption && !matchSeedOption) continue;
+#else
+                if (!mapSeedOption) continue;
+#endif
                 if (seedIndex + 1 >= argc || argv[seedIndex + 1] == nullptr) {
-                    SDL_Log("--map-seed requires an unsigned integer value");
+                    SDL_Log(
+                        "%s requires an unsigned integer value",
+                        argv[seedIndex]);
                     return SDL_APP_FAILURE;
                 }
                 const std::string_view value{argv[++seedIndex]};
-                basilisk::MapSeed parsed{};
+                std::uint64_t parsed{};
                 const auto result = std::from_chars(
                     value.data(), value.data() + value.size(), parsed);
                 if (result.ec != std::errc{} ||
                     result.ptr != value.data() + value.size()) {
                     SDL_Log(
-                        "Invalid --map-seed value '%s'; expected an unsigned integer",
+                        "Invalid %s value '%s'; expected an unsigned integer",
+                        mapSeedOption ? "--map-seed" : "--match-seed",
                         argv[seedIndex]);
                     return SDL_APP_FAILURE;
                 }
-                mapSeed = parsed;
+                if (mapSeedOption) mapSeed = parsed;
+#if defined(BASILISK_GAME_DEBUG)
+                else matchSeed = parsed;
+#endif
             }
 
 #if defined(BASILISK_GAME_DEBUG)
             auto debugSession =
                 basilisk::game::LocalGameSessionAdapter::createDebug(
                     mapSeed,
-                    basilisk::MatchSeed{424242});
+                    matchSeed);
             state->ownedSession = std::move(debugSession.session);
             state->session = state->ownedSession.get();
             state->debugMapProvider = std::move(debugSession.mapProvider);
@@ -423,9 +440,16 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
             state->screenShellEnabled = true;
             state->view = AppView::Gameplay;
             state->autoLockSelectedActions = true;
+#if defined(BASILISK_GAME_DEBUG)
+            SDL_Log(
+                "Trusted local Core session enabled (map seed: %llu, match seed: %llu)",
+                static_cast<unsigned long long>(mapSeed),
+                static_cast<unsigned long long>(matchSeed));
+#else
             SDL_Log(
                 "Trusted local Core session enabled (map seed: %llu)",
                 static_cast<unsigned long long>(mapSeed));
+#endif
             break;
         }
     }
@@ -684,6 +708,37 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             SDL_Log("Unable to cycle debug Basilisk behavior");
         } else {
             SDL_Log("Debug Basilisk behavior cycled");
+        }
+        return SDL_APP_CONTINUE;
+    }
+    if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
+        !event->key.repeat && event->key.key == SDLK_F4) {
+        if (state->debugMapProvider == nullptr) {
+            SDL_Log("Debug inventory is available only in --local-game");
+        } else {
+            state->debugInventoryMenu.toggle();
+        }
+        return SDL_APP_CONTINUE;
+    }
+    if (state != nullptr && state->debugInventoryMenu.active()) {
+        if (event->type == SDL_EVENT_KEY_DOWN && !event->key.repeat) {
+            if (event->key.key == SDLK_ESCAPE) {
+                state->debugInventoryMenu.close();
+            } else if (event->key.key == SDLK_UP) {
+                state->debugInventoryMenu.moveSelection(-1);
+            } else if (event->key.key == SDLK_DOWN) {
+                state->debugInventoryMenu.moveSelection(1);
+            } else if (event->key.key == SDLK_RETURN ||
+                       event->key.key == SDLK_KP_ENTER) {
+                const basilisk::ItemType item =
+                    state->debugInventoryMenu.selectedItem();
+                if (state->debugMapProvider == nullptr ||
+                    !state->debugMapProvider->grantItem(item)) {
+                    SDL_Log("Debug item grant failed (inventory may be full)");
+                } else {
+                    SDL_Log("Debug item granted");
+                }
+            }
         }
         return SDL_APP_CONTINUE;
     }
@@ -1313,6 +1368,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                         : nullptr,
                     state->debugMapReveal.revealed(),
                     state->debugGameplayReveal.revealed(),
+                    state->debugInventoryMenu.active(),
 #endif
                     outputWidth,
                     outputHeight,
@@ -1390,6 +1446,24 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             return SDL_APP_FAILURE;
         }
     }
+
+#if defined(BASILISK_GAME_DEBUG)
+    if (state->debugInventoryMenu.active()) {
+        std::string inventoryError;
+        if (!basilisk::game::debug::renderDebugInventoryMenu(
+                state->renderer,
+                *state->textRenderer,
+                state->debugInventoryMenu,
+                outputWidth,
+                outputHeight,
+                inventoryError)) {
+            SDL_Log(
+                "Debug inventory menu rendering failed: %s",
+                inventoryError.c_str());
+            return SDL_APP_FAILURE;
+        }
+    }
+#endif
 
     SDL_RenderPresent(state->renderer);
 

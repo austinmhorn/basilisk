@@ -73,7 +73,7 @@ concept HasLedgerRows = requires(T value) { value.ledgerRows; };
 template <typename T>
 concept HasTrophyMatchId = requires(T value) { value.trophyMatchId; };
 
-static_assert(kProtocolVersion == 4);
+static_assert(kProtocolVersion == 5);
 static_assert(std::variant_size_v<ClientCommandPayload> == 5);
 static_assert(!HasWorld<ServerBootstrap>);
 static_assert(!HasAuthoritativeState<ServerBootstrap>);
@@ -218,7 +218,8 @@ PlayerRoundSnapshot representativeSnapshot() {
             }},
         DiscoveredCaveView{
             CaveId{12},
-            {TunnelView{TunnelId{1}, CaveId{7}, false}}},
+            {TunnelView{TunnelId{1}, CaveId{7}, false}},
+            true},
     };
     snapshot.looseArrowPresent = true;
     snapshot.temporarilyRevealedPitCaves = {CaveId{34}};
@@ -232,7 +233,6 @@ PlayerRoundSnapshot representativeSnapshot() {
     AvailableAction useSurvey;
     useSurvey.type = ActionType::UseItem;
     useSurvey.targetItem = ItemType::SurveyFragment;
-    useSurvey.targetTunnel = TunnelId{2};
     AvailableAction escape;
     escape.type = ActionType::Contextual;
     escape.contextualAction = ContextualActionType::Escape;
@@ -330,6 +330,8 @@ void allServerFieldsRoundTripExactly() {
     assert(snapshot.map.caves[0].exits[1].id == TunnelId{2});
     assert(!snapshot.map.caves[0].exits[1].destination.has_value());
     assert(snapshot.map.caves[0].exits[1].strongColdDraft);
+    assert(!snapshot.map.caves[0].surveyed);
+    assert(snapshot.map.caves[1].surveyed);
     assert(snapshot.temporarilyRevealedPitCaves ==
            std::vector<CaveId>{CaveId{34}});
     assert(snapshot.availableActions.size() == 5);
@@ -478,7 +480,7 @@ void goldenFixtureIsStable() {
     const WireBytes expected{
         0x42, 0x53, 0x4b, 0x31,
         0x13,
-        0x00, 0x00, 0x00, 0x04,
+        0x00, 0x00, 0x00, 0x05,
         0x00, 0x00, 0x00, 0x2a,
     };
     assert(bytes == expected);
@@ -509,7 +511,7 @@ void malformedWireIsRejected() {
     assert(!decodeClientCommand(malformed, command, error));
 
     malformed = valid;
-    malformed[8] = 0x05;
+    malformed[8] = 0xff;
     assert(!decodeClientCommand(malformed, command, error));
 
     PlayerAction action;
@@ -539,7 +541,7 @@ void malformedWireIsRejected() {
     assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
 
     malformedBootstrap = bootstrapBytes;
-    malformedBootstrap[8] = 0x05;
+    malformedBootstrap[8] = 0xff;
     assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
 
     malformedBootstrap = bootstrapBytes;

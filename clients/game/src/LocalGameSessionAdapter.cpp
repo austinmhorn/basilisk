@@ -129,6 +129,19 @@ public:
         state_.basilisk.roundsSinceMove = 0;
         return true;
     }
+
+    [[nodiscard]] bool grantItem(ItemType item) {
+        const auto player = std::find_if(
+            state_.players.begin(), state_.players.end(),
+            [](const PlayerState& candidate) {
+                return candidate.id == kLocalPlayer;
+            });
+        if (player == state_.players.end() || !player->inventory.add(
+                ItemInstance{item}, state_.rules.maxInventoryItems)) {
+            return false;
+        }
+        return publishSnapshot(coordinator_.lastEvents());
+    }
 #endif
 
 private:
@@ -243,6 +256,9 @@ LocalGameSessionAdapter::DebugSession LocalGameSessionAdapter::createDebug(
         },
         [actions = assembly.actions](BasiliskBehavior behavior) {
             return actions->forceBasiliskBehavior(behavior);
+        },
+        [actions = assembly.actions](ItemType item) {
+            return actions->grantItem(item);
         });
     return {std::move(assembly.session), std::move(provider)};
 }

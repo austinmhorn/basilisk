@@ -16,6 +16,10 @@ using TunnelId = std::uint32_t;
 struct DiscoveryState {
     std::unordered_set<CaveId> knownCaves;
 
+    // Caves revealed cartographically but not yet physically entered by this
+    // player. Survey knowledge is authoritative and player-specific.
+    std::unordered_set<CaveId> surveyedCaves;
+
     // Canonical undirected edge keys for tunnels whose destination has been
     // learned by this player. Unknown exits are derived from WorldGraph and
     // intentionally omit their destination in PlayerMapView.
@@ -35,6 +39,7 @@ struct TunnelView {
 struct DiscoveredCaveView {
     CaveId cave{};
     std::vector<TunnelView> exits;
+    bool surveyed{false};
 };
 
 struct PlayerMapView {

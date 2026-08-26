@@ -10,6 +10,15 @@
 namespace basilisk {
 namespace {
 
+constexpr std::uint64_t kSurveySeedSalt = 0xC6BC279692B5CC83ULL;
+
+std::uint64_t surveySeed(const MatchState& state, PlayerId player) {
+    return static_cast<std::uint64_t>(state.matchSeed) ^
+        (static_cast<std::uint64_t>(state.mapSeed) << 1U) ^
+        (static_cast<std::uint64_t>(state.round) * kSurveySeedSalt) ^
+        (static_cast<std::uint64_t>(player) * 0x9E3779B97F4A7C15ULL);
+}
+
 void emitItemUsed(PlayerState& player,
                   ItemType item,
                   std::vector<GameEvent>& events) {
@@ -120,11 +129,18 @@ std::vector<GameEvent> ItemSystem::use(
     }
 
     if (item == ItemType::SurveyFragment) {
-        if (!action.targetTunnel.has_value()) return events;
-        if (!MapDiscoverySystem::revealTunnelDestination(
-                state, player, player.cave, *action.targetTunnel, events)) {
-            return events;
-        }
+        if (action.targetCave.has_value() || action.targetTunnel.has_value() ||
+            state.rules.surveyFragmentRevealMin <= 0 ||
+            state.rules.surveyFragmentRevealMax <
+                state.rules.surveyFragmentRevealMin ||
+            !MapDiscoverySystem::hasSurveyFrontier(state, player)) return events;
+        RandomGenerator random{surveySeed(state, player.id)};
+        const int requested = random.range(
+            state.rules.surveyFragmentRevealMin,
+            state.rules.surveyFragmentRevealMax);
+        if (MapDiscoverySystem::surveyFrontier(
+                state, player, static_cast<std::size_t>(requested), random,
+                events) == 0) return {};
         if (!player.inventory.removeOne(item)) return {};
         emitItemUsed(player, item, events);
         return events;

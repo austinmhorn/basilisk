@@ -17,7 +17,7 @@
 
 namespace basilisk::game::network {
 
-inline constexpr std::uint32_t kProtocolVersion{4};
+inline constexpr std::uint32_t kProtocolVersion{5};
 
 struct CreateAccountRequest {
     std::string email;

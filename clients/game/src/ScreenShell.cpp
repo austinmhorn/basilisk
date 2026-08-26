@@ -1635,6 +1635,7 @@ bool renderScreenShell(
     const debug::DebugGameplayTruth* debugGameplayTruth,
     bool revealDebugMap,
     bool revealDebugGameplay,
+    bool debugInventoryMenuOpen,
 #endif
     int outputWidth,
     int outputHeight,
@@ -1798,6 +1799,7 @@ bool renderScreenShell(
             mapGeometry,
             revealDebugMap,
             revealDebugGameplay,
+            debugInventoryMenuOpen,
             debugGameplayTruth->basiliskBehavior,
             error)) {
         SDL_SetRenderClipRect(renderer, nullptr);

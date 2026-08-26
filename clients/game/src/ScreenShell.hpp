@@ -108,6 +108,7 @@ struct LifecycleModalGeometry {
     const debug::DebugGameplayTruth* debugGameplayTruth,
     bool revealDebugMap,
     bool revealDebugGameplay,
+    bool debugInventoryMenuOpen,
 #endif
     int outputWidth,
     int outputHeight,

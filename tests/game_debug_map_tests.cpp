@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "DebugMapProvider.hpp"
+#include "DebugInventoryMenu.hpp"
 #include "LocalGameSessionAdapter.hpp"
 #include "basilisk/MatchState.hpp"
 #include "basilisk/world/MapGenerator.hpp"
@@ -232,6 +233,54 @@ void behaviorControlCyclesLiveStateAndResetsMovementClock() {
     }
 }
 
+void debugInventoryUsesCapacityAndPublishesNormalActions() {
+    auto debugSession = LocalGameSessionAdapter::createDebug(
+        MapSeed{1}, MatchSeed{424242});
+    assert(debugSession.session != nullptr);
+    assert(debugSession.mapProvider != nullptr);
+
+    assert(debugSession.mapProvider->grantItem(ItemType::SurveyFragment));
+    const PlayerRoundSnapshot* snapshot =
+        debugSession.session->displayedSnapshot();
+    assert(snapshot != nullptr);
+    assert(std::find(
+        snapshot->inventory.items.begin(),
+        snapshot->inventory.items.end(),
+        ItemType::SurveyFragment) != snapshot->inventory.items.end());
+    assert(std::any_of(
+        snapshot->availableActions.begin(),
+        snapshot->availableActions.end(),
+        [](const AvailableAction& action) {
+            return action.type == ActionType::UseItem &&
+                action.targetItem == ItemType::SurveyFragment &&
+                !action.targetCave.has_value() &&
+                !action.targetTunnel.has_value();
+        }));
+
+    while (snapshot->inventory.items.size() < snapshot->inventory.capacity) {
+        assert(debugSession.mapProvider->grantItem(ItemType::HealingDraught));
+        snapshot = debugSession.session->displayedSnapshot();
+        assert(snapshot != nullptr);
+    }
+    assert(!debugSession.mapProvider->grantItem(ItemType::BloodBait));
+    assert(debugSession.session->displayedSnapshot()->inventory.items.size() ==
+           snapshot->inventory.capacity);
+}
+
+void debugInventoryMenuCyclesWithoutAffectingBehaviorControl() {
+    DebugInventoryMenuState menu;
+    assert(!menu.active());
+    menu.toggle();
+    assert(menu.active());
+    assert(menu.selectedItem() == ItemType::HealingDraught);
+    menu.moveSelection(-1);
+    assert(menu.selectedItem() == ItemType::OldHuntersMap);
+    menu.moveSelection(1);
+    assert(menu.selectedItem() == ItemType::HealingDraught);
+    menu.close();
+    assert(!menu.active());
+}
+
 } // namespace
 
 int main() {
@@ -242,5 +291,7 @@ int main() {
     gameplayTruthTracksTheRunningSession();
     mapAndGameplayRevealStatesAreIndependent();
     behaviorControlCyclesLiveStateAndResetsMovementClock();
+    debugInventoryUsesCapacityAndPublishesNormalActions();
+    debugInventoryMenuCyclesWithoutAffectingBehaviorControl();
     return 0;
 }

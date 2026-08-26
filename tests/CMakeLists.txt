@@ -123,6 +123,7 @@ if(TARGET BasiliskGameDebugLocalSession)
         BasiliskGameDebugMapTests
         PRIVATE
             Basilisk::GameDebugLocalSession
+            BasiliskGameRuntime
     )
     add_test(NAME BasiliskGameDebugMapTests COMMAND BasiliskGameDebugMapTests)
 endif()

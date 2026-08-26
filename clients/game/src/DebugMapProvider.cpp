@@ -6,10 +6,12 @@ namespace basilisk::game::debug {
 DebugMapProvider::DebugMapProvider(
     DebugMapTruth mapTruth,
     GameplayTruthSource gameplayTruthSource,
-    BehaviorControlSource behaviorControlSource)
+    BehaviorControlSource behaviorControlSource,
+    ItemGrantSource itemGrantSource)
     : mapTruth_(std::move(mapTruth)),
       gameplayTruthSource_(std::move(gameplayTruthSource)),
-      behaviorControlSource_(std::move(behaviorControlSource)) {}
+      behaviorControlSource_(std::move(behaviorControlSource)),
+      itemGrantSource_(std::move(itemGrantSource)) {}
 
 const DebugMapTruth& DebugMapProvider::mapTruth() const noexcept {
     return mapTruth_;
@@ -33,6 +35,10 @@ bool DebugMapProvider::cycleBasiliskBehavior() {
         case BasiliskBehavior::Enraged: next = BasiliskBehavior::Normal; break;
     }
     return behaviorControlSource_(next);
+}
+
+bool DebugMapProvider::grantItem(ItemType item) {
+    return itemGrantSource_ != nullptr && itemGrantSource_(item);
 }
 
 void DebugMapRevealState::toggle() noexcept {

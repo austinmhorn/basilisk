@@ -37,12 +37,10 @@ PresentedAction presentAvailableAction(const AvailableAction& action) {
             return {"Fire Arrow", "Uses 1 arrow"};
         case ActionType::UseItem:
             if (action.targetItem.has_value()) {
-                if (*action.targetItem == ItemType::SurveyFragment &&
-                    action.targetTunnel.has_value()) {
+                if (*action.targetItem == ItemType::SurveyFragment) {
                     return {
                         "Use Survey Fragment",
-                        "Tunnel " + std::to_string(*action.targetTunnel) +
-                            " · Destination unknown",
+                        "Reveal 3–5 unexplored caves",
                     };
                 }
                 return {

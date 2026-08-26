@@ -13,6 +13,7 @@
 #include "MapLayout.hpp"
 #include "basilisk/Types.hpp"
 #include "basilisk/actors/Basilisk.hpp"
+#include "basilisk/items/Item.hpp"
 
 namespace basilisk::game::debug {
 
@@ -45,20 +46,24 @@ class DebugMapProvider {
 public:
     using GameplayTruthSource = std::function<DebugGameplayTruth()>;
     using BehaviorControlSource = std::function<bool(BasiliskBehavior)>;
+    using ItemGrantSource = std::function<bool(ItemType)>;
 
     DebugMapProvider(
         DebugMapTruth mapTruth,
         GameplayTruthSource gameplayTruthSource,
-        BehaviorControlSource behaviorControlSource);
+        BehaviorControlSource behaviorControlSource,
+        ItemGrantSource itemGrantSource = {});
 
     [[nodiscard]] const DebugMapTruth& mapTruth() const noexcept;
     [[nodiscard]] DebugGameplayTruth gameplayTruth() const;
     [[nodiscard]] bool cycleBasiliskBehavior();
+    [[nodiscard]] bool grantItem(ItemType item);
 
 private:
     DebugMapTruth mapTruth_;
     GameplayTruthSource gameplayTruthSource_;
     BehaviorControlSource behaviorControlSource_;
+    ItemGrantSource itemGrantSource_;
 };
 
 class DebugMapRevealState {
