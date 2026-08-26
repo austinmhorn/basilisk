@@ -41,12 +41,19 @@ enum class WireMessageType : std::uint8_t {
     UpdateCosmeticLoadout = 41,
     CosmeticLoadoutUpdated = 13,
     CosmeticLoadoutUpdateFailed = 14,
+    ClashStarted = 15,
+    ClashResolved = 21,
+    SubmitClashResponse = 22,
 };
 
 [[nodiscard]] bool inspectWireMessageType(
     std::span<const std::uint8_t> bytes,
     WireMessageType& type,
     std::string& error);
+[[nodiscard]] bool encodeWire(const ClashStarted&, WireBytes&, std::string&);
+[[nodiscard]] bool encodeWire(const ClashResolved&, WireBytes&, std::string&);
+[[nodiscard]] bool decodeClashStarted(std::span<const std::uint8_t>, ClashStarted&, std::string&);
+[[nodiscard]] bool decodeClashResolved(std::span<const std::uint8_t>, ClashResolved&, std::string&);
 
 [[nodiscard]] bool encodeWire(
     const ServerBootstrap& message,

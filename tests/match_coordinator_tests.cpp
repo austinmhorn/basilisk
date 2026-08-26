@@ -5,6 +5,8 @@
 #include "basilisk/Action.hpp"
 #include "basilisk/MatchResult.hpp"
 #include "basilisk/systems/MatchCoordinator.hpp"
+#include "basilisk/systems/RoundController.hpp"
+#include "basilisk/systems/SnapshotSystem.hpp"
 #include "basilisk/world/MapGenerator.hpp"
 
 using namespace basilisk;
@@ -18,6 +20,43 @@ PlayerAction search(PlayerId player) {
     return action;
 }
 
+PlayerAction move(PlayerId player, CaveId cave) {
+    PlayerAction action; action.player = player; action.type = ActionType::Move;
+    action.targetCave = cave; return action;
+}
+
+PlayerAction moveThrough(PlayerId player, TunnelId tunnel) {
+    PlayerAction action; action.player = player; action.type = ActionType::Move;
+    action.targetTunnel = tunnel; return action;
+}
+
+PlayerAction use(PlayerId player, ItemType item) {
+    PlayerAction action; action.player = player; action.type = ActionType::UseItem;
+    action.targetItem = item; return action;
+}
+
+MatchState clashFixture() {
+    MatchState state; state.matchSeed = 77; state.rules.mapDiscoveryMode = MapDiscoveryMode::FullMap;
+    for (CaveId cave = 1; cave <= 6; ++cave) state.world.addCave(cave);
+    state.world.connect(1, 3); state.world.connect(2, 3); state.world.connect(1, 2);
+    state.world.connect(3, 4); state.world.connect(4, 5); state.world.connect(5, 6);
+    state.players = {PlayerState{PlayerId{17}, CaveId{1}}, PlayerState{PlayerId{42}, CaveId{2}}};
+    state.basilisk.alive = false;
+    return state;
+}
+
+MatchState nonConflictingMoveFixture() {
+    MatchState state; state.matchSeed = 91;
+    for (CaveId cave = 1; cave <= 6; ++cave) state.world.addCave(cave);
+    state.world.connect(1, 3);
+    state.world.connect(2, 4);
+    state.world.connect(3, 5);
+    state.world.connect(4, 6);
+    state.players = {PlayerState{PlayerId{17}, CaveId{1}}, PlayerState{PlayerId{42}, CaveId{2}}};
+    state.basilisk.alive = false;
+    return state;
+}
+
 const PlayerState& playerById(const MatchState& state, PlayerId id) {
     const auto it = std::find_if(state.players.begin(), state.players.end(),
         [id](const PlayerState& player) { return player.id == id; });
@@ -28,6 +67,11 @@ const PlayerState& playerById(const MatchState& state, PlayerId id) {
 bool hasEvent(const std::vector<GameEvent>& events, GameEventType type) {
     return std::any_of(events.begin(), events.end(),
         [type](const GameEvent& event) { return event.type == type; });
+}
+
+std::size_t eventCount(const std::vector<GameEvent>& events, GameEventType type) {
+    return static_cast<std::size_t>(std::count_if(events.begin(), events.end(),
+        [type](const GameEvent& event) { return event.type == type; }));
 }
 
 void actionsCanChangeUntilLockedAndTwoLocksResolve() {
@@ -195,6 +239,206 @@ void bothDisconnectingCanEndInDraw() {
     assert(hasEvent(coordinator.authoritativeEvents(), GameEventType::MatchDrawn));
 }
 
+void sameDestinationClashPausesAndFirstCorrectWins() {
+    auto state = clashFixture(); MatchCoordinator coordinator(state);
+    assert(coordinator.submitAction(move(17, 3))); assert(coordinator.lockAction(17));
+    assert(coordinator.submitAction(move(42, 3))); assert(coordinator.lockAction(42));
+    const ActiveClash* clash = coordinator.activeClash(); assert(clash != nullptr);
+    assert(state.round == 1); assert(playerById(state, 17).cave == 1); assert(playerById(state, 42).cave == 2);
+    const ClashId id = clash->id; const std::string word = clash->challengeWord;
+    assert(coordinator.submitClashResponse(99, id, word) == ClashSubmissionResult::Rejected);
+    assert(coordinator.submitClashResponse(17, id, " wrong ") == ClashSubmissionResult::Incorrect);
+    std::string upper = word; std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+    assert(coordinator.submitClashResponse(42, id, "  " + upper + "  ") == ClashSubmissionResult::Resolved);
+    assert(coordinator.activeClash() == nullptr); assert(state.round == 2);
+    assert(playerById(state, 42).cave == 3); assert(playerById(state, 17).health == 80);
+    assert(playerById(state, 17).cave != 3);
+    assert(coordinator.submitClashResponse(17, id, word) == ClashSubmissionResult::Rejected);
+}
+
+void nonConflictingTunnelMovesResolveOnceAndReachSnapshots() {
+    auto state = nonConflictingMoveFixture();
+    MatchCoordinator coordinator(state);
+    assert(coordinator.submitAction(moveThrough(17, TunnelId{1})));
+    assert(coordinator.lockAction(17));
+    assert(coordinator.submitAction(moveThrough(42, TunnelId{1})));
+    assert(coordinator.lockAction(42));
+
+    assert(coordinator.activeClash() == nullptr);
+    assert(state.round == 2);
+    assert(playerById(state, 17).cave == 3);
+    assert(playerById(state, 42).cave == 4);
+    const auto player17 = SnapshotSystem::buildForPlayer(state, 17, coordinator.authoritativeEvents());
+    const auto player42 = SnapshotSystem::buildForPlayer(state, 42, coordinator.authoritativeEvents());
+    assert(player17.currentCave == 3 && player17.map.currentCave == 3);
+    assert(player42.currentCave == 4 && player42.map.currentCave == 4);
+}
+
+void nonConflictingMoveAndSearchBothResolve() {
+    auto state = nonConflictingMoveFixture();
+    MatchCoordinator coordinator(state);
+    assert(coordinator.submitAction(moveThrough(17, TunnelId{1})));
+    assert(coordinator.lockAction(17));
+    assert(coordinator.submitAction(search(42)));
+    assert(coordinator.lockAction(42));
+
+    assert(coordinator.activeClash() == nullptr);
+    assert(state.round == 2);
+    assert(playerById(state, 17).cave == 3);
+    assert(playerById(state, 42).cave == 2);
+    assert(hasEvent(coordinator.authoritativeEvents(), GameEventType::SearchCompleted));
+}
+
+void ordinaryMovesMatchDirectRoundResolution() {
+    auto coordinated = nonConflictingMoveFixture();
+    auto direct = coordinated;
+    const std::vector<PlayerAction> actions{
+        moveThrough(17, TunnelId{1}), moveThrough(42, TunnelId{1})};
+    RoundController controller;
+    (void)controller.resolve(direct, actions);
+
+    MatchCoordinator coordinator(coordinated);
+    assert(coordinator.submitAction(actions[0]));
+    assert(coordinator.lockAction(17));
+    assert(coordinator.submitAction(actions[1]));
+    assert(coordinator.lockAction(42));
+
+    assert(coordinated.round == direct.round);
+    assert(playerById(coordinated, 17).cave == playerById(direct, 17).cave);
+    assert(playerById(coordinated, 42).cave == playerById(direct, 42).cave);
+    assert(playerById(coordinated, 17).discovery.knownCaves ==
+           playerById(direct, 17).discovery.knownCaves);
+    assert(playerById(coordinated, 42).discovery.knownCaves ==
+           playerById(direct, 42).discovery.knownCaves);
+}
+
+void moveIntoUseItemConsumesExactlyOnceAndBlocksNormalCommands() {
+    auto state = clashFixture();
+    auto& stationary = const_cast<PlayerState&>(playerById(state, 42));
+    stationary.health = 50;
+    assert(stationary.inventory.add(ItemInstance{ItemType::HealingDraught}, state.rules.maxInventoryItems));
+    MatchCoordinator coordinator(state);
+    assert(coordinator.submitAction(move(17, 2))); assert(coordinator.lockAction(17));
+    assert(coordinator.submitAction(use(42, ItemType::HealingDraught))); assert(coordinator.lockAction(42));
+    assert(coordinator.activeClash() != nullptr);
+    assert(playerById(state, 42).health == 100);
+    assert(!playerById(state, 42).inventory.contains(ItemType::HealingDraught));
+    assert(!coordinator.submitAction(search(17)) && !coordinator.lockAction(17));
+    const auto clash = *coordinator.activeClash();
+    assert(coordinator.submitClashResponse(17, clash.id, clash.challengeWord) == ClashSubmissionResult::Resolved);
+    assert(playerById(state, 42).health == 80);
+    assert(!playerById(state, 42).inventory.contains(ItemType::HealingDraught));
+    assert(playerById(state, 17).cave == 2);
+}
+
+void oppositeTraversalAndTimeoutStalemate() {
+    auto state = clashFixture(); MatchCoordinator coordinator(state);
+    assert(coordinator.submitAction(move(17, 2))); assert(coordinator.lockAction(17));
+    assert(coordinator.submitAction(move(42, 1))); assert(coordinator.lockAction(42));
+    assert(coordinator.activeClash() != nullptr); coordinator.advanceTime(state.rules.clashTimeoutMs);
+    assert(coordinator.activeClash() == nullptr); assert(state.round == 2);
+    assert(playerById(state, 17).cave == 1); assert(playerById(state, 42).cave == 2);
+    assert(playerById(state, 17).health == 100); assert(playerById(state, 42).health == 100);
+}
+
+void moveIntoSearchResolvesSearchOnlyOnce() {
+    auto state = clashFixture(); MatchCoordinator coordinator(state);
+    assert(coordinator.submitAction(move(17, 2))); assert(coordinator.lockAction(17));
+    assert(coordinator.submitAction(search(42))); assert(coordinator.lockAction(42));
+    assert(coordinator.activeClash() != nullptr);
+    const std::size_t inventoryAfterSearch = playerById(state, 42).inventory.items.size();
+    const auto clash = *coordinator.activeClash();
+    assert(coordinator.submitClashResponse(17, clash.id, clash.challengeWord) == ClashSubmissionResult::Resolved);
+    assert(playerById(state, 42).inventory.items.size() == inventoryAfterSearch);
+    assert(state.round == 2);
+}
+
+void reconnectDuringClashRestoresSameChallengeAndSearch() {
+    auto state = clashFixture();
+    state.rules.disconnectGraceMs = 500;
+    state.rules.clashTimeoutMs = 1000;
+    MatchCoordinator coordinator(state);
+    assert(coordinator.submitAction(move(17, 2))); assert(coordinator.lockAction(17));
+    assert(coordinator.submitAction(search(42))); assert(coordinator.lockAction(42));
+    const ActiveClash original = *coordinator.activeClash();
+    assert(eventCount(coordinator.authoritativeEvents(), GameEventType::SearchCompleted) == 1);
+
+    coordinator.disconnect(17);
+    coordinator.advanceTime(100);
+    assert(coordinator.activeClash() != nullptr);
+    assert(coordinator.activeClash()->id == original.id);
+    assert(coordinator.activeClash()->challengeWord == original.challengeWord);
+    assert(coordinator.activeClash()->remainingMs == original.remainingMs - 100);
+    coordinator.reconnect(17);
+    assert(coordinator.hostSession(17)->connected);
+    assert(coordinator.activeClash() != nullptr);
+    assert(coordinator.activeClash()->id == original.id);
+    assert(coordinator.activeClash()->challengeWord == original.challengeWord);
+
+    assert(coordinator.submitClashResponse(42, original.id,
+        original.challengeWord) == ClashSubmissionResult::Resolved);
+    assert(coordinator.activeClash() == nullptr);
+    assert(state.round == 2);
+    assert(eventCount(coordinator.authoritativeEvents(), GameEventType::SearchCompleted) == 1);
+    const RoundNumber resolvedRound = state.round;
+    coordinator.advanceTime(100);
+    assert(state.round == resolvedRound);
+}
+
+void disconnectGraceExpiryClearsClashAndDoesNotRepeatUseItem() {
+    auto state = clashFixture();
+    state.rules.disconnectGraceMs = 50;
+    state.rules.clashTimeoutMs = 1000;
+    auto& stationary = const_cast<PlayerState&>(playerById(state, 42));
+    stationary.health = 50;
+    assert(stationary.inventory.add(ItemInstance{ItemType::HealingDraught},
+        state.rules.maxInventoryItems));
+    MatchCoordinator coordinator(state);
+    assert(coordinator.submitAction(move(17, 2))); assert(coordinator.lockAction(17));
+    assert(coordinator.submitAction(use(42, ItemType::HealingDraught))); assert(coordinator.lockAction(42));
+    const ClashId clash = coordinator.activeClash()->id;
+    assert(playerById(state, 42).health == 100);
+    assert(!playerById(state, 42).inventory.contains(ItemType::HealingDraught));
+
+    coordinator.disconnect(17);
+    coordinator.advanceTime(50);
+    assert(!playerById(state, 17).alive);
+    assert(coordinator.activeClash() == nullptr);
+    assert(state.round == 2);
+    assert(playerById(state, 42).health == 100);
+    assert(!playerById(state, 42).inventory.contains(ItemType::HealingDraught));
+    assert(eventCount(coordinator.authoritativeEvents(), GameEventType::ItemUsed) == 1);
+    assert(coordinator.submitClashResponse(42, clash, "anything") ==
+        ClashSubmissionResult::Rejected);
+    const RoundNumber resolvedRound = state.round;
+    coordinator.advanceTime(50);
+    assert(state.round == resolvedRound);
+}
+
+void terminalDisconnectExpiryDiscardsPendingClashWithoutResolution() {
+    auto state = clashFixture();
+    state.rules.disconnectGraceMs = 50;
+    state.rules.clashTimeoutMs = 1000;
+    MatchCoordinator coordinator(state);
+    assert(coordinator.submitAction(move(17, 3))); assert(coordinator.lockAction(17));
+    assert(coordinator.submitAction(move(42, 3))); assert(coordinator.lockAction(42));
+    const ClashId clash = coordinator.activeClash()->id;
+    coordinator.disconnect(17);
+    coordinator.disconnect(42);
+    coordinator.advanceTime(50);
+
+    assert(state.result.status == MatchStatus::Completed);
+    assert(state.result.outcome == MatchOutcome::Draw);
+    assert(coordinator.activeClash() == nullptr);
+    assert(state.round == 1);
+    assert(eventCount(coordinator.authoritativeEvents(), GameEventType::MatchDrawn) == 1);
+    assert(coordinator.submitClashResponse(17, clash, "anything") ==
+        ClashSubmissionResult::Rejected);
+    coordinator.advanceTime(50);
+    assert(state.round == 1);
+    assert(coordinator.authoritativeEvents().empty());
+}
+
 } // namespace
 
 int main() {
@@ -206,6 +450,16 @@ int main() {
     reserveExpirationKillsWaitingHunterAndResolvesLockedSurvivor();
     deadPlayerDisconnectDoesNotBlockLivingHunter();
     bothDisconnectingCanEndInDraw();
+    nonConflictingTunnelMovesResolveOnceAndReachSnapshots();
+    nonConflictingMoveAndSearchBothResolve();
+    ordinaryMovesMatchDirectRoundResolution();
+    sameDestinationClashPausesAndFirstCorrectWins();
+    oppositeTraversalAndTimeoutStalemate();
+    moveIntoSearchResolvesSearchOnlyOnce();
+    moveIntoUseItemConsumesExactlyOnceAndBlocksNormalCommands();
+    reconnectDuringClashRestoresSameChallengeAndSearch();
+    disconnectGraceExpiryClearsClashAndDoesNotRepeatUseItem();
+    terminalDisconnectExpiryDiscardsPendingClashWithoutResolution();
 
     std::cout << "Basilisk match coordinator tests passed.\n";
     return 0;

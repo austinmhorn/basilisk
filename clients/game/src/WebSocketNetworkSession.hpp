@@ -45,6 +45,8 @@ public:
     [[nodiscard]] std::string error() const;
     [[nodiscard]] ClientSessionController* controller() noexcept;
     [[nodiscard]] const ClientSessionController* controller() const noexcept;
+    [[nodiscard]] const std::optional<network::ClashStarted>& activeClash() const noexcept;
+    [[nodiscard]] bool submitClashResponse(std::string response);
     [[nodiscard]] bool requestLeaderboard(
         std::uint32_t offset,
         std::uint32_t limit);

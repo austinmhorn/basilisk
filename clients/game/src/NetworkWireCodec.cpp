@@ -789,6 +789,9 @@ bool readHeader(
         case WireMessageType::MatchmakingCancelled:
         case WireMessageType::CosmeticLoadoutUpdated:
         case WireMessageType::CosmeticLoadoutUpdateFailed:
+        case WireMessageType::ClashStarted:
+        case WireMessageType::ClashResolved:
+        case WireMessageType::SubmitClashResponse:
         case WireMessageType::SubmitAction:
         case WireMessageType::LockAction:
         case WireMessageType::WatchRemainingHunter:
@@ -833,6 +836,8 @@ WireMessageType commandType(const ClientCommandPayload& payload) {
             return WireMessageType::WatchRemainingHunter;
         if constexpr (std::is_same_v<T, QuitCommand>)
             return WireMessageType::Quit;
+        if constexpr (std::is_same_v<T, SubmitClashResponse>)
+            return WireMessageType::SubmitClashResponse;
         return WireMessageType::LeaderboardPageRequest;
     }, payload);
 }
@@ -871,6 +876,9 @@ bool inspectWireMessageType(
         case WireMessageType::MatchmakingCancelled:
         case WireMessageType::CosmeticLoadoutUpdated:
         case WireMessageType::CosmeticLoadoutUpdateFailed:
+        case WireMessageType::ClashStarted:
+        case WireMessageType::ClashResolved:
+        case WireMessageType::SubmitClashResponse:
         case WireMessageType::SubmitAction:
         case WireMessageType::LockAction:
         case WireMessageType::WatchRemainingHunter:
@@ -914,6 +922,30 @@ bool encodeWire(
     if (!writer.finish()) return false;
     ServerBootstrap validated;
     return decodeServerBootstrap(bytes, validated, error);
+}
+
+bool encodeWire(const ClashStarted& message, WireBytes& bytes, std::string& error) {
+    Writer writer(bytes, error);
+    if (message.protocolVersion != kProtocolVersion) return writer.fail("Unsupported Basilisk network protocol version.");
+    if (message.participants.size() < 2 || message.challengeWord.empty() || message.remainingMs == 0)
+        return writer.fail("Invalid clash challenge.");
+    writeHeader(writer, WireMessageType::ClashStarted, message.protocolVersion);
+    writer.u64(message.clash);
+    if (!writer.count(message.participants.size())) return false;
+    for (PlayerId player : message.participants) writer.u32(player);
+    if (!writer.string(message.challengeWord)) return false;
+    writer.u64(message.remainingMs);
+    return writer.finish();
+}
+
+bool encodeWire(const ClashResolved& message, WireBytes& bytes, std::string& error) {
+    Writer writer(bytes, error);
+    if (message.protocolVersion != kProtocolVersion) return writer.fail("Unsupported Basilisk network protocol version.");
+    writeHeader(writer, WireMessageType::ClashResolved, message.protocolVersion);
+    writer.u64(message.clash); writer.u32(message.winner);
+    if (!writer.count(message.losers.size())) return false;
+    for (PlayerId player : message.losers) writer.u32(player);
+    return writer.finish();
 }
 
 bool encodeWire(
@@ -960,6 +992,9 @@ bool encodeWire(
         } else if constexpr (std::is_same_v<T, QuitCommand>) {
             writeId(writer, command.player);
             return true;
+        } else if constexpr (std::is_same_v<T, SubmitClashResponse>) {
+            writer.u64(command.clash);
+            return writer.string(command.response);
         } else {
             if (command.limit == 0 ||
                 command.limit > kMaximumLeaderboardPageSize)
@@ -1243,6 +1278,27 @@ bool decodeServerUpdate(
     return true;
 }
 
+bool decodeClashStarted(std::span<const std::uint8_t> bytes, ClashStarted& message, std::string& error) {
+    Reader reader(bytes, error); ClashStarted decoded; std::uint32_t count{};
+    if (!readHeader(reader, WireMessageType::ClashStarted, decoded.protocolVersion) ||
+        !reader.u64(decoded.clash) || !reader.count(count) || count < 2) return false;
+    decoded.participants.resize(count);
+    for (auto& player : decoded.participants) if (!reader.u32(player)) return false;
+    if (!reader.string(decoded.challengeWord) || decoded.challengeWord.empty() ||
+        !reader.u64(decoded.remainingMs) || decoded.remainingMs == 0 || !finishRead(reader)) return false;
+    message = std::move(decoded); return true;
+}
+
+bool decodeClashResolved(std::span<const std::uint8_t> bytes, ClashResolved& message, std::string& error) {
+    Reader reader(bytes, error); ClashResolved decoded; std::uint32_t count{};
+    if (!readHeader(reader, WireMessageType::ClashResolved, decoded.protocolVersion) ||
+        !reader.u64(decoded.clash) || !reader.u32(decoded.winner) || !reader.count(count)) return false;
+    decoded.losers.resize(count);
+    for (auto& player : decoded.losers) if (!reader.u32(player)) return false;
+    if (!finishRead(reader)) return false;
+    message = std::move(decoded); return true;
+}
+
 bool decodeClientCommand(
     std::span<const std::uint8_t> bytes,
     ClientCommand& message,
@@ -1257,6 +1313,7 @@ bool decodeClientCommand(
         type != WireMessageType::LockAction &&
         type != WireMessageType::WatchRemainingHunter &&
         type != WireMessageType::Quit &&
+        type != WireMessageType::SubmitClashResponse &&
         type != WireMessageType::LeaderboardPageRequest) {
         error = (type == WireMessageType::ServerBootstrap ||
                  type == WireMessageType::ServerUpdate ||
@@ -1293,6 +1350,13 @@ bool decodeClientCommand(
             QuitCommand command;
             if (!readId(reader, command.player)) return false;
             decoded.payload = command;
+            break;
+        }
+        case WireMessageType::SubmitClashResponse: {
+            SubmitClashResponse command;
+            if (!reader.u64(command.clash) || !reader.string(command.response) || command.response.empty())
+                return false;
+            decoded.payload = std::move(command);
             break;
         }
         case WireMessageType::LeaderboardPageRequest: {

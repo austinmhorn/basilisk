@@ -9,6 +9,7 @@
 #include "MapLayout.hpp"
 #include "PublicLeaderboard.hpp"
 #include "basilisk/Action.hpp"
+#include "basilisk/Clash.hpp"
 #include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/PublicMatchMetadata.hpp"
 #include "basilisk/client/ClientViewContext.hpp"
@@ -17,7 +18,7 @@
 
 namespace basilisk::game::network {
 
-inline constexpr std::uint32_t kProtocolVersion{5};
+inline constexpr std::uint32_t kProtocolVersion{6};
 
 struct CreateAccountRequest {
     std::string email;
@@ -151,6 +152,23 @@ struct QuitCommand {
     PlayerId player{};
 };
 
+struct ClashStarted {
+    std::uint32_t protocolVersion{kProtocolVersion};
+    ClashId clash{};
+    std::vector<PlayerId> participants;
+    std::string challengeWord;
+    std::uint64_t remainingMs{};
+};
+
+struct ClashResolved {
+    std::uint32_t protocolVersion{kProtocolVersion};
+    ClashId clash{};
+    PlayerId winner{};
+    std::vector<PlayerId> losers;
+};
+
+struct SubmitClashResponse { ClashId clash{}; std::string response; };
+
 inline constexpr std::uint32_t kMaximumLeaderboardPageSize{100};
 
 struct LeaderboardPageRequest {
@@ -169,6 +187,7 @@ using ClientCommandPayload = std::variant<
     LockActionCommand,
     WatchRemainingHunterCommand,
     QuitCommand,
+    SubmitClashResponse,
     LeaderboardPageRequest>;
 
 struct ClientCommand {

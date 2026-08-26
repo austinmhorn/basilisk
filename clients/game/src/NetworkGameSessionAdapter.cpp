@@ -139,6 +139,35 @@ bool NetworkGameSessionAdapter::ingest(
     return true;
 }
 
+bool NetworkGameSessionAdapter::ingest(network::ClashStarted clash, std::string& error) {
+    error.clear();
+    if (clash.protocolVersion != network::kProtocolVersion || clash.challengeWord.empty()) {
+        error = "Invalid clash challenge."; return false;
+    }
+    activeClash_ = std::move(clash);
+    lastClashResult_.reset();
+    return true;
+}
+
+bool NetworkGameSessionAdapter::ingest(network::ClashResolved clash, std::string& error) {
+    error.clear();
+    if (clash.protocolVersion != network::kProtocolVersion ||
+        !activeClash_ || activeClash_->clash != clash.clash) {
+        error = "Invalid clash result."; return false;
+    }
+    activeClash_.reset();
+    lastClashResult_ = std::move(clash);
+    return true;
+}
+
+const std::optional<network::ClashStarted>& NetworkGameSessionAdapter::activeClash() const noexcept { return activeClash_; }
+const std::optional<network::ClashResolved>& NetworkGameSessionAdapter::lastClashResult() const noexcept { return lastClashResult_; }
+
+bool NetworkGameSessionAdapter::submitClashResponse(std::string response) {
+    return transport_ && activeClash_ && transport_->send(network::ClientCommand{
+        network::kProtocolVersion, network::SubmitClashResponse{activeClash_->clash, std::move(response)}});
+}
+
 bool NetworkGameSessionAdapter::requestLeaderboard(
     std::uint32_t offset,
     std::uint32_t limit) {

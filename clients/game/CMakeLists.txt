@@ -438,6 +438,7 @@ add_library(BasiliskGameRuntime STATIC
     src/MainMenuRenderer.cpp
     src/MapRenderer.cpp
     src/PauseMenuRenderer.cpp
+    src/ClashQteRenderer.cpp
     src/SvgTextureManager.cpp
     src/SessionTokenStorage.cpp
     src/TextRenderer.cpp
@@ -582,6 +583,8 @@ if(NOT EMSCRIPTEN)
             Basilisk::ClientPresentation
             SDL3::SDL3
             SDL3_ttf::SDL3_ttf
+        PRIVATE
+            BasiliskGameRuntime
     )
     target_compile_features(BasiliskGameDebugSupport PUBLIC cxx_std_20)
 

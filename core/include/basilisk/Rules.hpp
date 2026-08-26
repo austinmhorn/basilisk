@@ -22,6 +22,8 @@ struct Rules {
 
     std::uint64_t multiplayerReserveMs{300000};
     std::uint64_t disconnectGraceMs{30000};
+    int clashDamage{20};
+    std::uint64_t clashTimeoutMs{8000};
 
     std::uint32_t looseArrowSpawnIntervalRounds{5};
     std::size_t maxLooseArrows{8};

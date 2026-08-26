@@ -73,8 +73,8 @@ concept HasLedgerRows = requires(T value) { value.ledgerRows; };
 template <typename T>
 concept HasTrophyMatchId = requires(T value) { value.trophyMatchId; };
 
-static_assert(kProtocolVersion == 5);
-static_assert(std::variant_size_v<ClientCommandPayload> == 5);
+static_assert(kProtocolVersion == 6);
+static_assert(std::variant_size_v<ClientCommandPayload> == 6);
 static_assert(!HasWorld<ServerBootstrap>);
 static_assert(!HasAuthoritativeState<ServerBootstrap>);
 static_assert(!HasEvents<ServerBootstrap>);
@@ -392,6 +392,7 @@ void everyClientCommandRoundTrips() {
         ClientCommand{kProtocolVersion,
             WatchRemainingHunterCommand{PlayerId{7}, PlayerId{11}}},
         ClientCommand{kProtocolVersion, QuitCommand{PlayerId{7}}},
+        ClientCommand{kProtocolVersion, SubmitClashResponse{ClashId{9}, "fang"}},
         ClientCommand{kProtocolVersion, LeaderboardPageRequest{20, 10}},
     };
     for (const ClientCommand& command : commands)
@@ -480,10 +481,39 @@ void goldenFixtureIsStable() {
     const WireBytes expected{
         0x42, 0x53, 0x4b, 0x31,
         0x13,
-        0x00, 0x00, 0x00, 0x05,
+        0x00, 0x00, 0x00, 0x06,
         0x00, 0x00, 0x00, 0x2a,
     };
     assert(bytes == expected);
+}
+
+void clashMessagesRoundTripAndDriveOneClientPhase() {
+    ClashStarted started{kProtocolVersion, ClashId{77}, {PlayerId{17}, PlayerId{42}}, "fang", 8000};
+    WireBytes bytes; std::string error;
+    assert(encodeWire(started, bytes, error));
+    ClashStarted decodedStart;
+    assert(decodeClashStarted(bytes, decodedStart, error));
+    assert(decodedStart.clash == started.clash && decodedStart.participants == started.participants);
+    assert(decodedStart.challengeWord == "fang" && decodedStart.remainingMs == 8000);
+
+    auto transport = std::make_shared<FakeTransport>();
+    auto adapter = NetworkGameSessionAdapter::create(bootstrapFor(), transport, error);
+    assert(adapter != nullptr);
+    assert(adapter->ingest(decodedStart, error));
+    assert(adapter->submitClashResponse(" FANG "));
+    assert(std::holds_alternative<SubmitClashResponse>(transport->commands.back().payload));
+    const auto& submitted = std::get<SubmitClashResponse>(transport->commands.back().payload);
+    assert(submitted.clash == 77 && submitted.response == " FANG ");
+
+    ClashResolved resolved{kProtocolVersion, 77, PlayerId{42}, {PlayerId{17}}};
+    assert(encodeWire(resolved, bytes, error));
+    ClashResolved decodedResult;
+    assert(decodeClashResolved(bytes, decodedResult, error));
+    assert(adapter->ingest(std::move(decodedResult), error));
+    assert(!adapter->activeClash().has_value());
+
+    bytes.pop_back();
+    assert(!decodeClashResolved(bytes, decodedResult, error));
 }
 
 void malformedWireIsRejected() {
@@ -789,6 +819,7 @@ int main() {
     publicLeaderboardRequestAndResponseRoundTrip();
     cosmeticLoadoutMessagesRoundTrip();
     goldenFixtureIsStable();
+    clashMessagesRoundTripAndDriveOneClientPhase();
     malformedWireIsRejected();
     byteTransportAndDecodedServerDataReachController();
     bootstrapCreatesUsableController();

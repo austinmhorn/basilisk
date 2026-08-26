@@ -148,7 +148,38 @@ public:
         network::WireBytes frame;
         if (!network::encodeWire(bootstrap, frame, error)) return false;
         endpoint.enqueue(std::move(frame));
+        if (const ActiveClash* clash = coordinator_.activeClash(); clash != nullptr &&
+            std::find(clash->participants.begin(), clash->participants.end(), player) != clash->participants.end())
+            enqueueClashStarted(*clash, endpoint);
         return true;
+    }
+
+    void enqueueClashStarted(const ActiveClash& clash, InMemoryMatchEndpoint& endpoint) {
+        network::ClashStarted message;
+        message.clash = clash.id;
+        message.participants = clash.participants;
+        message.challengeWord = clash.challengeWord;
+        message.remainingMs = clash.remainingMs;
+        network::WireBytes frame; std::string error;
+        if (network::encodeWire(message, frame, error)) endpoint.enqueue(std::move(frame));
+    }
+
+    void publishClashStarted(const ActiveClash& clash) {
+        for (PlayerId player : clash.participants) {
+            const auto it = endpoints_.find(player);
+            if (it != endpoints_.end()) if (auto endpoint = it->second.lock()) enqueueClashStarted(clash, *endpoint);
+        }
+    }
+
+    void publishClashResolved(ClashId id, PlayerId winner, const std::vector<PlayerId>& participants) {
+        network::ClashResolved message; message.clash = id; message.winner = winner;
+        for (PlayerId player : participants) if (player != winner) message.losers.push_back(player);
+        network::WireBytes frame; std::string error;
+        if (!network::encodeWire(message, frame, error)) return;
+        for (PlayerId player : participants) {
+            const auto it = endpoints_.find(player);
+            if (it != endpoints_.end()) if (auto endpoint = it->second.lock()) endpoint->enqueue(frame);
+        }
     }
 
     [[nodiscard]] bool receive(
@@ -199,6 +230,8 @@ public:
 
     void advanceTime(std::uint64_t elapsedMs) {
         const RoundNumber priorRound = match_.round;
+        const std::optional<ActiveClash> priorClash = coordinator_.activeClash()
+            ? std::optional<ActiveClash>{*coordinator_.activeClash()} : std::nullopt;
         coordinator_.advanceTime(elapsedMs);
         if (match_.round != priorRound) ++resolvedRoundCount_;
         const auto& events = coordinator_.authoritativeEvents();
@@ -206,6 +239,8 @@ public:
         if (match_.round == priorRound && events.empty()) return;
         refreshContexts();
         publishAll(events);
+        if (priorClash && coordinator_.activeClash() == nullptr)
+            publishClashResolved(priorClash->id, PlayerId{}, priorClash->participants);
     }
 
     void disconnect(PlayerId player) {
@@ -261,6 +296,10 @@ private:
             error = "Coordinator rejected action lock.";
             return false;
         }
+        if (const ActiveClash* clash = coordinator_.activeClash()) {
+            publishAll(coordinator_.authoritativeEvents());
+            publishClashStarted(*clash);
+        }
         recordTrophyEvents(coordinator_.authoritativeEvents());
         if (match_.round != priorRound) {
             ++resolvedRoundCount_;
@@ -269,6 +308,31 @@ private:
         }
         error.clear();
         return true;
+    }
+
+    [[nodiscard]] bool handle(
+        PlayerId authenticatedPlayer,
+        const network::SubmitClashResponse& command,
+        std::string& error) {
+        const ActiveClash* active = coordinator_.activeClash();
+        if (active == nullptr || active->id != command.clash) {
+            error = "Clash response is stale or invalid.";
+            return false;
+        }
+        const ActiveClash before = *active;
+        const RoundNumber priorRound = match_.round;
+        const ClashSubmissionResult result = coordinator_.submitClashResponse(
+            authenticatedPlayer, command.clash, command.response);
+        if (result == ClashSubmissionResult::Rejected) {
+            error = "Clash response was rejected."; return false;
+        }
+        if (result == ClashSubmissionResult::Incorrect) { error.clear(); return true; }
+        if (match_.round != priorRound) ++resolvedRoundCount_;
+        recordTrophyEvents(coordinator_.authoritativeEvents());
+        refreshContexts();
+        publishClashResolved(before.id, authenticatedPlayer, before.participants);
+        publishAll(coordinator_.authoritativeEvents());
+        error.clear(); return true;
     }
 
     [[nodiscard]] bool handle(
@@ -302,9 +366,13 @@ private:
             error = "Authenticated player does not match quit request.";
             return false;
         }
+        const std::optional<ActiveClash> priorClash = coordinator_.activeClash()
+            ? std::optional<ActiveClash>{*coordinator_.activeClash()} : std::nullopt;
         coordinator_.forfeit(authenticatedPlayer);
         recordTrophyEvents(coordinator_.authoritativeEvents());
         refreshContexts();
+        if (priorClash && coordinator_.activeClash() == nullptr)
+            publishClashResolved(priorClash->id, PlayerId{}, priorClash->participants);
         publishAll(coordinator_.authoritativeEvents());
         error.clear();
         return true;

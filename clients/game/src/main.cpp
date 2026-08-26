@@ -17,6 +17,7 @@
 #include "AuthScreen.hpp"
 #include "AuthScreenRenderer.hpp"
 #include "ClientLifecycle.hpp"
+#include "ClashQteRenderer.hpp"
 #include "ClientSessionController.hpp"
 #include "ConnectionStatusPresentation.hpp"
 #include "DemoMap.hpp"
@@ -95,6 +96,7 @@ struct AppState {
     basilisk::game::LifecycleModalGeometry lifecycleModalGeometry;
     basilisk::game::PauseMenuState pauseMenu;
     basilisk::game::PauseMenuGeometry pauseMenuGeometry;
+    std::string clashInput;
     std::optional<basilisk::RoundNumber> mapActionMenuRound;
 #if defined(BASILISK_GAME_DEBUG)
     std::unique_ptr<basilisk::game::debug::DebugMapProvider> debugMapProvider;
@@ -632,6 +634,24 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                         basilisk::game::MainMenuPage::JoinLobby)
                     (void)SDL_StartTextInput(state->window);
                 return handleMainMenuResult(*state, result);
+            }
+        }
+        return SDL_APP_CONTINUE;
+    }
+
+    if (state != nullptr && state->networkSession != nullptr &&
+        state->networkSession->activeClash().has_value()) {
+        (void)SDL_StartTextInput(state->window);
+        if (event->type == SDL_EVENT_TEXT_INPUT) {
+            if (state->clashInput.size() + std::char_traits<char>::length(event->text.text) <= 64)
+                state->clashInput += event->text.text;
+        } else if (event->type == SDL_EVENT_KEY_DOWN && !event->key.repeat) {
+            if (event->key.key == SDLK_BACKSPACE && !state->clashInput.empty())
+                state->clashInput.pop_back();
+            else if ((event->key.key == SDLK_RETURN || event->key.key == SDLK_KP_ENTER) &&
+                     !state->clashInput.empty()) {
+                if (state->networkSession->submitClashResponse(state->clashInput))
+                    state->clashInput.clear();
             }
         }
         return SDL_APP_CONTINUE;
@@ -1445,6 +1465,18 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             SDL_Log("Pause menu rendering failed: %s", pauseError.c_str());
             return SDL_APP_FAILURE;
         }
+    }
+
+    if (state->networkSession != nullptr && state->networkSession->activeClash().has_value()) {
+        std::string clashError;
+        if (!basilisk::game::renderClashQte(state->renderer, *state->textRenderer,
+                *state->networkSession->activeClash(), state->clashInput,
+                outputWidth, outputHeight, clashError)) {
+            SDL_Log("Clash QTE rendering failed: %s", clashError.c_str());
+            return SDL_APP_FAILURE;
+        }
+    } else if (!state->clashInput.empty()) {
+        state->clashInput.clear();
     }
 
 #if defined(BASILISK_GAME_DEBUG)
