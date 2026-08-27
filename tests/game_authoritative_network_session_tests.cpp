@@ -103,6 +103,8 @@ void twoClientsAdvanceOneAuthoritativeRound() {
     assert(first != nullptr && second != nullptr);
     assert(first->round == RoundNumber{1});
     assert(second->round == RoundNumber{1});
+    assert(p1.session->controller().matchMode() == client::MatchMode::Online);
+    assert(p2.session->controller().matchMode() == client::MatchMode::Online);
     assert(first->player == PlayerId{1});
     assert(second->player == PlayerId{2});
     const auto& p1Players = p1.session->controller().matchMetadata().players;
@@ -358,6 +360,8 @@ void sandboxLaunchPreservesSlotsAndRunsServerAi() {
     ConnectedClient p2 = connectClient(*host, PlayerId{2});
     ConnectedClient p3 = connectClient(*host, PlayerId{3});
     for (const ConnectedClient* client : {&p1, &p2, &p3}) {
+        assert(client->session->controller().matchMode() ==
+               client::MatchMode::Sandbox);
         const auto& players = client->session->controller().matchMetadata().players;
         assert(players.size() == 6);
         for (std::uint32_t slot = 1; slot <= 6; ++slot) {
