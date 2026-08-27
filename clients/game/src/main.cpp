@@ -115,6 +115,10 @@ struct AppState {
 #endif
 };
 
+bool localGameplayActive(const AppState& state) noexcept {
+    return state.localAiDriver != nullptr || state.localSandboxDriver != nullptr;
+}
+
 std::string bundledFontDirectory() {
     const char* basePath = SDL_GetBasePath();
     if (basePath == nullptr) return {};
@@ -1384,7 +1388,8 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 
     if (state->networkSession != nullptr) {
         state->networkSession->pump();
-        state->session = state->networkSession->controller();
+        if (!localGameplayActive(*state))
+            state->session = state->networkSession->controller();
         if (state->networkSession->lobbyResponseRevision() !=
                 state->handledLobbyResponseRevision &&
             state->networkSession->lobbyResponse().has_value()) {
@@ -1692,7 +1697,8 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 return SDL_APP_FAILURE;
             }
 
-            if (state->networkSession != nullptr) {
+            if (state->networkSession != nullptr &&
+                !localGameplayActive(*state)) {
                 std::string connectionError;
                 const bool sessionReady = snapshot != nullptr;
                 if (!basilisk::game::renderConnectionStatus(
