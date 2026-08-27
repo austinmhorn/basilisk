@@ -103,6 +103,7 @@ NetworkGameSessionAdapter::create(
         bootstrap.viewContext,
         std::move(actionCommands),
         std::move(sessionCommands));
+    controller->setMatchMode(bootstrap.matchMode);
     controller->setTrophyTotal(bootstrap.trophyTotal);
     if (!controller->ingestSnapshot(
             std::move(bootstrap.initialSnapshot),
