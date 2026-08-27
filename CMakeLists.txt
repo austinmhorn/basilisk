@@ -36,6 +36,7 @@ if(BASILISK_BUILD_TESTS)
 
     if(BASILISK_BUILD_SIM)
         add_test(NAME BasiliskSimSmoke COMMAND BasiliskSim 10 40 100000 500000)
+        add_test(NAME BasiliskAiSimSmoke COMMAND BasiliskAiSim --matches 2 --seed 123)
     endif()
 endif()
 

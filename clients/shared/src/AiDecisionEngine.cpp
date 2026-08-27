@@ -547,7 +547,10 @@ AiDecisionEvaluation AiDecisionEngine::evaluate(
             shootTacticalAdjustment(action, snapshot, config, knowledge) +
             noise(config, snapshot.round, index);
         evaluation.actions.push_back({action, score});
-        if (score > best) { best = score; bestIndex = index; }
+        if (score > best) {
+            best = score;
+            bestIndex = evaluation.actions.size() - 1;
+        }
     }
     auto forced = immediateEscapeAction(snapshot, config);
     if (!forced) forced = hardBasiliskEngagementShot(snapshot, knowledge, config);

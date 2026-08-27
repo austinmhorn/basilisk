@@ -143,6 +143,12 @@ if(TARGET BasiliskClientAI)
     add_test(NAME BasiliskGameLocalAiSessionTests COMMAND BasiliskGameLocalAiSessionTests)
 endif()
 
+if(TARGET BasiliskAiSimulation)
+    add_executable(BasiliskAiSimulationTests ai_sim_tests.cpp)
+    target_link_libraries(BasiliskAiSimulationTests PRIVATE Basilisk::AiSimulation)
+    add_test(NAME BasiliskAiSimulationTests COMMAND BasiliskAiSimulationTests)
+endif()
+
 if(TARGET BasiliskGameActions)
     add_executable(BasiliskGameMainMenuTests
         game_main_menu_tests.cpp

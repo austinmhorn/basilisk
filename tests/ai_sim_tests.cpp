@@ -1,0 +1,93 @@
+#include <cassert>
+#include <iostream>
+#include <string>
+
+#include "AiSimulation.hpp"
+#include "AiBenchmark.hpp"
+
+using namespace basilisk;
+using namespace basilisk::sim;
+
+namespace {
+
+void deterministicEpisodes() {
+    SimulationConfig config;
+    config.seed = 87123;
+    config.p1 = {client::ai::AiDifficulty::Hard, client::ai::AiBehavior::Random};
+    config.p2 = {client::ai::AiDifficulty::Medium, client::ai::AiBehavior::Random};
+    const auto first = runEpisode(config, 0);
+    const auto again = runEpisode(config, 0);
+    assert(episodeJson(first) == episodeJson(again));
+    assert(first.status == MatchStatus::Completed);
+    assert(first.players.size() == 2);
+    assert(first.players[0].resolvedBehavior != client::ai::AiBehavior::Random);
+    assert(first.players[1].resolvedBehavior != client::ai::AiBehavior::Random);
+    assert(first.players[0].aiSeed != first.players[1].aiSeed);
+
+    const auto different = runEpisode(config, 1);
+    assert(episodeJson(first) != episodeJson(different));
+}
+
+void jsonAndAggregate() {
+    SimulationConfig config;
+    config.seed = 919191;
+    BatchAggregate aggregate;
+    for (std::uint64_t index = 0; index < 3; ++index) {
+        const auto episode = runEpisode(config, index);
+        const std::string json = episodeJson(episode);
+        assert(json.starts_with("{\"schemaVersion\":1,"));
+        assert(json.find("\"players\":[") != std::string::npos);
+        assert(json.find("\"resolvedBehavior\":") != std::string::npos);
+        assert(json.find("\"actions\":") != std::string::npos);
+        aggregate.add(episode);
+    }
+    assert(aggregate.matches == 3);
+    assert(aggregate.completed + aggregate.unfinished == 3);
+    assert(aggregate.p1Wins + aggregate.p2Wins + aggregate.draws == 3);
+}
+
+void legalActionsRemainExactAcrossBatch() {
+    SimulationConfig config;
+    config.seed = 123;
+    config.p1 = {client::ai::AiDifficulty::Hard, client::ai::AiBehavior::Balanced};
+    config.p2 = {client::ai::AiDifficulty::Hard, client::ai::AiBehavior::Balanced};
+    for (std::uint64_t index = 0; index < 10; ++index)
+        assert(runEpisode(config, index).status == MatchStatus::Completed);
+}
+
+void benchmarkAccountingAndDeterminism() {
+    const BenchmarkMatchup asymmetric{"Easy vs Hard",
+        {client::ai::AiDifficulty::Easy, client::ai::AiBehavior::Balanced},
+        {client::ai::AiDifficulty::Hard, client::ai::AiBehavior::Balanced}};
+    auto first = runBenchmarkMatchup(asymmetric, 4401, 3);
+    auto again = runBenchmarkMatchup(asymmetric, 4401, 3);
+    assert(first.orientations == 2);
+    assert(first.matches == 6);
+    assert(first.aP1Matches == 3 && first.aP2Matches == 3);
+    assert(first.bP1Matches == 3 && first.bP2Matches == 3);
+    assert(first.p1Wins + first.p2Wins + first.draws == first.matches);
+    assert(first.aWins + first.bWins + first.draws == first.matches);
+    first.elapsedSeconds = 1.0;
+    again.elapsedSeconds = 1.0;
+    assert(benchmarkCsvRow(first) == benchmarkCsvRow(again));
+
+    const BenchmarkMatchup identical{"Hard vs Hard",
+        {client::ai::AiDifficulty::Hard, client::ai::AiBehavior::Balanced},
+        {client::ai::AiDifficulty::Hard, client::ai::AiBehavior::Balanced}};
+    const auto same = runBenchmarkMatchup(identical, 4401, 3);
+    assert(same.orientations == 1);
+    assert(same.matches == 3);
+    assert(same.aP1Matches == 3 && same.aP2Matches == 0);
+    assert(same.bP1Matches == 0 && same.bP2Matches == 3);
+    assert(benchmarkCsvHeader().starts_with("schema_version,"));
+}
+
+} // namespace
+
+int main() {
+    deterministicEpisodes();
+    jsonAndAggregate();
+    legalActionsRemainExactAcrossBatch();
+    benchmarkAccountingAndDeterminism();
+    std::cout << "AI simulation tests passed\n";
+}
