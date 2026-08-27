@@ -339,6 +339,60 @@ void authenticatedServerReturnsOnlyPublicLeaderboardFields() {
     }
 }
 
+void onlineSandboxSpectatorAdvancesWhenWatchedHunterDies() {
+    auto config = client::defaultSandboxSessionConfig(3);
+    config.humanPlayerCount = 3;
+    config.caveCount = 30;
+    config.jackalCount = 0;
+    config.mapSeed = MapSeed{3003};
+
+    std::vector<client::PublicPlayerProfile> sandboxProfiles;
+    for (std::uint32_t slot = 1; slot <= 3; ++slot) {
+        sandboxProfiles.push_back({
+            PlayerId{slot},
+            "Hunter " + std::to_string(slot),
+            {"arrow-right-black"},
+            {"circle-black"},
+        });
+    }
+
+    std::string error;
+    auto host = AuthoritativeInMemoryMatch::createSandbox(
+        config, sandboxProfiles, {}, error);
+    assert(host != nullptr && error.empty());
+
+    ConnectedClient p1 = connectClient(*host, PlayerId{1});
+    ConnectedClient p2 = connectClient(*host, PlayerId{2});
+    ConnectedClient p3 = connectClient(*host, PlayerId{3});
+
+    assert(p1.session->controller().quit());
+    p1.ingestUpdates();
+    p2.ingestUpdates();
+    p3.ingestUpdates();
+    assert(p1.session->controller().viewContext().mode ==
+           client::ClientViewMode::Defeated);
+    assert(p1.session->controller().viewContext().spectatablePlayer ==
+           PlayerId{2});
+
+    assert(p1.session->controller().watchRemainingHunter());
+    p1.ingestUpdates();
+    assert(p1.session->controller().viewContext().mode ==
+           client::ClientViewMode::Spectating);
+    assert(p1.session->controller().viewContext().viewedPlayer ==
+           PlayerId{2});
+
+    assert(p2.session->controller().quit());
+    p1.ingestUpdates();
+    p2.ingestUpdates();
+    p3.ingestUpdates();
+    assert(p1.session->controller().viewContext().mode ==
+           client::ClientViewMode::Spectating);
+    assert(p1.session->controller().viewContext().viewedPlayer ==
+           PlayerId{3});
+    assert(p1.session->controller().displayedSnapshot()->player ==
+           PlayerId{3});
+}
+
 void sandboxLaunchPreservesSlotsAndRunsServerAi() {
     auto config = client::defaultSandboxSessionConfig(6);
     config.humanPlayerCount = 3;
@@ -391,6 +445,7 @@ int main() {
     spoofedMalformedAndForgedCommandsAreRejected();
     explicitQuitEliminatesImmediatelyAndSurvivorContinues();
     authenticatedServerReturnsOnlyPublicLeaderboardFields();
+    onlineSandboxSpectatorAdvancesWhenWatchedHunterDies();
     sandboxLaunchPreservesSlotsAndRunsServerAi();
     return 0;
 }
