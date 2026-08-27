@@ -535,6 +535,25 @@ void clashMessagesRoundTripAndDriveOneClientPhase() {
     assert(adapter->ingest(std::move(decodedResult), error));
     assert(!adapter->activeClash().has_value());
 
+    ClashStarted queued{kProtocolVersion, ClashId{78},
+        {PlayerId{11}, PlayerId{23}, PlayerId{42}}, "torch", 8000};
+    assert(adapter->ingest(std::move(queued), error));
+    assert(adapter->activeClash().has_value());
+    assert(adapter->activeClash()->clash == ClashId{78});
+    assert(adapter->activeClash()->participants.size() == 3);
+
+    ClashResolved stale{kProtocolVersion, ClashId{77},
+        PlayerId{42}, {PlayerId{17}}};
+    assert(!adapter->ingest(std::move(stale), error));
+    assert(adapter->activeClash().has_value());
+    assert(adapter->activeClash()->clash == ClashId{78});
+
+    ClashResolved queuedResolved{kProtocolVersion, ClashId{78},
+        PlayerId{23}, {PlayerId{11}, PlayerId{42}}};
+    assert(adapter->ingest(std::move(queuedResolved), error));
+    assert(!adapter->activeClash().has_value());
+
+    assert(encodeWire(resolved, bytes, error));
     bytes.pop_back();
     assert(!decodeClashResolved(bytes, decodedResult, error));
 }
