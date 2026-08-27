@@ -958,6 +958,7 @@ bool encodeWire(
     if (message.protocolVersion != kProtocolVersion)
         return writer.fail("Unsupported Basilisk network protocol version.");
     writeHeader(writer, WireMessageType::ServerBootstrap, message.protocolVersion);
+    writer.u8(static_cast<std::uint8_t>(message.matchMode));
     if (!writeMetadata(writer, message.matchMetadata) ||
         !writeVector(writer, message.profiles,
             [&](const client::PublicPlayerProfile& profile) {
@@ -1299,9 +1300,15 @@ bool decodeServerBootstrap(
 
     Reader reader(bytes, error);
     ServerBootstrap decoded;
+    std::uint8_t encodedMatchMode{};
     if (!readHeader(reader, WireMessageType::ServerBootstrap,
             decoded.protocolVersion) ||
-        !readMetadata(reader, decoded.matchMetadata) ||
+        !reader.u8(encodedMatchMode))
+        return false;
+    if (encodedMatchMode > static_cast<std::uint8_t>(client::MatchMode::Sandbox))
+        return reader.fail("Invalid match mode.");
+    decoded.matchMode = static_cast<client::MatchMode>(encodedMatchMode);
+    if (!readMetadata(reader, decoded.matchMetadata) ||
         !readVector(reader, decoded.profiles,
             [&](client::PublicPlayerProfile& profile) {
                 return readProfile(reader, profile);
