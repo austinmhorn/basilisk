@@ -15,11 +15,12 @@
 #include "basilisk/client/ClientViewContext.hpp"
 #include "basilisk/client/AccountCosmetics.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
+#include "basilisk/client/MatchMode.hpp"
 #include "basilisk/client/SandboxConfiguration.hpp"
 
 namespace basilisk::game::network {
 
-inline constexpr std::uint32_t kProtocolVersion{6};
+inline constexpr std::uint32_t kProtocolVersion{7};
 
 struct CreateAccountRequest {
     std::string email;
@@ -139,6 +140,7 @@ struct LobbyResponse {
 // Initial player-safe state supplied after an online session is established.
 struct ServerBootstrap {
     std::uint32_t protocolVersion{kProtocolVersion};
+    client::MatchMode matchMode{client::MatchMode::Online};
     PublicMatchMetadata matchMetadata;
     std::vector<client::PublicPlayerProfile> profiles;
     client::ClientViewContext viewContext;
