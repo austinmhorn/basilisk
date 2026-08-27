@@ -978,6 +978,201 @@ void authenticatedSandboxLobbyReadiesAndLaunchesAuthoritativeGameplay() {
     }, 10000));
 }
 
+
+void authenticatedSandboxSupportsThreeToSixHumanSockets() {
+    for (std::size_t humanCount = 3; humanCount <= 6; ++humanCount) {
+        TemporaryTrophyDatabase database;
+        std::string error;
+        auto auth = SQLiteAccountAuth::open(database.path(), error);
+        assert(auth != nullptr && error.empty());
+
+        std::vector<AuthSessionToken> tokens(humanCount);
+        for (std::size_t index = 0; index < humanCount; ++index) {
+            const std::string suffix =
+                std::to_string(humanCount) + "-" + std::to_string(index + 1);
+            const std::string email =
+                "sandbox-multi-" + suffix + "@example.test";
+            const std::string username = "sandbox-multi-" + suffix;
+            AccountIdentity account;
+            assert(auth->createAccount(
+                EmailAddress{email},
+                "correct horse battery staple",
+                PublicAccountProfile{Username{username}},
+                account,
+                error) == CreateAccountResult::Created);
+            assert(auth->authenticate(
+                EmailAddress{email},
+                "correct horse battery staple",
+                tokens[index],
+                error));
+        }
+
+        LocalWebSocketServerConfig serverConfig;
+        serverConfig.port = static_cast<std::uint16_t>(ix::getFreePort());
+        serverConfig.authentication = auth;
+        serverConfig.profiles = profiles();
+        auto server =
+            LocalWebSocketMatchServer::start(std::move(serverConfig), error);
+        assert(server != nullptr && error.empty());
+
+        std::vector<std::unique_ptr<WebSocketNetworkSession>> clients;
+        clients.reserve(humanCount);
+        for (std::size_t index = 0; index < humanCount; ++index) {
+            clients.push_back(
+                WebSocketNetworkSession::connectForAuthentication(
+                    url(*server), error));
+            assert(clients.back() != nullptr);
+        }
+
+        assert(waitUntil([&] {
+            bool connected = true;
+            for (auto& client : clients) {
+                client->pump();
+                connected = connected &&
+                    client->state() == NetworkConnectionState::Connected;
+            }
+            return connected;
+        }));
+
+        for (std::size_t index = 0; index < humanCount; ++index) {
+            assert(clients[index]->authenticate({
+                network::kProtocolVersion,
+                network::AuthenticateSessionRequest{tokens[index].value},
+            }));
+        }
+        assert(waitUntil([&] {
+            bool authenticated = true;
+            for (auto& client : clients) {
+                client->pump();
+                authenticated = authenticated &&
+                    client->authenticationResponse().has_value() &&
+                    std::holds_alternative<network::AuthenticationSuccess>(
+                        client->authenticationResponse()->payload);
+            }
+            return authenticated;
+        }));
+
+        auto sandbox = client::defaultSandboxSessionConfig(humanCount);
+        sandbox.humanPlayerCount = humanCount;
+        sandbox.caveCount = humanCount * 10;
+        sandbox.jackalCount = 0;
+        assert(clients.front()->requestLobby({
+            network::kProtocolVersion,
+            network::HostSandboxLobbyRequest{sandbox},
+        }));
+        assert(waitUntil([&] {
+            clients.front()->pump();
+            return clients.front()->lobbyResponse().has_value() &&
+                std::holds_alternative<network::SandboxLobbyUpdated>(
+                    clients.front()->lobbyResponse()->payload);
+        }, 10000));
+        const auto hosted = std::get<network::SandboxLobbyUpdated>(
+            clients.front()->lobbyResponse()->payload);
+        assert(hosted.localPlayer == PlayerId{1});
+
+        for (std::size_t index = 1; index < humanCount; ++index) {
+            assert(clients[index]->requestLobby({
+                network::kProtocolVersion,
+                network::JoinSandboxLobbyRequest{hosted.lobbyCode},
+            }));
+            assert(waitUntil([&] {
+                for (auto& client : clients) client->pump();
+                if (!clients[index]->lobbyResponse().has_value()) return false;
+                const auto* update =
+                    std::get_if<network::SandboxLobbyUpdated>(
+                        &clients[index]->lobbyResponse()->payload);
+                return update != nullptr &&
+                    update->localPlayer ==
+                        static_cast<PlayerId>(index + 1);
+            }));
+        }
+
+        for (std::size_t index = 1; index < humanCount; ++index) {
+            assert(clients[index]->requestLobby({
+                network::kProtocolVersion,
+                network::SetSandboxReadyRequest{hosted.lobbyCode, true},
+            }));
+        }
+        assert(waitUntil([&] {
+            for (auto& client : clients) client->pump();
+            if (!clients.front()->lobbyResponse().has_value()) return false;
+            const auto* update =
+                std::get_if<network::SandboxLobbyUpdated>(
+                    &clients.front()->lobbyResponse()->payload);
+            if (update == nullptr || update->slots.size() != humanCount)
+                return false;
+            for (std::size_t index = 1; index < humanCount; ++index) {
+                if (!update->slots[index].occupied ||
+                    !update->slots[index].ready)
+                    return false;
+            }
+            return true;
+        }));
+
+        assert(clients.front()->requestLobby({
+            network::kProtocolVersion,
+            network::StartSandboxMatchRequest{hosted.lobbyCode},
+        }));
+        assert(waitUntil([&] {
+            bool launched = true;
+            for (auto& client : clients) {
+                client->pump();
+                launched = launched && client->controller() != nullptr;
+            }
+            return launched;
+        }, 10000));
+
+        std::vector<CaveId> startingCaves;
+        startingCaves.reserve(humanCount);
+        for (std::size_t index = 0; index < humanCount; ++index) {
+            const auto* controller = clients[index]->controller();
+            assert(controller != nullptr);
+            assert(controller->matchMode() == client::MatchMode::Sandbox);
+            assert(controller->viewContext().localPlayer ==
+                   static_cast<PlayerId>(index + 1));
+            assert(controller->matchMetadata().players.size() == humanCount);
+            const auto* snapshot = controller->displayedSnapshot();
+            assert(snapshot != nullptr);
+            assert(snapshot->player == static_cast<PlayerId>(index + 1));
+            startingCaves.push_back(snapshot->currentCave);
+        }
+
+        for (std::size_t viewer = 0; viewer < humanCount; ++viewer) {
+            const auto* snapshot =
+                clients[viewer]->controller()->displayedSnapshot();
+            for (std::size_t rival = 0; rival < humanCount; ++rival) {
+                if (viewer == rival) continue;
+                assert(std::none_of(
+                    snapshot->map.caves.begin(),
+                    snapshot->map.caves.end(),
+                    [&](const DiscoveredCaveView& cave) {
+                        return cave.cave == startingCaves[rival];
+                    }));
+            }
+        }
+
+        const RoundNumber round =
+            clients.front()->controller()->displayedSnapshot()->round;
+        for (auto& client : clients) {
+            assert(client->controller()->submitAndLock(
+                searchAction(*client->controller())));
+        }
+        assert(waitUntil([&] {
+            RoundNumber resolved{};
+            for (auto& client : clients) {
+                client->pump();
+                const auto* snapshot =
+                    client->controller()->displayedSnapshot();
+                if (snapshot == nullptr || snapshot->round <= round)
+                    return false;
+                if (resolved == RoundNumber{}) resolved = snapshot->round;
+                else if (snapshot->round != resolved) return false;
+            }
+            return true;
+        }, 10000));
+    }
+}
+
 void dynamicAssignedMatchesUsePersistentTrophyStore() {
     TemporaryTrophyDatabase authenticationDatabase;
     TemporaryTrophyDatabase trophyDatabase;
@@ -1247,6 +1442,7 @@ int main() {
     logoutReturnsConnectionToUsableAuthenticationState();
     authenticatedAssignmentLaunchesAuthoritativeGameplay();
     authenticatedSandboxLobbyReadiesAndLaunchesAuthoritativeGameplay();
+    authenticatedSandboxSupportsThreeToSixHumanSockets();
     dynamicAssignedMatchesUsePersistentTrophyStore();
     authenticatedPlayerReclaimsAssignedMatchWithinGrace();
 }
