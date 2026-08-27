@@ -4,6 +4,7 @@
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string_view>
 
@@ -38,12 +39,32 @@ basilisk::sim::BenchmarkSuite suite(std::string_view value) {
     if (value == "all") return basilisk::sim::BenchmarkSuite::All;
     throw std::invalid_argument("--benchmark must be difficulty, hard-behaviors, or all");
 }
+basilisk::sim::PolicyKind policy(std::string_view value) {
+    if (value == "heuristic") return basilisk::sim::PolicyKind::Heuristic;
+    if (value == "random") return basilisk::sim::PolicyKind::Random;
+    throw std::invalid_argument("policy must be heuristic or random");
+}
+
+class JsonlTransitionSink final : public basilisk::sim::TransitionSink {
+public:
+    explicit JsonlTransitionSink(const std::string& path)
+        : output_(path, std::ios::out | std::ios::trunc) {
+        if (!output_) throw std::runtime_error("unable to open transition output: " + path);
+    }
+    void write(const basilisk::sim::Transition& transition) override {
+        output_ << basilisk::sim::transitionJson(transition) << '\n';
+        if (!output_) throw std::runtime_error("unable to write transition output");
+    }
+private:
+    std::ofstream output_;
+};
 }
 
 int main(int argc, char** argv) {
     try {
         basilisk::sim::SimulationConfig config;
         std::string outputPath;
+        std::string transitionsOutput;
         std::string benchmarkOutput;
         std::optional<basilisk::sim::BenchmarkSuite> benchmarkSuite;
         std::uint64_t matchesPerOrientation = 2000;
@@ -53,6 +74,8 @@ int main(int argc, char** argv) {
                 std::cout << "Usage: BasiliskAiSim [--matches N] [--seed N] [--output episodes.jsonl]\n"
                     "  [--p1-difficulty easy|medium|hard] [--p1-behavior balanced|explorer|aggressive|objective|survivalist|opportunist|random]\n"
                     "  [--p2-difficulty easy|medium|hard] [--p2-behavior ...]\n"
+                    "  [--p1-policy heuristic|random] [--p2-policy heuristic|random]\n"
+                    "  [--transitions-output transitions.jsonl]\n"
                     "Benchmark: BasiliskAiSim --benchmark difficulty|hard-behaviors|all\n"
                     "  [--matches-per-orientation N] [--seed N] [--benchmark-output results.csv]\n";
                 return 0;
@@ -62,6 +85,7 @@ int main(int argc, char** argv) {
             if (option == "--matches") config.matches = number(value, option);
             else if (option == "--seed") config.seed = number(value, option);
             else if (option == "--output") outputPath = value;
+            else if (option == "--transitions-output") transitionsOutput = value;
             else if (option == "--benchmark") benchmarkSuite = suite(value);
             else if (option == "--matches-per-orientation")
                 matchesPerOrientation = number(value, option);
@@ -70,6 +94,8 @@ int main(int argc, char** argv) {
             else if (option == "--p2-difficulty") config.p2.difficulty = difficulty(value);
             else if (option == "--p1-behavior") config.p1.behavior = behavior(value);
             else if (option == "--p2-behavior") config.p2.behavior = behavior(value);
+            else if (option == "--p1-policy") config.p1Policy = policy(value);
+            else if (option == "--p2-policy") config.p2Policy = policy(value);
             else throw std::invalid_argument("unknown option: " + std::string(option));
         }
         if (benchmarkSuite) {
@@ -77,6 +103,8 @@ int main(int argc, char** argv) {
                 throw std::invalid_argument("--matches-per-orientation must be greater than zero");
             if (!outputPath.empty())
                 throw std::invalid_argument("--output is episode JSONL; use --benchmark-output for benchmark CSV");
+            if (!transitionsOutput.empty())
+                throw std::invalid_argument("transition output is unavailable in aggregate benchmark mode");
             std::ofstream csv;
             if (!benchmarkOutput.empty()) {
                 csv.open(benchmarkOutput, std::ios::out | std::ios::trunc);
@@ -102,6 +130,11 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (config.matches == 0) throw std::invalid_argument("--matches must be greater than zero");
+        std::unique_ptr<JsonlTransitionSink> transitionSink;
+        if (!transitionsOutput.empty()) {
+            transitionSink = std::make_unique<JsonlTransitionSink>(transitionsOutput);
+            config.transitionSink = transitionSink.get();
+        }
         std::ofstream episodes;
         if (!outputPath.empty()) {
             episodes.open(outputPath, std::ios::out | std::ios::trunc);

@@ -12,10 +12,16 @@
 #include "basilisk/Event.hpp"
 #include "basilisk/MatchResult.hpp"
 #include "basilisk/client/ai/AiDecisionEngine.hpp"
+#include "basilisk/Random.hpp"
 
 namespace basilisk::sim {
 
 inline constexpr int kAiEpisodeSchemaVersion = 1;
+inline constexpr int kAiObservationSchemaVersion = 1;
+inline constexpr int kAiActionSchemaVersion = 1;
+inline constexpr int kAiTransitionSchemaVersion = 1;
+
+enum class PolicyKind { Heuristic, Random };
 
 struct AgentSpec {
     client::ai::AiDifficulty difficulty{client::ai::AiDifficulty::Hard};
@@ -81,26 +87,103 @@ struct BatchAggregate {
     void add(const EpisodeTelemetry& episode);
 };
 
+struct TrainingKnowledgeFeatures {
+    std::optional<CaveId> previousCave;
+    bool pitWarning{};
+    bool basiliskAdjacentWarning{};
+    bool basiliskDistantWarning{};
+    bool jackalWarning{};
+    bool rivalWarning{};
+    std::size_t basiliskCandidateCount{};
+    std::size_t unresolvedPitCandidates{};
+    std::size_t repeatedSearches{};
+    std::uint64_t materialRevision{};
+};
+
+struct EncodedAction {
+    std::size_t legalIndex{};
+    AvailableAction action;
+};
+
+// sourceSnapshot and knowledgeState are both player-safe. They let the legacy
+// heuristic adapter remain bit-for-bit equivalent while learned policies can
+// consume the stable explicit fields serialized by observationJson().
+struct AgentObservation {
+    int schemaVersion{kAiObservationSchemaVersion};
+    PlayerRoundSnapshot sourceSnapshot;
+    client::ai::AiKnowledgeState knowledgeState;
+    TrainingKnowledgeFeatures knowledge;
+    std::vector<EncodedAction> legalActions;
+    std::optional<EncodedAction> previousAction;
+};
+
+struct AgentDecision {
+    std::size_t legalActionIndex{};
+    std::string policyMetadata;
+};
+
+struct RewardComponents {
+    double win{};
+    double loss{};
+    double draw{};
+    [[nodiscard]] double total() const noexcept { return win + loss + draw; }
+};
+
+struct Transition {
+    int schemaVersion{kAiTransitionSchemaVersion};
+    std::uint64_t simulationSeed{};
+    std::uint64_t episodeIndex{};
+    MapSeed mapSeed{};
+    MatchSeed matchSeed{};
+    RoundNumber round{};
+    PlayerId player{};
+    PolicyKind policy{PolicyKind::Heuristic};
+    AgentSpec config;
+    client::ai::AiBehavior resolvedBehavior{client::ai::AiBehavior::Balanced};
+    AgentObservation observation;
+    AgentDecision decision;
+    EncodedAction chosenAction;
+    RewardComponents reward;
+    AgentObservation nextObservation;
+    bool terminal{};
+    MatchOutcome outcome{MatchOutcome::None};
+    std::optional<PlayerId> winner;
+};
+
+class TransitionSink {
+public:
+    virtual ~TransitionSink() = default;
+    virtual void write(const Transition& transition) = 0;
+};
+
 // A policy sees only one player-safe snapshot, its private knowledge, and the
 // exact legal actions embedded in that snapshot. Future learned policies can
 // replace this implementation without gaining authoritative match access.
 class AgentPolicy {
 public:
     virtual ~AgentPolicy() = default;
-    [[nodiscard]] virtual std::optional<AvailableAction> select(
-        const PlayerRoundSnapshot& snapshot,
-        const client::ai::AiConfig& config,
-        const client::ai::AiKnowledgeState& knowledge) = 0;
+    [[nodiscard]] virtual AgentDecision select(
+        const AgentObservation& observation,
+        const client::ai::AiConfig& config) = 0;
 };
 
 class HeuristicPolicy final : public AgentPolicy {
 public:
-    [[nodiscard]] std::optional<AvailableAction> select(
-        const PlayerRoundSnapshot& snapshot,
-        const client::ai::AiConfig& config,
-        const client::ai::AiKnowledgeState& knowledge) override;
+    [[nodiscard]] AgentDecision select(
+        const AgentObservation& observation,
+        const client::ai::AiConfig& config) override;
 private:
     client::ai::AiDecisionEngine engine_;
+};
+
+class RandomPolicy final : public AgentPolicy {
+public:
+    explicit RandomPolicy(std::uint64_t seed) : rng_(seed) {}
+    [[nodiscard]] AgentDecision select(
+        const AgentObservation& observation,
+        const client::ai::AiConfig& config) override;
+private:
+    RandomGenerator rng_;
 };
 
 struct SimulationConfig {
@@ -109,11 +192,19 @@ struct SimulationConfig {
     std::uint64_t maxRounds{5000};
     AgentSpec p1;
     AgentSpec p2;
+    PolicyKind p1Policy{PolicyKind::Heuristic};
+    PolicyKind p2Policy{PolicyKind::Heuristic};
+    TransitionSink* transitionSink{nullptr};
 };
 
 [[nodiscard]] EpisodeTelemetry runEpisode(
     const SimulationConfig& config, std::uint64_t episodeIndex);
+[[nodiscard]] const EncodedAction& resolveDecision(
+    const AgentObservation& observation, const AgentDecision& decision);
 [[nodiscard]] std::string episodeJson(const EpisodeTelemetry& episode);
+[[nodiscard]] std::string observationJson(const AgentObservation& observation);
+[[nodiscard]] std::string transitionJson(const Transition& transition);
+[[nodiscard]] const char* policyName(PolicyKind policy) noexcept;
 void writeSummary(std::ostream& output, const BatchAggregate& aggregate,
                   double elapsedSeconds);
 

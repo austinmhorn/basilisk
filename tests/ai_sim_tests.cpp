@@ -1,6 +1,8 @@
 #include <cassert>
 #include <iostream>
 #include <string>
+#include <stdexcept>
+#include <vector>
 
 #include "AiSimulation.hpp"
 #include "AiBenchmark.hpp"
@@ -9,6 +11,18 @@ using namespace basilisk;
 using namespace basilisk::sim;
 
 namespace {
+
+class CollectingTransitions final : public TransitionSink {
+public:
+    void write(const Transition& transition) override { values.push_back(transition); }
+    std::vector<Transition> values;
+};
+
+class CountingTransitions final : public TransitionSink {
+public:
+    void write(const Transition&) override { ++count; }
+    std::size_t count{};
+};
 
 void deterministicEpisodes() {
     SimulationConfig config;
@@ -82,6 +96,75 @@ void benchmarkAccountingAndDeterminism() {
     assert(benchmarkCsvHeader().starts_with("schema_version,"));
 }
 
+void trainingTransitionsAreSafeAndLinked() {
+    SimulationConfig baseline;
+    baseline.seed = 7719;
+    baseline.p1 = {client::ai::AiDifficulty::Hard, client::ai::AiBehavior::Balanced};
+    baseline.p2 = {client::ai::AiDifficulty::Medium, client::ai::AiBehavior::Explorer};
+    const std::string unchangedEpisode = episodeJson(runEpisode(baseline, 0));
+
+    CollectingTransitions transitions;
+    baseline.transitionSink = &transitions;
+    const auto withTransitions = runEpisode(baseline, 0);
+    assert(episodeJson(withTransitions) == unchangedEpisode);
+    assert(!transitions.values.empty());
+    bool foundTerminal = false;
+    for (std::size_t index = 0; index < transitions.values.size(); ++index) {
+        const auto& transition = transitions.values[index];
+        assert(transition.observation.legalActions.size() ==
+            transition.observation.sourceSnapshot.availableActions.size());
+        for (std::size_t action = 0; action < transition.observation.legalActions.size(); ++action) {
+            assert(transition.observation.legalActions[action].legalIndex == action);
+            assert(transition.observation.legalActions[action].action.type ==
+                transition.observation.sourceSnapshot.availableActions[action].type);
+        }
+        assert(transition.chosenAction.legalIndex == transition.decision.legalActionIndex);
+        assert(transition.nextObservation.sourceSnapshot.round >=
+            transition.observation.sourceSnapshot.round);
+        const std::string json = transitionJson(transition);
+        assert(json.find("\"schemaVersion\":1") != std::string::npos);
+        assert(json.find("basiliskCave") == std::string::npos);
+        assert(json.find("jackalCave") == std::string::npos);
+        assert(json.find("hiddenTopology") == std::string::npos);
+        if (transition.terminal) {
+            foundTerminal = true;
+            assert(transition.reward.total() >= -1.0 && transition.reward.total() <= 1.0);
+            if (transition.outcome == MatchOutcome::None)
+                assert(transition.reward.loss == -1.0);
+        }
+    }
+    assert(foundTerminal);
+
+    AgentDecision illegal;
+    illegal.legalActionIndex = transitions.values.front().observation.legalActions.size();
+    bool rejected = false;
+    try { (void)resolveDecision(transitions.values.front().observation, illegal); }
+    catch (const std::runtime_error&) { rejected = true; }
+    assert(rejected);
+}
+
+void randomPolicyAndTransitionStreamsAreDeterministic() {
+    SimulationConfig config;
+    config.seed = 8128;
+    config.p1Policy = PolicyKind::Heuristic;
+    config.p2Policy = PolicyKind::Random;
+    CollectingTransitions first;
+    config.transitionSink = &first;
+    const auto firstEpisode = runEpisode(config, 0);
+    CollectingTransitions second;
+    config.transitionSink = &second;
+    const auto secondEpisode = runEpisode(config, 0);
+    assert(episodeJson(firstEpisode) == episodeJson(secondEpisode));
+    assert(first.values.size() == second.values.size());
+    for (std::size_t index = 0; index < first.values.size(); ++index)
+        assert(transitionJson(first.values[index]) == transitionJson(second.values[index]));
+
+    CountingTransitions counting;
+    config.transitionSink = &counting;
+    (void)runEpisode(config, 1);
+    assert(counting.count > 0);
+}
+
 } // namespace
 
 int main() {
@@ -89,5 +172,7 @@ int main() {
     jsonAndAggregate();
     legalActionsRemainExactAcrossBatch();
     benchmarkAccountingAndDeterminism();
+    trainingTransitionsAreSafeAndLinked();
+    randomPolicyAndTransitionStreamsAreDeterministic();
     std::cout << "AI simulation tests passed\n";
 }
