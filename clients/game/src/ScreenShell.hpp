@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -23,6 +24,33 @@
 #endif
 
 namespace basilisk::game {
+
+struct HudArrowSectionLayout {
+    int slotCount{};
+    float slotWidth{10.0F};
+    float slotSpacing{3.0F};
+    float contentWidth{};
+    float sectionWidth{};
+};
+
+[[nodiscard]] inline HudArrowSectionLayout hudArrowSectionLayout(
+    int maxArrows) noexcept {
+    HudArrowSectionLayout result;
+    result.slotCount = std::max(0, maxArrows);
+    if (result.slotCount > 0) {
+        result.contentWidth = static_cast<float>(result.slotCount) *
+            result.slotWidth + static_cast<float>(result.slotCount - 1) *
+            result.slotSpacing;
+    }
+    // Five slots occupy 62 logical pixels in the established HUD. Keeping that
+    // as the label-safe minimum preserves the normal layout while larger
+    // quivers expand PACK by their actual slot footprint.
+    constexpr float minimumContentWidth = 62.0F;
+    constexpr float sectionPadding = 16.0F;
+    result.sectionWidth = std::max(minimumContentWidth, result.contentWidth) +
+        sectionPadding;
+    return result;
+}
 
 struct ActionRowGeometry {
     std::size_t actionIndex{};

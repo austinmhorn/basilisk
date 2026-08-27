@@ -259,14 +259,24 @@ std::string_view actionLabel(MainMenuAction action) {
         case MainMenuAction::StartGame: return "START GAME";
         case MainMenuAction::PlayOnline: return "PLAY ONLINE";
         case MainMenuAction::PlayAi: return "PLAY AI";
-        case MainMenuAction::Sandbox: return "SANDBOX";
+        case MainMenuAction::StandardOnline: return "STANDARD";
+        case MainMenuAction::SandboxOnline: return "SANDBOX";
+        case MainMenuAction::StandardAi: return "STANDARD";
+        case MainMenuAction::SandboxAi: return "SANDBOX";
         case MainMenuAction::CycleAiDifficulty: return "DIFFICULTY";
         case MainMenuAction::CycleAiBehavior: return "BEHAVIOR";
-        case MainMenuAction::StartAiGame: return "BEGIN HUNT";
+        case MainMenuAction::StartAiGame: return "START MATCH";
         case MainMenuAction::CycleSandboxHunters: return "HUNTERS";
+        case MainMenuAction::CycleSandboxHumanPlayers: return "HUMAN PLAYERS";
+        case MainMenuAction::CycleSandboxCaves: return "CAVES";
+        case MainMenuAction::CycleSandboxJackals: return "JACKALS";
+        case MainMenuAction::CycleSandboxArrowFrequency: return "ARROW FREQUENCY";
+        case MainMenuAction::CycleSandboxStartingArrows: return "STARTING ARROWS";
+        case MainMenuAction::CycleSandboxMaxArrows: return "MAX ARROWS";
         case MainMenuAction::CycleSandboxDifficulty: return "DIFFICULTY";
         case MainMenuAction::CycleSandboxBehavior: return "BEHAVIOR";
-        case MainMenuAction::StartSandbox: return "BEGIN SANDBOX";
+        case MainMenuAction::CreateSandboxLobby: return "CREATE LOBBY";
+        case MainMenuAction::LaunchSandbox: return "START MATCH";
         case MainMenuAction::Leaderboards: return "LEADERBOARDS";
         case MainMenuAction::Settings: return "SETTINGS";
         case MainMenuAction::EditProfile: return "EDIT";
@@ -290,8 +300,11 @@ std::string_view pageTitle(MainMenuPage page) {
         case MainMenuPage::Main: return "ENTER THE CAVERNS";
         case MainMenuPage::StartGame: return "START GAME";
         case MainMenuPage::PlayOnline: return "PLAY ONLINE";
+        case MainMenuPage::OnlineStandard: return "STANDARD ONLINE";
         case MainMenuPage::PlayAi: return "PLAY AI";
+        case MainMenuPage::AiStandard: return "PLAY AI";
         case MainMenuPage::Sandbox: return "SANDBOX";
+        case MainMenuPage::SandboxLobby: return "SANDBOX LOBBY";
         case MainMenuPage::Leaderboards: return "TROPHY LEADERBOARD";
         case MainMenuPage::Settings: return "SETTINGS";
         case MainMenuPage::Cosmetics: return "COSMETICS";
@@ -333,12 +346,11 @@ constexpr std::array emblemOptions{
 
 } // namespace
 
-std::optional<std::size_t> hitTestMainMenu(
+std::optional<MainMenuAction> hitTestMainMenu(
     const MainMenuGeometry& geometry,
     PresentationPoint point) noexcept {
-    for (std::size_t index = 0; index < geometry.buttons.size(); ++index) {
-        if (contains(geometry.buttons[index].bounds, point)) return index;
-    }
+    for (const auto& button : geometry.buttons)
+        if (contains(button.bounds, point)) return button.action;
     return std::nullopt;
 }
 
@@ -484,20 +496,79 @@ bool renderMainMenu(
                 ui::Theme::mutedBright, left, buttonY, error)) return false;
         buttonY += 44.0 * scale;
     } else if (menu.page() == MainMenuPage::PlayOnline) {
-        if (!label(text, "Authenticated online hunt", FontWeight::Regular,
+        if (!label(text, "Choose your online ruleset.", FontWeight::Regular,
+                static_cast<float>(11.0 * scale), ui::Theme::mutedBright,
+                left, buttonY, error)) return false;
+        buttonY += 44.0 * scale;
+    } else if (menu.page() == MainMenuPage::OnlineStandard) {
+        if (!label(text, "Authenticated standard online hunt", FontWeight::Regular,
                 static_cast<float>(11.0 * scale), ui::Theme::mutedBright,
                 left, buttonY, error)) return false;
         buttonY += 44.0 * scale;
     } else if (menu.page() == MainMenuPage::PlayAi) {
+        if (!label(text, "Choose your offline opponent ruleset.",
+                FontWeight::Regular, static_cast<float>(11.0 * scale),
+                ui::Theme::mutedBright, left, buttonY, error)) return false;
+        buttonY += 44.0 * scale;
+    } else if (menu.page() == MainMenuPage::AiStandard) {
         if (!label(text, "Local offline hunt against BASILISK AI",
                 FontWeight::Regular, static_cast<float>(11.0 * scale),
                 ui::Theme::mutedBright, left, buttonY, error)) return false;
         buttonY += 44.0 * scale;
     } else if (menu.page() == MainMenuPage::Sandbox) {
-        if (!label(text, "Local offline hunt with 2-6 hunters",
+        const std::string_view subtitle = menu.sandboxEntryMode() ==
+                SandboxEntryMode::Online
+            ? "Configure an authenticated Sandbox lobby."
+            : "Configure a local offline Sandbox match.";
+        if (!label(text, subtitle,
                 FontWeight::Regular, static_cast<float>(11.0 * scale),
                 ui::Theme::mutedBright, left, buttonY, error)) return false;
         buttonY += 44.0 * scale;
+        if (!menu.sandboxValidationError().empty() &&
+            !label(text, menu.sandboxValidationError(), FontWeight::Medium,
+                static_cast<float>(9.0 * scale), ui::Theme::red,
+                left, shell.y + shell.height - 24.0 * scale, error)) return false;
+    } else if (menu.page() == MainMenuPage::SandboxLobby) {
+        const auto slots = client::sandboxLobbySlots(menu.sandboxConfig());
+        if (!label(text, "PARTICIPANTS", FontWeight::SemiBold,
+                static_cast<float>(10.0 * scale), ui::Theme::muted,
+                left, buttonY, error)) return false;
+        buttonY += 28.0 * scale;
+        for (const auto& slot : slots) {
+            const PresentationRect row{left, buttonY, 640.0 * scale, 42.0 * scale};
+            roundedPanel(renderer, row, 8.0 * scale, ui::Theme::surfaceRaised,
+                ui::Theme::borderSoft);
+            std::string slotName;
+            std::string detail;
+            if (slot.kind == client::SandboxLobbySlotKind::Host) {
+                slotName = "1.  HOST";
+                detail = "LOCAL PLAYER";
+            } else if (slot.kind == client::SandboxLobbySlotKind::EmptyHuman) {
+                slotName = std::to_string(slot.slot) + ".  EMPTY HUMAN SLOT";
+                detail = "WAITING FOR PLAYER";
+            } else {
+                slotName = std::to_string(slot.slot) + ".  BASILISK AI " +
+                    std::to_string(slot.slot);
+                detail = std::string{client::ai::difficultyName(
+                    menu.sandboxDifficulty())} + " · " +
+                    client::ai::behaviorName(menu.sandboxBehavior());
+            }
+            if (!label(text, slotName, FontWeight::SemiBold,
+                    static_cast<float>(10.0 * scale), ui::Theme::text,
+                    row.x + 14.0 * scale, row.y + 12.0 * scale, error) ||
+                !label(text, detail, FontWeight::Medium,
+                    static_cast<float>(8.0 * scale), ui::Theme::mutedBright,
+                    row.x + 390.0 * scale, row.y + 13.0 * scale, error)) return false;
+            buttonY += 49.0 * scale;
+        }
+        if (menu.sandboxConfig().humanPlayerCount > 1) {
+            if (!label(text, "Waiting for human players — online joining is coming soon.",
+                    FontWeight::Medium, static_cast<float>(10.0 * scale),
+                    ui::Theme::gold, left, buttonY + 8.0 * scale, error)) return false;
+        } else if (!label(text, "All slots are ready.", FontWeight::Medium,
+                static_cast<float>(10.0 * scale), ui::Theme::mutedBright,
+                left, buttonY + 8.0 * scale, error)) return false;
+        buttonY = shell.y + shell.height - 68.0 * scale;
     } else if (menu.page() == MainMenuPage::Settings) {
         if (!label(text, "Settings are coming soon.", FontWeight::Regular,
                 static_cast<float>(12.0 * scale), ui::Theme::mutedBright,
@@ -648,11 +719,133 @@ bool renderMainMenu(
     }
 
     const auto actions = menu.actions();
-    const bool compact = menu.page() == MainMenuPage::Leaderboards;
+    const bool compact = menu.page() == MainMenuPage::Leaderboards ||
+        menu.page() == MainMenuPage::SandboxLobby;
     const double buttonWidth = compact ? 170.0 * scale : 430.0 * scale;
-    const double buttonHeight = 48.0 * scale;
+    const bool sandboxCompact = menu.page() == MainMenuPage::Sandbox;
+    const double buttonHeight = (sandboxCompact ? 36.0 : 48.0) * scale;
+    const bool footerBack = menu.page() == MainMenuPage::StartGame ||
+        menu.page() == MainMenuPage::PlayOnline ||
+        menu.page() == MainMenuPage::OnlineStandard ||
+        menu.page() == MainMenuPage::PlayAi ||
+        menu.page() == MainMenuPage::AiStandard ||
+        menu.page() == MainMenuPage::Leaderboards ||
+        menu.page() == MainMenuPage::Settings ||
+        menu.page() == MainMenuPage::Sandbox;
     for (std::size_t index = 0; index < actions.size(); ++index) {
         if (actions[index] == MainMenuAction::EditProfile) continue;
+        if (footerBack && actions[index] == MainMenuAction::Back) continue;
+        if (menu.page() == MainMenuPage::Leaderboards &&
+            (actions[index] == MainMenuAction::PreviousPage ||
+             actions[index] == MainMenuAction::NextPage)) continue;
+        if (menu.page() == MainMenuPage::Sandbox) {
+            const auto action = actions[index];
+            if (action == MainMenuAction::CreateSandboxLobby ||
+                action == MainMenuAction::LaunchSandbox) {
+                const double width = 190.0 * scale;
+                const PresentationRect bounds{
+                    shell.x + shell.width - width - 34.0 * scale,
+                    shell.y + shell.height - 64.0 * scale,
+                    width, 38.0 * scale};
+                const bool selected = index == menu.selectedIndex();
+                pill(renderer, bounds, selected ? ui::Theme::surfaceSoft :
+                    ui::Theme::surfaceRaised,
+                    selected ? ui::Theme::gold : ui::Theme::border);
+                if (!labelCentered(text, actionLabel(action), FontWeight::SemiBold,
+                        static_cast<float>(10.0 * scale),
+                        selected ? ui::Theme::gold : ui::Theme::text,
+                        bounds.x + bounds.width * 0.5,
+                        bounds.y + 11.0 * scale, error)) return false;
+                geometry.buttons.push_back({action, bounds});
+                continue;
+            }
+
+            std::string value;
+            if (action == MainMenuAction::CycleSandboxHunters)
+                value = std::to_string(menu.sandboxConfig().hunterCount);
+            else if (action == MainMenuAction::CycleSandboxHumanPlayers)
+                value = std::to_string(menu.sandboxConfig().humanPlayerCount);
+            else if (action == MainMenuAction::CycleSandboxCaves)
+                value = std::to_string(menu.sandboxConfig().caveCount);
+            else if (action == MainMenuAction::CycleSandboxJackals)
+                value = std::to_string(menu.sandboxConfig().jackalCount);
+            else if (action == MainMenuAction::CycleSandboxStartingArrows)
+                value = std::to_string(menu.sandboxConfig().startingArrows);
+            else if (action == MainMenuAction::CycleSandboxMaxArrows)
+                value = std::to_string(menu.sandboxConfig().maxArrows);
+            else if (action == MainMenuAction::CycleSandboxArrowFrequency) {
+                const auto interval = menu.sandboxConfig().arrowSpawnIntervalRounds;
+                value = interval == 0 ? "OFF" : interval == 3 ? "FREQUENT" :
+                    interval == 5 ? "NORMAL" : "RARE";
+            } else if (action == MainMenuAction::CycleSandboxDifficulty)
+                value = client::ai::difficultyName(menu.sandboxDifficulty());
+            else value = client::ai::behaviorName(menu.sandboxBehavior());
+
+            const bool selected = index == menu.selectedIndex();
+            const PresentationRect row{left, buttonY, 640.0 * scale, 34.0 * scale};
+            const PresentationRect control{left + 350.0 * scale, buttonY,
+                290.0 * scale, 34.0 * scale};
+            if (!label(text, actionLabel(action), FontWeight::SemiBold,
+                    static_cast<float>(10.0 * scale),
+                    selected ? ui::Theme::gold : ui::Theme::text,
+                    row.x, row.y + 9.0 * scale, error)) return false;
+            roundedPanel(renderer, control, 17.0 * scale,
+                selected ? ui::Theme::surfaceSoft : ui::Theme::surfaceRaised,
+                selected ? ui::Theme::gold : ui::Theme::border);
+            if (!labelCentered(text, value, FontWeight::SemiBold,
+                    static_cast<float>(10.0 * scale),
+                    selected ? ui::Theme::gold : ui::Theme::text,
+                    control.x + control.width * 0.5,
+                    control.y + 9.0 * scale, error)) return false;
+            geometry.buttons.push_back({action, control});
+            buttonY += 40.0 * scale;
+            continue;
+        }
+        if (menu.page() == MainMenuPage::AiStandard) {
+            const auto action = actions[index];
+            if (action == MainMenuAction::StartAiGame) {
+                const double width = 190.0 * scale;
+                const PresentationRect bounds{
+                    shell.x + shell.width - width - 34.0 * scale,
+                    shell.y + shell.height - 64.0 * scale,
+                    width, 38.0 * scale};
+                const bool selected = index == menu.selectedIndex();
+                pill(renderer, bounds, selected ? ui::Theme::surfaceSoft :
+                    ui::Theme::surfaceRaised,
+                    selected ? ui::Theme::gold : ui::Theme::border);
+                if (!labelCentered(text, actionLabel(action), FontWeight::SemiBold,
+                        static_cast<float>(10.0 * scale),
+                        selected ? ui::Theme::gold : ui::Theme::text,
+                        bounds.x + bounds.width * 0.5,
+                        bounds.y + 11.0 * scale, error)) return false;
+                geometry.buttons.push_back({action, bounds});
+                continue;
+            }
+
+            const bool selected = index == menu.selectedIndex();
+            const PresentationRect row{left, buttonY, 640.0 * scale, 34.0 * scale};
+            const PresentationRect control{left + 350.0 * scale, buttonY,
+                290.0 * scale, 34.0 * scale};
+            const std::string_view value = action ==
+                    MainMenuAction::CycleAiDifficulty
+                ? client::ai::difficultyName(menu.aiDifficulty())
+                : client::ai::behaviorName(menu.aiBehavior());
+            if (!label(text, actionLabel(action), FontWeight::SemiBold,
+                    static_cast<float>(10.0 * scale),
+                    selected ? ui::Theme::gold : ui::Theme::text,
+                    row.x, row.y + 9.0 * scale, error)) return false;
+            roundedPanel(renderer, control, 17.0 * scale,
+                selected ? ui::Theme::surfaceSoft : ui::Theme::surfaceRaised,
+                selected ? ui::Theme::gold : ui::Theme::border);
+            if (!labelCentered(text, value, FontWeight::SemiBold,
+                    static_cast<float>(10.0 * scale),
+                    selected ? ui::Theme::gold : ui::Theme::text,
+                    control.x + control.width * 0.5,
+                    control.y + 9.0 * scale, error)) return false;
+            geometry.buttons.push_back({action, control});
+            buttonY += 40.0 * scale;
+            continue;
+        }
         const PresentationRect bounds{
             menu.page() == MainMenuPage::Main
                 ? centerX - buttonWidth * 0.5
@@ -672,22 +865,82 @@ bool renderMainMenu(
             dynamicLabel += client::ai::behaviorName(menu.aiBehavior());
         } else if (actions[index] == MainMenuAction::CycleSandboxHunters) {
             dynamicLabel = "HUNTERS  " + std::to_string(menu.sandboxHunterCount());
+        } else if (actions[index] == MainMenuAction::CycleSandboxHumanPlayers) {
+            dynamicLabel = "HUMAN PLAYERS  " +
+                std::to_string(menu.sandboxConfig().humanPlayerCount);
+        } else if (actions[index] == MainMenuAction::CycleSandboxCaves) {
+            dynamicLabel = "CAVES  " + std::to_string(menu.sandboxConfig().caveCount);
+        } else if (actions[index] == MainMenuAction::CycleSandboxJackals) {
+            dynamicLabel = "JACKALS  " + std::to_string(menu.sandboxConfig().jackalCount);
+        } else if (actions[index] == MainMenuAction::CycleSandboxArrowFrequency) {
+            const auto interval = menu.sandboxConfig().arrowSpawnIntervalRounds;
+            dynamicLabel = "ARROW SPAWN  ";
+            if (interval == 0) dynamicLabel += "OFF";
+            else if (interval == 3) dynamicLabel += "FREQUENT · 3 ROUNDS";
+            else if (interval == 5) dynamicLabel += "NORMAL · 5 ROUNDS";
+            else dynamicLabel += "RARE · 8 ROUNDS";
+        } else if (actions[index] == MainMenuAction::CycleSandboxStartingArrows) {
+            dynamicLabel = "STARTING ARROWS  " +
+                std::to_string(menu.sandboxConfig().startingArrows);
+        } else if (actions[index] == MainMenuAction::CycleSandboxMaxArrows) {
+            dynamicLabel = "MAX ARROWS  " +
+                std::to_string(menu.sandboxConfig().maxArrows);
         } else if (actions[index] == MainMenuAction::CycleSandboxDifficulty) {
             dynamicLabel = "DIFFICULTY  ";
             dynamicLabel += client::ai::difficultyName(menu.sandboxDifficulty());
         } else if (actions[index] == MainMenuAction::CycleSandboxBehavior) {
             dynamicLabel = "BEHAVIOR  ";
             dynamicLabel += client::ai::behaviorName(menu.sandboxBehavior());
+        } else if (actions[index] == MainMenuAction::LaunchSandbox &&
+            menu.sandboxConfig().humanPlayerCount > 1) {
+            dynamicLabel = "WAITING FOR PLAYERS";
         }
         const std::string_view displayLabel = dynamicLabel.empty()
             ? actionLabel(actions[index]) : std::string_view{dynamicLabel};
         if (!label(text, displayLabel, FontWeight::SemiBold,
                 static_cast<float>(11.0 * scale),
                 selected ? ui::Theme::gold : ui::Theme::text,
-                bounds.x + 18.0 * scale, bounds.y + 15.0 * scale, error))
+                bounds.x + 18.0 * scale,
+                bounds.y + (sandboxCompact ? 9.0 : 15.0) * scale, error))
             return false;
         geometry.buttons.push_back({actions[index], bounds});
-        if (!compact) buttonY += 62.0 * scale;
+        if (!compact) buttonY += (sandboxCompact ? 42.0 : 62.0) * scale;
+    }
+
+    const auto drawFooterButton = [&](MainMenuAction action,
+                                      PresentationRect bounds,
+                                      std::string_view title,
+                                      bool enabled = true) {
+        const auto found = std::find(actions.begin(), actions.end(), action);
+        const bool selected = found != actions.end() &&
+            static_cast<std::size_t>(found - actions.begin()) == menu.selectedIndex();
+        const auto style = ui::footerButtonStyle(selected, enabled);
+        pill(renderer, bounds, style.fill, style.border);
+        if (!labelCentered(text, title, FontWeight::SemiBold,
+                static_cast<float>(10.0 * scale), style.text,
+                bounds.x + bounds.width * 0.5,
+                bounds.y + 11.0 * scale, error)) return false;
+        geometry.buttons.push_back({action, bounds});
+        return true;
+    };
+
+    if (footerBack && !drawFooterButton(MainMenuAction::Back,
+            {left, shell.y + shell.height - 64.0 * scale,
+                100.0 * scale, 38.0 * scale}, "BACK")) return false;
+
+    if (menu.page() == MainMenuPage::Leaderboards) {
+        constexpr double arrowWidth = 46.0;
+        constexpr double arrowGap = 8.0;
+        const double right = shell.x + shell.width - 34.0 * scale;
+        const double y = shell.y + shell.height - 64.0 * scale;
+        const PresentationRect next{right - arrowWidth * scale, y,
+            arrowWidth * scale, 38.0 * scale};
+        const PresentationRect previous{next.x - (arrowWidth + arrowGap) * scale,
+            y, arrowWidth * scale, 38.0 * scale};
+        if (!drawFooterButton(MainMenuAction::PreviousPage, previous,
+                "\xE2\x86\x90", menu.leaderboardOffset() > 0) ||
+            !drawFooterButton(MainMenuAction::NextPage, next, "\xE2\x86\x92"))
+            return false;
     }
 
     if (menu.page() == MainMenuPage::Main) {

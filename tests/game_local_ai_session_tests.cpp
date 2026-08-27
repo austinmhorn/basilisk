@@ -60,6 +60,10 @@ int main() {
     assert(aiSlot != local.session->matchMetadata().players.end());
     assert(local.session->snapshotFor(human) != nullptr);
     assert(local.session->snapshotFor(aiSlot->player) != nullptr);
+    assert(local.session->snapshotFor(human)->arrows == 3);
+    assert(local.session->snapshotFor(human)->maxArrows == 5);
+    assert(local.session->snapshotFor(aiSlot->player)->arrows == 3);
+    assert(local.session->snapshotFor(aiSlot->player)->maxArrows == 5);
     const auto aiProfile = std::find_if(local.session->profiles().begin(),
         local.session->profiles().end(), [&](const client::PublicPlayerProfile& profile) {
             return profile.player == aiSlot->player;

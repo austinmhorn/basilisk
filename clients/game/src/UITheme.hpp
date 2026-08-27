@@ -23,6 +23,23 @@ struct Theme {
     static constexpr SDL_Color blue{102, 174, 245, SDL_ALPHA_OPAQUE};
 };
 
+struct FooterButtonStyle {
+    SDL_Color fill;
+    SDL_Color border;
+    SDL_Color text;
+};
+
+[[nodiscard]] constexpr FooterButtonStyle footerButtonStyle(
+    bool focused, bool enabled = true) noexcept {
+    return {
+        focused && enabled ? Theme::surfaceSoft : Theme::surfaceRaised,
+        focused && enabled ? Theme::gold :
+            (enabled ? Theme::border : Theme::borderSoft),
+        focused && enabled ? Theme::gold :
+            (enabled ? Theme::text : Theme::muted),
+    };
+}
+
 // Reference-space point sizes for the production screen shell. Keeping the
 // hierarchy here makes readability tuning independent of panel rendering.
 struct Typography {

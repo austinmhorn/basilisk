@@ -18,16 +18,25 @@ constexpr std::array mainActions{
 constexpr std::array startActions{
     MainMenuAction::PlayOnline,
     MainMenuAction::PlayAi,
-    MainMenuAction::Sandbox,
     MainMenuAction::Back,
 };
 constexpr std::array onlineActions{
+    MainMenuAction::StandardOnline,
+    MainMenuAction::SandboxOnline,
+    MainMenuAction::Back,
+};
+constexpr std::array onlineStandardActions{
     MainMenuAction::FindGame,
     MainMenuAction::HostGame,
     MainMenuAction::JoinGame,
     MainMenuAction::Back,
 };
 constexpr std::array aiActions{
+    MainMenuAction::StandardAi,
+    MainMenuAction::SandboxAi,
+    MainMenuAction::Back,
+};
+constexpr std::array aiStandardActions{
     MainMenuAction::CycleAiDifficulty,
     MainMenuAction::CycleAiBehavior,
     MainMenuAction::StartAiGame,
@@ -35,9 +44,31 @@ constexpr std::array aiActions{
 };
 constexpr std::array sandboxActions{
     MainMenuAction::CycleSandboxHunters,
+    MainMenuAction::CycleSandboxHumanPlayers,
+    MainMenuAction::CycleSandboxCaves,
+    MainMenuAction::CycleSandboxJackals,
+    MainMenuAction::CycleSandboxArrowFrequency,
+    MainMenuAction::CycleSandboxStartingArrows,
+    MainMenuAction::CycleSandboxMaxArrows,
     MainMenuAction::CycleSandboxDifficulty,
     MainMenuAction::CycleSandboxBehavior,
-    MainMenuAction::StartSandbox,
+    MainMenuAction::CreateSandboxLobby,
+    MainMenuAction::Back,
+};
+constexpr std::array sandboxAiActions{
+    MainMenuAction::CycleSandboxHunters,
+    MainMenuAction::CycleSandboxCaves,
+    MainMenuAction::CycleSandboxJackals,
+    MainMenuAction::CycleSandboxArrowFrequency,
+    MainMenuAction::CycleSandboxStartingArrows,
+    MainMenuAction::CycleSandboxMaxArrows,
+    MainMenuAction::CycleSandboxDifficulty,
+    MainMenuAction::CycleSandboxBehavior,
+    MainMenuAction::LaunchSandbox,
+    MainMenuAction::Back,
+};
+constexpr std::array sandboxLobbyActions{
+    MainMenuAction::LaunchSandbox,
     MainMenuAction::Back,
 };
 constexpr std::array leaderboardActions{
@@ -64,8 +95,13 @@ std::span<const MainMenuAction> MainMenuState::actions() const noexcept {
         case MainMenuPage::Main: return mainActions;
         case MainMenuPage::StartGame: return startActions;
         case MainMenuPage::PlayOnline: return onlineActions;
+        case MainMenuPage::OnlineStandard: return onlineStandardActions;
         case MainMenuPage::PlayAi: return aiActions;
-        case MainMenuPage::Sandbox: return sandboxActions;
+        case MainMenuPage::AiStandard: return aiStandardActions;
+        case MainMenuPage::Sandbox: return sandboxEntryMode_ == SandboxEntryMode::Online
+            ? std::span<const MainMenuAction>{sandboxActions}
+            : std::span<const MainMenuAction>{sandboxAiActions};
+        case MainMenuPage::SandboxLobby: return sandboxLobbyActions;
         case MainMenuPage::Leaderboards: return leaderboardActions;
         case MainMenuPage::Settings: return settingsActions;
         case MainMenuPage::Cosmetics: return cosmeticsActions;
@@ -99,12 +135,23 @@ const client::EmblemId& MainMenuState::selectedEmblem() const noexcept {
 }
 client::ai::AiDifficulty MainMenuState::aiDifficulty() const noexcept { return aiDifficulty_; }
 client::ai::AiBehavior MainMenuState::aiBehavior() const noexcept { return aiBehavior_; }
-std::size_t MainMenuState::sandboxHunterCount() const noexcept { return sandboxHunterCount_; }
+std::size_t MainMenuState::sandboxHunterCount() const noexcept {
+    return sandboxConfig_.hunterCount;
+}
+const client::SandboxSessionConfig& MainMenuState::sandboxConfig() const noexcept {
+    return sandboxConfig_;
+}
+const std::string& MainMenuState::sandboxValidationError() const noexcept {
+    return sandboxValidationError_;
+}
 client::ai::AiDifficulty MainMenuState::sandboxDifficulty() const noexcept {
-    return sandboxDifficulty_;
+    return sandboxConfig_.aiDifficulty;
 }
 client::ai::AiBehavior MainMenuState::sandboxBehavior() const noexcept {
-    return sandboxBehavior_;
+    return sandboxConfig_.aiBehavior;
+}
+SandboxEntryMode MainMenuState::sandboxEntryMode() const noexcept {
+    return sandboxEntryMode_;
 }
 void MainMenuState::openOnline() noexcept { setPage(MainMenuPage::PlayOnline); }
 
@@ -121,6 +168,96 @@ void MainMenuState::moveSelection(int delta) noexcept {
     selectedIndex_ = static_cast<std::size_t>(wrapped);
 }
 
+void MainMenuState::adjustSelected(int delta) noexcept {
+    adjust(selectedAction(), delta);
+}
+
+void MainMenuState::adjust(MainMenuAction action, int delta) noexcept {
+    if (delta == 0) return;
+    if (page_ == MainMenuPage::AiStandard) {
+        const int direction = delta < 0 ? -1 : 1;
+        if (action == MainMenuAction::CycleAiDifficulty) {
+            const int count = 3;
+            aiDifficulty_ = static_cast<client::ai::AiDifficulty>(
+                (static_cast<int>(aiDifficulty_) + direction + count) % count);
+        } else if (action == MainMenuAction::CycleAiBehavior) {
+            const int count = 7;
+            aiBehavior_ = static_cast<client::ai::AiBehavior>(
+                (static_cast<int>(aiBehavior_) + direction + count) % count);
+        }
+        return;
+    }
+    if (page_ != MainMenuPage::Sandbox) return;
+    const auto wrap = [delta](std::size_t value, std::size_t minimum,
+                          std::size_t maximum) {
+        if (delta < 0) return value == minimum ? maximum : value - 1;
+        return value == maximum ? minimum : value + 1;
+    };
+    switch (action) {
+        case MainMenuAction::CycleSandboxHunters: {
+            const auto oldCaves = sandboxConfig_.caveCount;
+            const bool defaultCaves = oldCaves ==
+                client::defaultSandboxCaves(sandboxConfig_.hunterCount);
+            const bool defaultJackals = sandboxConfig_.jackalCount ==
+                client::defaultSandboxJackals(oldCaves);
+            sandboxConfig_.hunterCount = wrap(sandboxConfig_.hunterCount, 2, 6);
+            sandboxConfig_.humanPlayerCount = std::min(
+                sandboxConfig_.humanPlayerCount, sandboxConfig_.hunterCount);
+            sandboxConfig_.caveCount = defaultCaves
+                ? client::defaultSandboxCaves(sandboxConfig_.hunterCount)
+                : std::max(sandboxConfig_.caveCount,
+                    client::minimumSandboxCaves(sandboxConfig_.hunterCount));
+            sandboxConfig_.jackalCount = defaultJackals
+                ? client::defaultSandboxJackals(sandboxConfig_.caveCount)
+                : std::min(sandboxConfig_.jackalCount,
+                    client::maximumSandboxJackals(sandboxConfig_.caveCount));
+            break;
+        }
+        case MainMenuAction::CycleSandboxHumanPlayers:
+            sandboxConfig_.humanPlayerCount = wrap(
+                sandboxConfig_.humanPlayerCount,
+                sandboxEntryMode_ == SandboxEntryMode::Online ? 2 : 1,
+                sandboxConfig_.hunterCount);
+            break;
+        case MainMenuAction::CycleSandboxCaves: {
+            const bool defaultJackals = sandboxConfig_.jackalCount ==
+                client::defaultSandboxJackals(sandboxConfig_.caveCount);
+            std::vector<std::size_t> valid;
+            for (const auto caves : client::sandboxCaveCounts)
+                if (caves >= client::minimumSandboxCaves(sandboxConfig_.hunterCount))
+                    valid.push_back(caves);
+            auto current = std::find(valid.begin(), valid.end(), sandboxConfig_.caveCount);
+            std::size_t index = current == valid.end() ? 0 :
+                static_cast<std::size_t>(current - valid.begin());
+            index = delta < 0 ? (index == 0 ? valid.size() - 1 : index - 1)
+                              : (index + 1) % valid.size();
+            sandboxConfig_.caveCount = valid[index];
+            sandboxConfig_.jackalCount = defaultJackals
+                ? client::defaultSandboxJackals(sandboxConfig_.caveCount)
+                : std::min(sandboxConfig_.jackalCount,
+                    client::maximumSandboxJackals(sandboxConfig_.caveCount));
+            break;
+        }
+        case MainMenuAction::CycleSandboxJackals:
+            sandboxConfig_.jackalCount = wrap(sandboxConfig_.jackalCount, 0,
+                client::maximumSandboxJackals(sandboxConfig_.caveCount));
+            break;
+        case MainMenuAction::CycleSandboxStartingArrows:
+            sandboxConfig_.startingArrows = static_cast<int>(wrap(
+                static_cast<std::size_t>(sandboxConfig_.startingArrows), 0,
+                static_cast<std::size_t>(sandboxConfig_.maxArrows)));
+            break;
+        case MainMenuAction::CycleSandboxMaxArrows:
+            sandboxConfig_.maxArrows = static_cast<int>(wrap(
+                static_cast<std::size_t>(sandboxConfig_.maxArrows),
+                static_cast<std::size_t>(sandboxConfig_.startingArrows),
+                static_cast<std::size_t>(client::sandboxMaximumArrowCapacity)));
+            break;
+        default: return;
+    }
+    sandboxValidationError_.clear();
+}
+
 MainMenuResult MainMenuState::activateSelected() noexcept {
     return activate(selectedAction());
 }
@@ -135,7 +272,21 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
         case MainMenuAction::PlayAi:
             setPage(MainMenuPage::PlayAi);
             break;
-        case MainMenuAction::Sandbox:
+        case MainMenuAction::StandardOnline:
+            setPage(MainMenuPage::OnlineStandard);
+            break;
+        case MainMenuAction::SandboxOnline:
+            sandboxEntryMode_ = SandboxEntryMode::Online;
+            sandboxConfig_.humanPlayerCount = std::max<std::size_t>(
+                2, sandboxConfig_.humanPlayerCount);
+            setPage(MainMenuPage::Sandbox);
+            break;
+        case MainMenuAction::StandardAi:
+            setPage(MainMenuPage::AiStandard);
+            break;
+        case MainMenuAction::SandboxAi:
+            sandboxEntryMode_ = SandboxEntryMode::Ai;
+            sandboxConfig_.humanPlayerCount = 1;
             setPage(MainMenuPage::Sandbox);
             break;
         case MainMenuAction::CycleAiDifficulty:
@@ -149,17 +300,53 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
         case MainMenuAction::StartAiGame:
             return MainMenuResult::StartAiGame;
         case MainMenuAction::CycleSandboxHunters:
-            sandboxHunterCount_ = sandboxHunterCount_ == 6 ? 2 : sandboxHunterCount_ + 1;
+        case MainMenuAction::CycleSandboxHumanPlayers:
+        case MainMenuAction::CycleSandboxCaves:
+        case MainMenuAction::CycleSandboxJackals:
+        case MainMenuAction::CycleSandboxStartingArrows:
+        case MainMenuAction::CycleSandboxMaxArrows:
+            adjust(action, 1);
             break;
+        case MainMenuAction::CycleSandboxArrowFrequency:
+        {
+            const auto current = std::find(client::sandboxArrowSpawnIntervals.begin(),
+                client::sandboxArrowSpawnIntervals.end(),
+                sandboxConfig_.arrowSpawnIntervalRounds);
+            const auto index = current == client::sandboxArrowSpawnIntervals.end()
+                ? 0U : static_cast<std::size_t>(
+                    current - client::sandboxArrowSpawnIntervals.begin() + 1) %
+                    client::sandboxArrowSpawnIntervals.size();
+            sandboxConfig_.arrowSpawnIntervalRounds =
+                client::sandboxArrowSpawnIntervals[index];
+            sandboxValidationError_.clear();
+            break;
+        }
         case MainMenuAction::CycleSandboxDifficulty:
-            sandboxDifficulty_ = static_cast<client::ai::AiDifficulty>(
-                (static_cast<int>(sandboxDifficulty_) + 1) % 3);
+            sandboxConfig_.aiDifficulty = static_cast<client::ai::AiDifficulty>(
+                (static_cast<int>(sandboxConfig_.aiDifficulty) + 1) % 3);
             break;
         case MainMenuAction::CycleSandboxBehavior:
-            sandboxBehavior_ = static_cast<client::ai::AiBehavior>(
-                (static_cast<int>(sandboxBehavior_) + 1) % 7);
+            sandboxConfig_.aiBehavior = static_cast<client::ai::AiBehavior>(
+                (static_cast<int>(sandboxConfig_.aiBehavior) + 1) % 7);
             break;
-        case MainMenuAction::StartSandbox:
+        case MainMenuAction::CreateSandboxLobby:
+            if (const auto error = client::validateOnlineSandboxSessionConfig(
+                    sandboxConfig_)) {
+                sandboxValidationError_ = std::string{*error};
+                break;
+            }
+            sandboxValidationError_.clear();
+            setPage(MainMenuPage::SandboxLobby);
+            break;
+        case MainMenuAction::LaunchSandbox:
+            if (sandboxEntryMode_ == SandboxEntryMode::Online) {
+                sandboxValidationError_ = "Waiting for human players.";
+                break;
+            }
+            if (const auto error = client::validateSandboxSessionConfig(sandboxConfig_)) {
+                sandboxValidationError_ = std::string{*error};
+                break;
+            }
             return MainMenuResult::StartSandbox;
         case MainMenuAction::Leaderboards:
             leaderboardOffset_ = 0;
@@ -178,12 +365,28 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
                 return MainMenuResult::RequestCancelLobby;
             if (page_ == MainMenuPage::FindMatch && lobbyWaiting_)
                 return MainMenuResult::RequestCancelFindMatch;
+            if (page_ == MainMenuPage::SandboxLobby) {
+                setPage(MainMenuPage::Sandbox);
+                break;
+            }
+            if (page_ == MainMenuPage::Sandbox) {
+                setPage(sandboxEntryMode_ == SandboxEntryMode::Online
+                    ? MainMenuPage::PlayOnline : MainMenuPage::PlayAi);
+                break;
+            }
+            if (page_ == MainMenuPage::OnlineStandard) {
+                setPage(MainMenuPage::PlayOnline);
+                break;
+            }
+            if (page_ == MainMenuPage::AiStandard) {
+                setPage(MainMenuPage::PlayAi);
+                break;
+            }
             setPage(page_ == MainMenuPage::JoinLobby ||
                     page_ == MainMenuPage::MatchReady ||
                     page_ == MainMenuPage::FindMatch
-                ? MainMenuPage::PlayOnline :
-                (page_ == MainMenuPage::PlayOnline || page_ == MainMenuPage::PlayAi ||
-                 page_ == MainMenuPage::Sandbox
+                ? MainMenuPage::OnlineStandard :
+                (page_ == MainMenuPage::PlayOnline || page_ == MainMenuPage::PlayAi
                     ? MainMenuPage::StartGame : MainMenuPage::Main));
             break;
         case MainMenuAction::PreviousPage:
@@ -234,14 +437,23 @@ MainMenuResult MainMenuState::back() noexcept {
         return MainMenuResult::RequestCancelLobby;
     if (page_ == MainMenuPage::FindMatch && lobbyWaiting_)
         return MainMenuResult::RequestCancelFindMatch;
-    if (page_ != MainMenuPage::Main)
+    if (page_ == MainMenuPage::SandboxLobby) {
+        setPage(MainMenuPage::Sandbox);
+    } else if (page_ == MainMenuPage::Sandbox) {
+        setPage(sandboxEntryMode_ == SandboxEntryMode::Online
+            ? MainMenuPage::PlayOnline : MainMenuPage::PlayAi);
+    } else if (page_ == MainMenuPage::OnlineStandard) {
+        setPage(MainMenuPage::PlayOnline);
+    } else if (page_ == MainMenuPage::AiStandard) {
+        setPage(MainMenuPage::PlayAi);
+    } else if (page_ != MainMenuPage::Main) {
         setPage(page_ == MainMenuPage::JoinLobby ||
                 page_ == MainMenuPage::MatchReady ||
                 page_ == MainMenuPage::FindMatch
-            ? MainMenuPage::PlayOnline :
-            (page_ == MainMenuPage::PlayOnline || page_ == MainMenuPage::PlayAi ||
-             page_ == MainMenuPage::Sandbox
+            ? MainMenuPage::OnlineStandard :
+            (page_ == MainMenuPage::PlayOnline || page_ == MainMenuPage::PlayAi
                 ? MainMenuPage::StartGame : MainMenuPage::Main));
+    }
     return MainMenuResult::None;
 }
 
@@ -270,7 +482,7 @@ void MainMenuState::lobbyAssigned(std::string code) {
 }
 void MainMenuState::lobbyCancelled() {
     lobbyCode_.clear(); lobbyError_.clear(); lobbyWaiting_ = false;
-    setPage(MainMenuPage::PlayOnline);
+    setPage(MainMenuPage::OnlineStandard);
 }
 void MainMenuState::lobbyFailed(std::string error) {
     lobbyWaiting_ = false;
@@ -281,7 +493,7 @@ void MainMenuState::connectionLost(std::string error) {
 }
 void MainMenuState::matchmakingCancelled() {
     lobbyCode_.clear(); lobbyError_.clear(); lobbyWaiting_ = false;
-    setPage(MainMenuPage::PlayOnline);
+    setPage(MainMenuPage::OnlineStandard);
 }
 
 void MainMenuState::selectCallingCard(client::CallingCardId callingCard) {
@@ -295,6 +507,11 @@ void MainMenuState::applyConfirmedCosmeticLoadout(
     const client::AccountCosmeticLoadout& loadout) {
     selectedCallingCard_ = loadout.callingCardId;
     selectedEmblem_ = loadout.emblemId;
+}
+
+void MainMenuState::setSandboxConfig(client::SandboxSessionConfig config) {
+    sandboxConfig_ = std::move(config);
+    sandboxValidationError_.clear();
 }
 
 void MainMenuState::setPage(MainMenuPage page) noexcept {

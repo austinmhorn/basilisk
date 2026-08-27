@@ -519,9 +519,13 @@ void sigilTruthReportsAuthoritativeRelocation() {
 }
 
 void sandboxDebugTruthLabelsEveryLivingHunter() {
-    auto sandbox = LocalSandboxSessionAdapter::create(4, MapSeed{9004},
-        MatchSeed{42000}, client::ai::AiDifficulty::Hard,
-        client::ai::AiBehavior::Balanced, client::ai::AiSeed{77});
+    auto config = client::defaultSandboxSessionConfig(4);
+    config.mapSeed = MapSeed{9004};
+    config.matchSeed = MatchSeed{42000};
+    config.aiDifficulty = client::ai::AiDifficulty::Hard;
+    config.aiBehavior = client::ai::AiBehavior::Balanced;
+    config.aiSeed = client::ai::AiSeed{77};
+    auto sandbox = LocalSandboxSessionAdapter::create(config);
     assert(sandbox.session != nullptr && sandbox.driver != nullptr);
     assert(sandbox.mapProvider != nullptr);
     const DebugGameplayTruth truth = sandbox.mapProvider->gameplayTruth();
@@ -545,9 +549,13 @@ void sandboxDebugTruthLabelsEveryLivingHunter() {
 }
 
 void sandboxDebugMenusTargetEveryParticipantAndSpectatingCycles() {
-    auto sandbox = LocalSandboxSessionAdapter::create(5, MapSeed{9005},
-        MatchSeed{42001}, client::ai::AiDifficulty::Hard,
-        client::ai::AiBehavior::Random, client::ai::AiSeed{78});
+    auto config = client::defaultSandboxSessionConfig(5);
+    config.mapSeed = MapSeed{9005};
+    config.matchSeed = MatchSeed{42001};
+    config.aiDifficulty = client::ai::AiDifficulty::Hard;
+    config.aiBehavior = client::ai::AiBehavior::Random;
+    config.aiSeed = client::ai::AiSeed{78};
+    auto sandbox = LocalSandboxSessionAdapter::create(config);
     assert(sandbox.session != nullptr && sandbox.mapProvider != nullptr);
     const auto participants = sandbox.mapProvider->participants();
     assert(participants.size() == 5);
@@ -606,6 +614,25 @@ void sandboxDebugMenusTargetEveryParticipantAndSpectatingCycles() {
     }
 }
 
+void customSandboxRulesPreserveDebugTools() {
+    auto config = client::defaultSandboxSessionConfig(3);
+    config.caveCount = 40;
+    config.jackalCount = 4;
+    config.startingArrows = 1;
+    config.maxArrows = 2;
+    config.mapSeed = MapSeed{1};
+    config.matchSeed = MatchSeed{424242};
+    auto sandbox = LocalSandboxSessionAdapter::create(config);
+    assert(sandbox.session != nullptr && sandbox.mapProvider != nullptr);
+    assert(sandbox.mapProvider->mapTruth().cavePositions.size() == 40);
+    assert(sandbox.mapProvider->gameplayTruth().jackalCaves.size() == 4);
+    assert(sandbox.mapProvider->participants().size() == 3);
+    assert(sandbox.mapProvider->cycleBasiliskBehavior());
+    assert(sandbox.mapProvider->grantItem(PlayerId{2}, ItemType::HealingDraught));
+    assert(sandbox.mapProvider->killPlayer(PlayerId{3}));
+    assert(!sandbox.session->snapshotFor(PlayerId{3})->alive);
+}
+
 } // namespace
 
 int main() {
@@ -626,5 +653,6 @@ int main() {
     sigilTruthReportsAuthoritativeRelocation();
     sandboxDebugTruthLabelsEveryLivingHunter();
     sandboxDebugMenusTargetEveryParticipantAndSpectatingCycles();
+    customSandboxRulesPreserveDebugTools();
     return 0;
 }

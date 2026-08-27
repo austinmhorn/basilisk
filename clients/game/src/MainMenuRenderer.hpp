@@ -34,7 +34,7 @@ struct MainMenuGeometry {
     std::vector<EmblemTile> emblems;
 };
 
-[[nodiscard]] std::optional<std::size_t> hitTestMainMenu(
+[[nodiscard]] std::optional<MainMenuAction> hitTestMainMenu(
     const MainMenuGeometry& geometry,
     PresentationPoint point) noexcept;
 

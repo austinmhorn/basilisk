@@ -7,6 +7,7 @@
 
 #include "ClientSessionController.hpp"
 #include "basilisk/Types.hpp"
+#include "basilisk/client/SandboxConfiguration.hpp"
 #include "basilisk/client/ai/AiDecisionEngine.hpp"
 
 #if defined(BASILISK_GAME_DEBUG_BUILD)
@@ -33,12 +34,7 @@ struct LocalSandboxSession {
 class LocalSandboxSessionAdapter {
 public:
     [[nodiscard]] static LocalSandboxSession create(
-        std::size_t hunterCount,
-        MapSeed mapSeed,
-        MatchSeed matchSeed,
-        client::ai::AiDifficulty difficulty,
-        client::ai::AiBehavior behavior,
-        client::ai::AiSeed aiSeed);
+        const client::SandboxSessionConfig& config);
 };
 
 } // namespace basilisk::game

@@ -114,6 +114,8 @@ if(TARGET BasiliskGameRuntime)
         BasiliskGameTextRendererTests
         PRIVATE
             BasiliskGameRuntime
+            Basilisk::GameActions
+            Basilisk::ClientAI
     )
     target_compile_definitions(
         BasiliskGameTextRendererTests
@@ -162,6 +164,10 @@ if(TARGET BasiliskAiSimulation)
     add_executable(BasiliskAiSimulationTests ai_sim_tests.cpp)
     target_link_libraries(BasiliskAiSimulationTests PRIVATE Basilisk::AiSimulation)
     add_test(NAME BasiliskAiSimulationTests COMMAND BasiliskAiSimulationTests)
+
+    add_executable(BasiliskSandboxStressTests sandbox_stress_tests.cpp)
+    target_link_libraries(BasiliskSandboxStressTests PRIVATE Basilisk::AiSimulation)
+    add_test(NAME BasiliskSandboxStressTests COMMAND BasiliskSandboxStressTests)
 endif()
 
 if(TARGET BasiliskGameActions)

@@ -215,6 +215,11 @@ void defaultThirtyCaveMapHasExpectedShapeAndActors() {
     assert(state.jackals.size() == 2);
     assert(state.pits.size() == 1);
     assert(state.players.size() == 2);
+    assert(state.rules.startingArrows == 3);
+    assert(state.rules.maxArrows == 5);
+    assert(state.rules.looseArrowSpawnIntervalRounds == 5);
+    assert(std::all_of(state.players.begin(), state.players.end(),
+        [](const PlayerState& player) { return player.arrows == 3; }));
 }
 
 void initialPlacementsDoNotOverlap() {
@@ -365,6 +370,44 @@ void rosterGenerationSupportsTwoThroughSixHunters() {
     }
 }
 
+void sixHunterGenerationIsReliableAcrossIndependentSeeds() {
+    ProceduralMapConfig config;
+    config.caveCount = 60;
+    config.extraConnections = 16;
+    config.minDiameter = 8;
+    config.maxDiameter = 30;
+    config.maxGenerationAttempts = 512;
+    const std::vector<PlayerId> roster{1, 2, 3, 4, 5, 6};
+    for (MapSeed seed = 1; seed <= 20001; seed += 1000) {
+        const auto state = MapGenerator::generate(
+            seed, MatchSeed{424242}, roster, {}, config);
+        assert(state.players.size() == roster.size());
+        assert(MapGenerator::validateFairness(state, config));
+    }
+}
+
+void customCaveAndJackalCountsAreExactAndDeterministic() {
+    ProceduralMapConfig config;
+    config.caveCount = 40;
+    config.extraConnections = 10;
+    config.minDiameter = 8;
+    config.maxDiameter = 30;
+    config.maxGenerationAttempts = 512;
+    config.jackalCount = 4;
+    const std::vector<PlayerId> roster{1, 2, 3};
+    const auto first = MapGenerator::generate(1, 424242, roster, {}, config);
+    const auto second = MapGenerator::generate(1, 424242, roster, {}, config);
+    assert(first.world.size() == 40);
+    assert(first.jackals.size() == 4);
+    assertSameGeneratedWorld(first, second);
+    assert(MapGenerator::validateFairness(first, config));
+
+    config.jackalCount = 0;
+    const auto noJackals = MapGenerator::generate(1, 424242, roster, {}, config);
+    assert(noJackals.world.size() == 40);
+    assert(noJackals.jackals.empty());
+}
+
 void invalidRostersAreRejected() {
     bool rejected = false;
     try { (void)MapGenerator::generate(1, 2, std::vector<PlayerId>{1}); }
@@ -402,6 +445,8 @@ int main() {
     pitsNeverSealOffRegionsAcrossManySeeds();
     deadEndSpawnPoliciesAreConfigurable();
     rosterGenerationSupportsTwoThroughSixHunters();
+    sixHunterGenerationIsReliableAcrossIndependentSeeds();
+    customCaveAndJackalCountsAreExactAndDeterministic();
     invalidRostersAreRejected();
     explicitDefaultRosterPreservesTwoPlayerGeneration();
 

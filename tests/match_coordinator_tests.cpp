@@ -606,6 +606,31 @@ void fiveHuntersCanShareOneConflictComponent() {
     }
 }
 
+void fourAndSixHuntersCanShareOneConflictComponent() {
+    for (const std::size_t count : {4U, 6U}) {
+        auto state = multiHunterFixture(count);
+        MatchCoordinator coordinator(state);
+        std::vector<PlayerAction> actions;
+        for (std::size_t index = 0; index < count; ++index)
+            actions.push_back(move(static_cast<PlayerId>(101 + index), 20));
+        submitAndLockAll(coordinator, actions);
+
+        const ActiveClash clash = *coordinator.activeClash();
+        assert(clash.participants.size() == count);
+        const PlayerId winner = clash.participants.back();
+        assert(coordinator.submitClashResponse(winner, clash.id, clash.challengeWord) ==
+            ClashSubmissionResult::Resolved);
+        assert(state.round == 2 && coordinator.activeClash() == nullptr);
+        assert(playerById(state, winner).cave == 20);
+
+        std::set<CaveId> occupied;
+        for (const auto& player : state.players) {
+            assert(occupied.insert(player.cave).second);
+            if (player.id != winner) assert(player.health == 80);
+        }
+    }
+}
+
 void connectedOppositeAndDestinationConflictsFormOneComponent() {
     auto state = multiHunterFixture(3); state.world.connect(3, 1);
     MatchCoordinator coordinator(state);
@@ -640,6 +665,31 @@ void disjointConflictComponentsQueueDeterministically() {
     assert(state.round == 2 && coordinator.activeClash() == nullptr);
     assert(playerById(state, 101).cave == 20);
     assert(playerById(state, 104).cave == 21);
+}
+
+void clashTimeoutAdvancesToNextQueuedComponent() {
+    auto state = multiHunterFixture(4);
+    state.players[2].cave = 7;
+    state.players[3].cave = 8;
+    MatchCoordinator coordinator(state);
+    submitAndLockAll(coordinator,
+        {move(101, 20), move(102, 20), move(103, 21), move(104, 21)});
+
+    const ActiveClash first = *coordinator.activeClash();
+    assert((first.participants == std::vector<PlayerId>{101, 102}));
+    coordinator.advanceTime(state.rules.clashTimeoutMs);
+    assert(state.round == 1);
+
+    const ActiveClash second = *coordinator.activeClash();
+    assert(second.id != first.id);
+    assert((second.participants == std::vector<PlayerId>{103, 104}));
+    assert(coordinator.submitClashResponse(104, second.id, second.challengeWord) ==
+        ClashSubmissionResult::Resolved);
+    assert(state.round == 2 && coordinator.activeClash() == nullptr);
+
+    std::set<CaveId> occupied;
+    for (const auto& player : state.players)
+        assert(occupied.insert(player.cave).second);
 }
 
 void multiPartyStalemateCancelsMovesAndPreservesSearchOnce() {
@@ -794,8 +844,10 @@ int main() {
     sixHuntersRequireAllLocksAndResolveOnce();
     threeHuntersConvergeIntoOneComponent();
     fiveHuntersCanShareOneConflictComponent();
+    fourAndSixHuntersCanShareOneConflictComponent();
     connectedOppositeAndDestinationConflictsFormOneComponent();
     disjointConflictComponentsQueueDeterministically();
+    clashTimeoutAdvancesToNextQueuedComponent();
     multiPartyStalemateCancelsMovesAndPreservesSearchOnce();
     movementChainAndCycleWithUniqueDestinationsRemainLegal();
     multiHunterSubmissionOrderDoesNotChangeResolution();

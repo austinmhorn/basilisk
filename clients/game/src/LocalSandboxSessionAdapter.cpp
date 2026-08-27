@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -14,6 +15,7 @@
 #include "basilisk/MatchState.hpp"
 #include "basilisk/client/MatchMode.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
+#include "basilisk/client/SandboxConfiguration.hpp"
 #include "basilisk/client/ai/AiKnowledgeState.hpp"
 #include "basilisk/client/ai/AiTurnScheduler.hpp"
 #include "basilisk/systems/MatchCoordinator.hpp"
@@ -24,25 +26,11 @@
 namespace basilisk::game {
 namespace {
 
-constexpr std::size_t kMinSandboxHunters = 2;
-constexpr std::size_t kMaxSandboxHunters = 6;
-
 std::uint64_t mixSeed(std::uint64_t value) {
     value += 0x9e3779b97f4a7c15ULL;
     value = (value ^ (value >> 30U)) * 0xbf58476d1ce4e5b9ULL;
     value = (value ^ (value >> 27U)) * 0x94d049bb133111ebULL;
     return value ^ (value >> 31U);
-}
-
-ProceduralMapConfig sandboxMapConfig(std::size_t hunterCount) {
-    ProceduralMapConfig config;
-    if (hunterCount <= 2) return config;
-    config.caveCount = 60;
-    config.extraConnections = 16;
-    config.minDiameter = 8;
-    config.maxDiameter = 30;
-    config.maxGenerationAttempts = 512;
-    return config;
 }
 
 PlayerMapView fullPhysicalMap(const MatchState& state) {
@@ -407,17 +395,24 @@ private:
 
 } // namespace
 
-LocalSandboxSession LocalSandboxSessionAdapter::create(std::size_t hunterCount,
-    MapSeed mapSeed, MatchSeed matchSeed, client::ai::AiDifficulty difficulty,
-    client::ai::AiBehavior behavior, client::ai::AiSeed aiSeed) {
-    if (hunterCount < kMinSandboxHunters || hunterCount > kMaxSandboxHunters)
+LocalSandboxSession LocalSandboxSessionAdapter::create(
+    const client::SandboxSessionConfig& config) {
+    if (validateSandboxSessionConfig(config).has_value() ||
+        config.humanPlayerCount != 1)
         return {};
+    const std::size_t hunterCount = config.hunterCount;
     std::vector<PlayerId> roster;
     roster.reserve(hunterCount);
     for (std::size_t index = 0; index < hunterCount; ++index)
         roster.push_back(static_cast<PlayerId>(index + 1));
-    MatchState match = MapGenerator::generate(mapSeed, matchSeed, roster, {},
-        sandboxMapConfig(hunterCount));
+    std::optional<MatchState> generated;
+    try {
+        generated = MapGenerator::generate(config.mapSeed, config.matchSeed,
+            roster, client::sandboxRules(config), client::sandboxMapConfig(config));
+    } catch (const std::runtime_error&) {
+        return {};
+    }
+    MatchState match = std::move(*generated);
     if (match.players.size() != hunterCount) return {};
     const PlayerId human = roster.front();
 
@@ -428,9 +423,9 @@ LocalSandboxSession LocalSandboxSessionAdapter::create(std::size_t hunterCount,
     profiles.push_back({human, "Local Hunter", {"arrow-right-black"}, {"circle-black"}});
     for (std::size_t index = 1; index < roster.size(); ++index) {
         const auto seed = client::ai::AiSeed{
-            mixSeed(aiSeed ^ static_cast<std::uint64_t>(roster[index]))};
-        const auto resolved = client::ai::resolveBehavior(behavior, seed);
-        configs.push_back({difficulty, resolved, roster[index], seed});
+            mixSeed(config.aiSeed ^ static_cast<std::uint64_t>(roster[index]))};
+        const auto resolved = client::ai::resolveBehavior(config.aiBehavior, seed);
+        configs.push_back({config.aiDifficulty, resolved, roster[index], seed});
         resolvedBehaviors.push_back(resolved);
         profiles.push_back({roster[index], "BASILISK AI " + std::to_string(index + 1),
             {"honeycomb-flag-black"}, {"circle-green"}});
@@ -448,7 +443,7 @@ LocalSandboxSession LocalSandboxSessionAdapter::create(std::size_t hunterCount,
     session->setMatchMode(client::MatchMode::Sandbox);
     for (std::size_t index = 0; index < configs.size(); ++index) {
         session->setParticipantSubtitle(configs[index].player,
-            std::string{client::ai::difficultyName(difficulty)} + " \xC2\xB7 " +
+            std::string{client::ai::difficultyName(config.aiDifficulty)} + " \xC2\xB7 " +
             client::ai::behaviorName(configs[index].behavior));
     }
     state->attach(*session);

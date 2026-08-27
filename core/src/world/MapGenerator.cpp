@@ -244,48 +244,70 @@ std::optional<std::pair<CaveId, CaveId>> chooseHunterSpawns(
     return candidates[index];
 }
 
-std::optional<std::vector<CaveId>> chooseHunterSpawns(
+using DistanceTable = std::unordered_map<CaveId, std::unordered_map<CaveId, int>>;
+
+DistanceTable allDistances(const WorldGraph& world) {
+    DistanceTable distances;
+    for (const CaveId cave : world.caveIds())
+        distances.emplace(cave, distancesFrom(world, cave));
+    return distances;
+}
+
+std::vector<std::vector<CaveId>> chooseHunterSpawnSets(
     const WorldGraph& world,
     std::size_t count,
     const ProceduralMapConfig& config,
-    RandomGenerator& rng) {
+    RandomGenerator& rng,
+    const DistanceTable& distances) {
 
     auto candidates = world.caveIds();
     shuffle(candidates, rng);
     std::erase_if(candidates, [&](CaveId cave) {
         return !config.allowHunterSpawnInDeadEnd && isDeadEnd(world, cave);
     });
-    if (candidates.size() < count) return std::nullopt;
+    std::vector<std::vector<CaveId>> selections;
+    std::set<std::vector<CaveId>> seen;
+    if (candidates.size() < count) return selections;
 
-    std::vector<CaveId> selected{candidates.front()};
-    while (selected.size() < count) {
-        std::optional<CaveId> best;
-        int bestMinimum = -1;
-        for (const CaveId candidate : candidates) {
-            if (std::find(selected.begin(), selected.end(), candidate) != selected.end()) continue;
-            int minimum = std::numeric_limits<int>::max();
-            for (const CaveId existing : selected) {
-                const auto distance = distanceBetween(world, candidate, existing);
-                if (!distance.has_value()) { minimum = -1; break; }
-                minimum = std::min(minimum, *distance);
+    // A single greedy start can reject an otherwise valid topology. Try each
+    // possible first spawn, retaining only distinct fair max-min selections.
+    for (const CaveId first : candidates) {
+        std::vector<CaveId> selected{first};
+        while (selected.size() < count) {
+            std::optional<CaveId> best;
+            int bestMinimum = -1;
+            for (const CaveId candidate : candidates) {
+                if (std::find(selected.begin(), selected.end(), candidate) != selected.end())
+                    continue;
+                int minimum = std::numeric_limits<int>::max();
+                for (const CaveId existing : selected) {
+                    const auto distance = distances.at(existing).find(candidate);
+                    if (distance == distances.at(existing).end()) { minimum = -1; break; }
+                    minimum = std::min(minimum, distance->second);
+                }
+                if (minimum > bestMinimum) {
+                    bestMinimum = minimum;
+                    best = candidate;
+                }
             }
-            if (minimum > bestMinimum) {
-                bestMinimum = minimum;
-                best = candidate;
-            }
+            if (!best.has_value() || bestMinimum < config.minHunterSeparation) break;
+            selected.push_back(*best);
         }
-        if (!best.has_value() || bestMinimum < config.minHunterSeparation)
-            return std::nullopt;
-        selected.push_back(*best);
+        if (selected.size() != count) continue;
+        auto canonical = selected;
+        std::ranges::sort(canonical);
+        if (seen.insert(std::move(canonical)).second)
+            selections.push_back(std::move(selected));
     }
-    return selected;
+    return selections;
 }
 
 std::optional<CaveId> chooseBasiliskSpawn(
     const WorldGraph& world,
     std::span<const CaveId> hunterSpawns,
     const ProceduralMapConfig& config,
-    RandomGenerator& rng) {
+    RandomGenerator& rng,
+    const DistanceTable* distances = nullptr) {
 
     std::vector<CaveId> candidates;
     for (const CaveId cave : world.caveIds()) {
@@ -296,7 +318,13 @@ std::optional<CaveId> chooseBasiliskSpawn(
         int maximum = 0;
         bool reachable = true;
         for (const CaveId spawn : hunterSpawns) {
-            const auto distance = distanceBetween(world, spawn, cave);
+            const auto distance = distances == nullptr
+                ? distanceBetween(world, spawn, cave)
+                : [&]() -> std::optional<int> {
+                    const auto found = distances->at(spawn).find(cave);
+                    if (found == distances->at(spawn).end()) return std::nullopt;
+                    return found->second;
+                }();
             if (!distance.has_value()) { reachable = false; break; }
             minimum = std::min(minimum, *distance);
             maximum = std::max(maximum, *distance);
@@ -311,6 +339,26 @@ std::optional<CaveId> chooseBasiliskSpawn(
     const auto index = static_cast<std::size_t>(
         rng.range(0, static_cast<int>(candidates.size()) - 1));
     return candidates[index];
+}
+
+std::optional<std::pair<std::vector<CaveId>, CaveId>> chooseMultiHunterPlacement(
+    const WorldGraph& world,
+    std::size_t count,
+    const ProceduralMapConfig& config,
+    RandomGenerator& rng) {
+
+    const DistanceTable distances = allDistances(world);
+    std::vector<std::pair<std::vector<CaveId>, CaveId>> placements;
+    for (auto& hunterSpawns : chooseHunterSpawnSets(
+            world, count, config, rng, distances)) {
+        const auto basiliskSpawn = chooseBasiliskSpawn(
+            world, hunterSpawns, config, rng, &distances);
+        if (basiliskSpawn.has_value())
+            placements.emplace_back(std::move(hunterSpawns), *basiliskSpawn);
+    }
+    if (placements.empty()) return std::nullopt;
+    return placements[static_cast<std::size_t>(
+        rng.range(0, static_cast<int>(placements.size()) - 1))];
 }
 
 void placePits(
@@ -367,10 +415,10 @@ void placeJackals(
     std::unordered_set<CaveId>& reserved) {
 
     const int cavesPerJackal = std::max(1, state.rules.cavesPerJackal);
-    const std::size_t count = std::max<std::size_t>(
+    const std::size_t count = config.jackalCount.value_or(std::max<std::size_t>(
         1,
         (state.world.size() + static_cast<std::size_t>(cavesPerJackal) - 1) /
-            static_cast<std::size_t>(cavesPerJackal));
+            static_cast<std::size_t>(cavesPerJackal)));
 
     auto candidates = state.world.caveIds();
     shuffle(candidates, rng);
@@ -423,22 +471,21 @@ MatchState populateMatch(
     state.world = std::move(world);
 
     std::vector<CaveId> hunterSpawns;
+    std::optional<CaveId> basiliskSpawn;
     if (roster.size() == 2) {
         const auto pair = chooseHunterSpawns(state.world, config, spawnRng);
         if (!pair.has_value()) throw std::runtime_error("No valid hunter spawn pair found.");
         hunterSpawns = {pair->first, pair->second};
+        basiliskSpawn = chooseBasiliskSpawn(
+            state.world, hunterSpawns, config, spawnRng);
     } else {
-        const auto selected = chooseHunterSpawns(state.world, roster.size(), config, spawnRng);
-        if (!selected.has_value())
-            throw std::runtime_error("No valid maximum-separation hunter spawn set found.");
-        hunterSpawns = *selected;
+        auto placement = chooseMultiHunterPlacement(
+            state.world, roster.size(), config, spawnRng);
+        if (!placement.has_value())
+            throw std::runtime_error("No fair multi-hunter placement found.");
+        hunterSpawns = std::move(placement->first);
+        basiliskSpawn = placement->second;
     }
-
-    const auto basiliskSpawn = chooseBasiliskSpawn(
-        state.world,
-        hunterSpawns,
-        config,
-        spawnRng);
     if (!basiliskSpawn.has_value()) {
         throw std::runtime_error("No fair Basilisk spawn found.");
     }

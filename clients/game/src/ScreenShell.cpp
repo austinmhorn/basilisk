@@ -652,12 +652,15 @@ bool drawHeaderHud(
             "ARROWS", FontWeight::Bold, ui::Typography::hudLabel, ui::Theme::muted, hudX, top + 3.0F * scale)) {
         return false;
     }
-    for (int index = 0; index < std::max(0, snapshot.maxArrows); ++index) {
-        const float slotX = hudX + static_cast<float>(index) * 13.0F * scale;
+    const HudArrowSectionLayout arrowLayout =
+        hudArrowSectionLayout(snapshot.maxArrows);
+    for (int index = 0; index < arrowLayout.slotCount; ++index) {
+        const float slotX = hudX + static_cast<float>(index) *
+            (arrowLayout.slotWidth + arrowLayout.slotSpacing) * scale;
         const SDL_FRect arrow{
             slotX,
             top + 19.0F * scale,
-            10.0F * scale,
+            arrowLayout.slotWidth * scale,
             20.0F * scale,
         };
         const float opacity = index < snapshot.arrows ? 1.0F : 0.22F;
@@ -684,7 +687,7 @@ bool drawHeaderHud(
         }
     }
 
-    hudX += 78.0F * scale;
+    hudX += arrowLayout.sectionWidth * scale;
     if (!context.label(
             "PACK", FontWeight::Bold, ui::Typography::hudLabel, ui::Theme::muted, hudX, top + 3.0F * scale)) {
         return false;

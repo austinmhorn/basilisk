@@ -147,6 +147,13 @@ void autoLockSelectedAction(AppState& state) {
     }
 }
 
+void returnFromAuthenticationToStartGame(AppState& state) {
+    state.view = AppView::MainMenu;
+    (void)state.mainMenu.activate(basilisk::game::MainMenuAction::StartGame);
+    state.enterOnlineAfterAuthentication = false;
+    (void)SDL_StopTextInput(state.window);
+}
+
 SDL_AppResult handleMainMenuResult(
     AppState& state,
     basilisk::game::MainMenuResult result) {
@@ -201,11 +208,12 @@ SDL_AppResult handleMainMenuResult(
     }
     if (result == basilisk::game::MainMenuResult::StartSandbox) {
         const Uint64 entropy = SDL_GetPerformanceCounter() ^ SDL_GetTicksNS();
-        auto local = basilisk::game::LocalSandboxSessionAdapter::create(
-            state.mainMenu.sandboxHunterCount(), basilisk::MapSeed{entropy},
-            basilisk::MatchSeed{entropy ^ 0x53414e44424f58ULL},
-            state.mainMenu.sandboxDifficulty(), state.mainMenu.sandboxBehavior(),
-            basilisk::client::ai::AiSeed{entropy ^ 0x48554e54455253ULL});
+        auto config = state.mainMenu.sandboxConfig();
+        config.mapSeed = basilisk::MapSeed{entropy};
+        config.matchSeed = basilisk::MatchSeed{entropy ^ 0x53414e44424f58ULL};
+        config.aiSeed = basilisk::client::ai::AiSeed{
+            entropy ^ 0x48554e54455253ULL};
+        auto local = basilisk::game::LocalSandboxSessionAdapter::create(config);
         if (local.session == nullptr || local.driver == nullptr) {
             SDL_Log("Unable to create local Sandbox match");
             return SDL_APP_CONTINUE;
@@ -638,7 +646,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             else if (event->key.key == SDLK_TAB) state->authScreen.nextField();
             else if (event->key.key == SDLK_RETURN ||
                      event->key.key == SDLK_KP_ENTER) submitAuthentication(*state);
-            else if (event->key.key == SDLK_ESCAPE) return SDL_APP_SUCCESS;
+            else if (event->key.key == SDLK_ESCAPE) {
+                returnFromAuthenticationToStartGame(*state);
+            }
             return SDL_APP_CONTINUE;
         }
         if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
@@ -658,6 +668,8 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             else if (basilisk::game::hitTest(
                          state->authGeometry.switchMode, point))
                 state->authScreen.switchMode();
+            else if (basilisk::game::hitTest(state->authGeometry.back, point))
+                returnFromAuthenticationToStartGame(*state);
         }
         return SDL_APP_CONTINUE;
     }
@@ -681,6 +693,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             }
             if (event->key.key == SDLK_DOWN) {
                 state->mainMenu.moveSelection(1);
+                return SDL_APP_CONTINUE;
+            }
+            if (event->key.key == SDLK_LEFT || event->key.key == SDLK_RIGHT) {
+                state->mainMenu.adjustSelected(
+                    event->key.key == SDLK_LEFT ? -1 : 1);
                 return SDL_APP_CONTINUE;
             }
             if (event->key.key == SDLK_RETURN ||
@@ -708,7 +725,13 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 return SDL_APP_FAILURE;
             const auto hit = basilisk::game::hitTestMainMenu(
                 state->mainMenuGeometry, pointer);
-            if (hit.has_value()) state->mainMenu.select(*hit);
+            if (hit.has_value()) {
+                const auto actions = state->mainMenu.actions();
+                const auto found = std::find(actions.begin(), actions.end(), *hit);
+                if (found != actions.end())
+                    state->mainMenu.select(static_cast<std::size_t>(
+                        found - actions.begin()));
+            }
             if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
                 const auto callingCard =
                     basilisk::game::hitTestCallingCardGallery(

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <span>
 
 #include "basilisk/MatchState.hpp"
@@ -23,6 +24,7 @@ struct ProceduralMapConfig {
     int maxDiameter{20};
 
     std::size_t pitCount{1};
+    std::optional<std::size_t> jackalCount;
 
     // Competitive spawn fairness.
     int minHunterSeparation{6};
