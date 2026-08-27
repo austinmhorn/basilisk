@@ -9,6 +9,7 @@
 #include "DebugKillMenu.hpp"
 #include "LocalGameSessionAdapter.hpp"
 #include "LocalAiGameSessionAdapter.hpp"
+#include "LocalSandboxSessionAdapter.hpp"
 #include "basilisk/MatchState.hpp"
 #include "basilisk/world/MapGenerator.hpp"
 #include "basilisk/systems/SigilPlacementSystem.hpp"
@@ -516,6 +517,32 @@ void sigilTruthReportsAuthoritativeRelocation() {
     assert(truth.sigils.front().cave == *state.bodies.front().sigilCave);
 }
 
+void sandboxDebugTruthLabelsEveryLivingHunter() {
+    auto sandbox = LocalSandboxSessionAdapter::create(4, MapSeed{9004},
+        MatchSeed{42000}, client::ai::AiDifficulty::Hard,
+        client::ai::AiBehavior::Balanced, client::ai::AiSeed{77});
+    assert(sandbox.session != nullptr && sandbox.driver != nullptr);
+    assert(sandbox.mapProvider != nullptr);
+    const DebugGameplayTruth truth = sandbox.mapProvider->gameplayTruth();
+    assert(truth.hunters.size() == 4);
+    assert(truth.hunters.front().label == "HOST");
+    for (std::size_t index = 1; index < truth.hunters.size(); ++index) {
+        assert(truth.hunters[index].label ==
+            "AI " + std::to_string(truth.hunters[index].player));
+        const PlayerRoundSnapshot* snapshot =
+            sandbox.session->snapshotFor(truth.hunters[index].player);
+        assert(snapshot != nullptr);
+        assert(snapshot->currentCave == truth.hunters[index].cave);
+    }
+    const PlayerId firstAi = truth.hunters[1].player;
+    assert(sandbox.mapProvider->killPlayer(DebugKillTarget::Ai));
+    const DebugGameplayTruth after = sandbox.mapProvider->gameplayTruth();
+    assert(std::none_of(after.hunters.begin(), after.hunters.end(),
+        [firstAi](const DebugGameplayTruth::Hunter& hunter) {
+            return hunter.player == firstAi;
+        }));
+}
+
 } // namespace
 
 int main() {
@@ -534,5 +561,6 @@ int main() {
     hunterTruthAlwaysReadsCurrentAuthoritativeCave();
     sigilTruthTracksMapCarrierAndUnavailableStates();
     sigilTruthReportsAuthoritativeRelocation();
+    sandboxDebugTruthLabelsEveryLivingHunter();
     return 0;
 }

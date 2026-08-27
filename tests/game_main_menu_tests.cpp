@@ -33,7 +33,7 @@ int main() {
 
     assert(menu.activateSelected() == MainMenuResult::None);
     assert(menu.page() == MainMenuPage::StartGame);
-    assert(menu.actions().size() == 3);
+    assert(menu.actions().size() == 4);
     assert(menu.activate(MainMenuAction::PlayOnline) ==
            MainMenuResult::RequestPlayOnline);
     menu.openOnline();
@@ -85,6 +85,26 @@ int main() {
     assert(menu.activate(MainMenuAction::CycleAiBehavior) == MainMenuResult::None);
     assert(menu.aiBehavior() == basilisk::client::ai::AiBehavior::Explorer);
     assert(menu.activate(MainMenuAction::StartAiGame) == MainMenuResult::StartAiGame);
+    assert(menu.back() == MainMenuResult::None);
+    assert(menu.page() == MainMenuPage::StartGame);
+    assert(menu.activate(MainMenuAction::Sandbox) == MainMenuResult::None);
+    assert(menu.page() == MainMenuPage::Sandbox);
+    assert(menu.sandboxHunterCount() == 2);
+    assert(menu.sandboxDifficulty() == basilisk::client::ai::AiDifficulty::Medium);
+    assert(menu.sandboxBehavior() == basilisk::client::ai::AiBehavior::Balanced);
+    for (int count = 2; count <= 6; ++count) {
+        assert(menu.sandboxHunterCount() == static_cast<std::size_t>(count));
+        if (count != 6)
+            assert(menu.activate(MainMenuAction::CycleSandboxHunters) ==
+                MainMenuResult::None);
+    }
+    assert(menu.activate(MainMenuAction::CycleSandboxHunters) == MainMenuResult::None);
+    assert(menu.sandboxHunterCount() == 2);
+    assert(menu.activate(MainMenuAction::CycleSandboxDifficulty) == MainMenuResult::None);
+    assert(menu.sandboxDifficulty() == basilisk::client::ai::AiDifficulty::Hard);
+    assert(menu.activate(MainMenuAction::CycleSandboxBehavior) == MainMenuResult::None);
+    assert(menu.sandboxBehavior() == basilisk::client::ai::AiBehavior::Explorer);
+    assert(menu.activate(MainMenuAction::StartSandbox) == MainMenuResult::StartSandbox);
     assert(menu.back() == MainMenuResult::None);
     assert(menu.page() == MainMenuPage::StartGame);
     assert(menu.back() == MainMenuResult::None);

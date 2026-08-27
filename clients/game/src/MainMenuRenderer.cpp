@@ -259,9 +259,14 @@ std::string_view actionLabel(MainMenuAction action) {
         case MainMenuAction::StartGame: return "START GAME";
         case MainMenuAction::PlayOnline: return "PLAY ONLINE";
         case MainMenuAction::PlayAi: return "PLAY AI";
+        case MainMenuAction::Sandbox: return "SANDBOX";
         case MainMenuAction::CycleAiDifficulty: return "DIFFICULTY";
         case MainMenuAction::CycleAiBehavior: return "BEHAVIOR";
         case MainMenuAction::StartAiGame: return "BEGIN HUNT";
+        case MainMenuAction::CycleSandboxHunters: return "HUNTERS";
+        case MainMenuAction::CycleSandboxDifficulty: return "DIFFICULTY";
+        case MainMenuAction::CycleSandboxBehavior: return "BEHAVIOR";
+        case MainMenuAction::StartSandbox: return "BEGIN SANDBOX";
         case MainMenuAction::Leaderboards: return "LEADERBOARDS";
         case MainMenuAction::Settings: return "SETTINGS";
         case MainMenuAction::EditProfile: return "EDIT";
@@ -286,6 +291,7 @@ std::string_view pageTitle(MainMenuPage page) {
         case MainMenuPage::StartGame: return "START GAME";
         case MainMenuPage::PlayOnline: return "PLAY ONLINE";
         case MainMenuPage::PlayAi: return "PLAY AI";
+        case MainMenuPage::Sandbox: return "SANDBOX";
         case MainMenuPage::Leaderboards: return "TROPHY LEADERBOARD";
         case MainMenuPage::Settings: return "SETTINGS";
         case MainMenuPage::Cosmetics: return "COSMETICS";
@@ -487,6 +493,11 @@ bool renderMainMenu(
                 FontWeight::Regular, static_cast<float>(11.0 * scale),
                 ui::Theme::mutedBright, left, buttonY, error)) return false;
         buttonY += 44.0 * scale;
+    } else if (menu.page() == MainMenuPage::Sandbox) {
+        if (!label(text, "Local offline hunt with 2-6 hunters",
+                FontWeight::Regular, static_cast<float>(11.0 * scale),
+                ui::Theme::mutedBright, left, buttonY, error)) return false;
+        buttonY += 44.0 * scale;
     } else if (menu.page() == MainMenuPage::Settings) {
         if (!label(text, "Settings are coming soon.", FontWeight::Regular,
                 static_cast<float>(12.0 * scale), ui::Theme::mutedBright,
@@ -659,6 +670,14 @@ bool renderMainMenu(
         } else if (actions[index] == MainMenuAction::CycleAiBehavior) {
             dynamicLabel = "BEHAVIOR  ";
             dynamicLabel += client::ai::behaviorName(menu.aiBehavior());
+        } else if (actions[index] == MainMenuAction::CycleSandboxHunters) {
+            dynamicLabel = "HUNTERS  " + std::to_string(menu.sandboxHunterCount());
+        } else if (actions[index] == MainMenuAction::CycleSandboxDifficulty) {
+            dynamicLabel = "DIFFICULTY  ";
+            dynamicLabel += client::ai::difficultyName(menu.sandboxDifficulty());
+        } else if (actions[index] == MainMenuAction::CycleSandboxBehavior) {
+            dynamicLabel = "BEHAVIOR  ";
+            dynamicLabel += client::ai::behaviorName(menu.sandboxBehavior());
         }
         const std::string_view displayLabel = dynamicLabel.empty()
             ? actionLabel(actions[index]) : std::string_view{dynamicLabel};

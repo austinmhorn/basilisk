@@ -1,0 +1,456 @@
+#include "LocalSandboxSessionAdapter.hpp"
+
+#include <algorithm>
+#include <map>
+#include <memory>
+#include <optional>
+#include <sstream>
+#include <string>
+#include <utility>
+
+#include "ActionCommands.hpp"
+#include "ClientLifecycle.hpp"
+#include "MapLayout.hpp"
+#include "basilisk/MatchState.hpp"
+#include "basilisk/client/MatchMode.hpp"
+#include "basilisk/client/PlayerProfile.hpp"
+#include "basilisk/client/ai/AiKnowledgeState.hpp"
+#include "basilisk/client/ai/AiTurnScheduler.hpp"
+#include "basilisk/systems/MatchCoordinator.hpp"
+#include "basilisk/systems/PublicMatchMetadataSystem.hpp"
+#include "basilisk/systems/SnapshotSystem.hpp"
+#include "basilisk/world/MapGenerator.hpp"
+
+namespace basilisk::game {
+namespace {
+
+constexpr std::size_t kMinSandboxHunters = 2;
+constexpr std::size_t kMaxSandboxHunters = 6;
+
+std::uint64_t mixSeed(std::uint64_t value) {
+    value += 0x9e3779b97f4a7c15ULL;
+    value = (value ^ (value >> 30U)) * 0xbf58476d1ce4e5b9ULL;
+    value = (value ^ (value >> 27U)) * 0x94d049bb133111ebULL;
+    return value ^ (value >> 31U);
+}
+
+ProceduralMapConfig sandboxMapConfig(std::size_t hunterCount) {
+    ProceduralMapConfig config;
+    if (hunterCount <= 2) return config;
+    config.caveCount = 60;
+    config.extraConnections = 16;
+    config.minDiameter = 8;
+    config.maxDiameter = 30;
+    config.maxGenerationAttempts = 512;
+    return config;
+}
+
+PlayerMapView fullPhysicalMap(const MatchState& state) {
+    PlayerMapView map;
+    if (!state.players.empty()) map.currentCave = state.players.front().cave;
+    for (const CaveId cave : state.world.caveIds()) {
+        DiscoveredCaveView view;
+        view.cave = cave;
+        const auto& connections = state.world.cave(cave).connections;
+        for (std::size_t index = 0; index < connections.size(); ++index) {
+            view.exits.push_back(TunnelView{
+                static_cast<TunnelId>(index + 1), connections[index], false});
+        }
+        map.caves.push_back(std::move(view));
+    }
+    return map;
+}
+
+PlayerFixedMapGeometry geometryFor(const MatchState& state,
+    const PlayerMapLayout& layout, const PlayerRoundSnapshot& snapshot) {
+    PlayerFixedMapGeometry geometry;
+    geometry.fullBounds = layout.positionedBounds();
+    for (const auto& cave : snapshot.map.caves) {
+        if (const auto point = layout.cavePosition(cave.cave))
+            geometry.discoveredCaves.emplace(cave.cave, *point);
+        if (!state.world.contains(cave.cave)) continue;
+        const auto& physical = state.world.cave(cave.cave).connections;
+        for (const auto& exit : cave.exits) {
+            if (exit.destination || exit.id == 0 || exit.id > physical.size()) continue;
+            if (const auto point = layout.cavePosition(physical[exit.id - 1]))
+                geometry.unknownExitEndpoints.emplace(
+                    MapExitKey{cave.cave, exit.id}, *point);
+        }
+    }
+    for (const CaveId cave : snapshot.temporarilyRevealedPitCaves) {
+        if (const auto point = layout.cavePosition(cave))
+            geometry.temporarilyRevealedCaves.emplace(cave, *point);
+    }
+    return geometry;
+}
+
+struct SandboxAgent {
+    PlayerId player{};
+    client::ai::AiConfig config;
+    client::ai::AiDecisionEngine engine;
+    client::ai::AiKnowledgeState knowledge;
+    client::ai::AiTurnScheduler scheduler;
+    std::optional<RoundNumber> decisionRound;
+};
+
+class LocalSandboxMatchState {
+public:
+    LocalSandboxMatchState(MatchState state, PlayerId human,
+        std::vector<client::ai::AiConfig> configs)
+        : state_(std::move(state)), coordinator_(state_), human_(human) {
+        agents_.reserve(configs.size());
+        for (auto& config : configs)
+            agents_.push_back(SandboxAgent{config.player, config});
+        const PlayerMapView physical = fullPhysicalMap(state_);
+        layout_.update(physical);
+        layout_.finalizeFullLayout(physical);
+    }
+
+    void attach(ClientSessionController& controller) {
+        controller_ = &controller;
+        publish({});
+        scheduleActions();
+    }
+
+    bool submit(const PlayerAction& action) {
+        return action.player == human_ && coordinator_.submitAction(action);
+    }
+
+    bool lock(PlayerId player) {
+        if (player != human_) return false;
+        return lockCoordinator(player);
+    }
+
+    bool submitClash(PlayerId player, ClashId clash, std::string response) {
+        if (player != human_) return false;
+        const RoundNumber priorRound = state_.round;
+        const auto result = coordinator_.submitClashResponse(
+            player, clash, std::move(response));
+        if (result == ClashSubmissionResult::Rejected) return false;
+        if (result == ClashSubmissionResult::Resolved) afterMutation(priorRound);
+        return true;
+    }
+
+    void advance(std::uint64_t elapsedMs) {
+        nowMs_ += elapsedMs;
+        const RoundNumber priorRound = state_.round;
+        const ClashId priorClash = activeClashId();
+        coordinator_.advanceTime(elapsedMs);
+        if (state_.round != priorRound || activeClashId() != priorClash)
+            afterMutation(priorRound);
+
+        if (coordinator_.activeClash() != nullptr) {
+            scheduleClashResponses();
+            submitNextDueClashResponse();
+            return;
+        }
+
+        scheduleActions();
+        submitDueActions();
+    }
+
+#if defined(BASILISK_GAME_DEBUG_BUILD)
+    [[nodiscard]] debug::DebugMapTruth debugMapTruth() const {
+        return debug::buildDebugMapTruth(state_, layout_);
+    }
+    [[nodiscard]] debug::DebugGameplayTruth debugGameplayTruth() const {
+        std::vector<debug::DebugHunterLabel> labels;
+        labels.push_back({human_, "HOST"});
+        for (const auto& agent : agents_)
+            labels.push_back({agent.player, "AI " + std::to_string(agent.player)});
+        return debug::buildDebugGameplayTruth(state_, labels);
+    }
+    [[nodiscard]] bool forceBasiliskBehavior(BasiliskBehavior behavior) {
+        state_.basilisk.behavior = behavior;
+        state_.basilisk.roundsSinceMove = 0;
+        publish({});
+        return true;
+    }
+    [[nodiscard]] bool grantItem(ItemType item) {
+        const auto player = std::find_if(state_.players.begin(), state_.players.end(),
+            [&](const PlayerState& candidate) { return candidate.id == human_; });
+        if (player == state_.players.end() || !player->alive ||
+            !player->inventory.add(ItemInstance{item},
+                state_.rules.maxInventoryItems)) return false;
+        publish({});
+        return true;
+    }
+    [[nodiscard]] bool killPlayer(debug::DebugKillTarget target) {
+        const PlayerId victim = target == debug::DebugKillTarget::Host
+            ? human_ : agents_.front().player;
+        const auto player = std::find_if(state_.players.begin(), state_.players.end(),
+            [&](const PlayerState& candidate) { return candidate.id == victim; });
+        if (player == state_.players.end() || !player->alive ||
+            state_.result.status != MatchStatus::Active) return false;
+        coordinator_.forfeit(victim);
+        for (auto& agent : agents_) {
+            if (agent.player == victim) agent.scheduler.clear();
+        }
+        publish(coordinator_.authoritativeEvents());
+        scheduleActions();
+        return true;
+    }
+#endif
+
+private:
+    [[nodiscard]] ClashId activeClashId() const noexcept {
+        return coordinator_.activeClash() == nullptr
+            ? ClashId{} : coordinator_.activeClash()->id;
+    }
+
+    bool lockCoordinator(PlayerId player) {
+        const RoundNumber priorRound = state_.round;
+        if (!coordinator_.lockAction(player)) return false;
+        afterMutation(priorRound);
+        return true;
+    }
+
+    void afterMutation(RoundNumber priorRound) {
+        if (coordinator_.activeClash() != nullptr) {
+            for (auto& agent : agents_) agent.scheduler.clearAction();
+            scheduleClashResponses();
+        } else {
+            for (auto& agent : agents_) agent.scheduler.clearClash();
+        }
+        if (state_.round != priorRound || coordinator_.activeClash() != nullptr)
+            publish(coordinator_.authoritativeEvents());
+        if (state_.round != priorRound) scheduleActions();
+    }
+
+    [[nodiscard]] bool agentAlive(PlayerId id) const {
+        const auto player = std::find_if(state_.players.begin(), state_.players.end(),
+            [id](const PlayerState& candidate) { return candidate.id == id; });
+        return player != state_.players.end() && player->alive;
+    }
+
+    void scheduleActions() {
+        if (controller_ == nullptr || coordinator_.activeClash() != nullptr ||
+            state_.result.status != MatchStatus::Active) return;
+        for (auto& agent : agents_) {
+            if (!agentAlive(agent.player)) {
+                agent.scheduler.clear();
+                continue;
+            }
+            if (agent.decisionRound == state_.round) continue;
+            const auto snapshotEntry = aiSnapshots_.find(agent.player);
+            if (snapshotEntry == aiSnapshots_.end() ||
+                snapshotEntry->second.round != state_.round ||
+                snapshotEntry->second.availableActions.empty()) continue;
+            const PlayerRoundSnapshot* snapshot = &snapshotEntry->second;
+            agent.decisionRound = state_.round;
+            agent.knowledge.observe(*snapshot);
+            const auto evaluation = agent.engine.evaluate(
+                *snapshot, agent.config, agent.knowledge);
+            if (!evaluation.actions.empty()) {
+                agent.scheduler.scheduleAction(
+                    evaluation.actions[evaluation.chosenIndex].action,
+                    nowMs_, agent.config, state_.round);
+            }
+        }
+    }
+
+    void submitDueActions() {
+        std::vector<SandboxAgent*> due;
+        for (auto& agent : agents_) {
+            if (agent.scheduler.actionDeadline().has_value() &&
+                *agent.scheduler.actionDeadline() <= nowMs_) due.push_back(&agent);
+        }
+        std::stable_sort(due.begin(), due.end(), [](const auto* left, const auto* right) {
+            if (left->scheduler.actionDeadline() != right->scheduler.actionDeadline())
+                return left->scheduler.actionDeadline() < right->scheduler.actionDeadline();
+            return left->player < right->player;
+        });
+        for (SandboxAgent* agent : due) {
+            if (coordinator_.activeClash() != nullptr ||
+                state_.result.status != MatchStatus::Active) break;
+            const auto action = agent->scheduler.takeDueAction(nowMs_);
+            if (!action.has_value()) continue;
+            PlayerAction command = makePlayerAction(*action, agent->player);
+            if (coordinator_.submitAction(command)) {
+                agent->knowledge.recordDecision(*action);
+                (void)lockCoordinator(agent->player);
+            }
+        }
+    }
+
+    void scheduleClashResponses() {
+        const ActiveClash* clash = coordinator_.activeClash();
+        if (clash == nullptr) return;
+        for (auto& agent : agents_) {
+            const bool participates = std::find(clash->participants.begin(),
+                clash->participants.end(), agent.player) != clash->participants.end();
+            if (!participates) {
+                agent.scheduler.clearClash();
+                continue;
+            }
+            if (!agent.scheduler.clashDeadline().has_value()) {
+                agent.scheduler.scheduleClash(clash->id, clash->challengeWord,
+                    nowMs_, agent.config);
+            }
+        }
+    }
+
+    void submitNextDueClashResponse() {
+        const ActiveClash* clash = coordinator_.activeClash();
+        if (clash == nullptr) return;
+        SandboxAgent* selected = nullptr;
+        for (auto& agent : agents_) {
+            if (!agent.scheduler.clashDeadline().has_value() ||
+                *agent.scheduler.clashDeadline() > nowMs_) continue;
+            if (selected == nullptr || agent.scheduler.clashDeadline() <
+                    selected->scheduler.clashDeadline() ||
+                (agent.scheduler.clashDeadline() == selected->scheduler.clashDeadline() &&
+                 agent.player < selected->player)) selected = &agent;
+        }
+        if (selected == nullptr) return;
+        const auto response = selected->scheduler.takeDueClash(nowMs_);
+        if (!response.has_value() || response->clash != clash->id) return;
+        const RoundNumber priorRound = state_.round;
+        const auto result = coordinator_.submitClashResponse(selected->player,
+            response->clash, response->response);
+        if (result == ClashSubmissionResult::Resolved) afterMutation(priorRound);
+    }
+
+    void refreshView() {
+        if (controller_ == nullptr) return;
+        auto context = controller_->viewContext();
+        const auto human = std::find_if(state_.players.begin(), state_.players.end(),
+            [&](const PlayerState& player) { return player.id == human_; });
+        if (human == state_.players.end() || human->alive ||
+            context.mode != client::ClientViewMode::Playing) return;
+        std::optional<PlayerId> survivor;
+        for (const PlayerState& player : state_.players) {
+            if (player.alive && player.id != human_) {
+                if (!survivor.has_value() || player.id < *survivor) survivor = player.id;
+            }
+        }
+        context.mode = client::ClientViewMode::Defeated;
+        context.viewedPlayer = human_;
+        context.spectatablePlayer = state_.result.status == MatchStatus::Active
+            ? survivor : std::nullopt;
+        controller_->setViewContext(context);
+    }
+
+    void publish(const std::vector<GameEvent>& events) {
+        if (controller_ == nullptr) return;
+        refreshView();
+        for (const PlayerState& player : state_.players) {
+            PlayerRoundSnapshot snapshot = SnapshotSystem::buildForPlayer(
+                state_, player.id, events);
+            if (player.id != human_) aiSnapshots_[player.id] = snapshot;
+            auto geometry = geometryFor(state_, layout_, snapshot);
+            (void)controller_->ingestSnapshot(std::move(snapshot), std::move(geometry));
+        }
+        const ActiveClash* clash = coordinator_.activeClash();
+        controller_->setActiveClash(clash == nullptr
+            ? std::nullopt : std::optional<ActiveClash>{*clash});
+    }
+
+    MatchState state_;
+    MatchCoordinator coordinator_;
+    PlayerMapLayout layout_;
+    PlayerId human_{};
+    std::vector<SandboxAgent> agents_;
+    std::map<PlayerId, PlayerRoundSnapshot> aiSnapshots_;
+    std::uint64_t nowMs_{};
+    ClientSessionController* controller_{nullptr};
+};
+
+class SandboxActionSink final : public ActionCommandSink {
+public:
+    explicit SandboxActionSink(std::shared_ptr<LocalSandboxMatchState> state)
+        : state_(std::move(state)) {}
+    bool submitAction(const PlayerAction& action) override {
+        return state_->submit(action);
+    }
+    bool lockAction(PlayerId player) override { return state_->lock(player); }
+    bool submitClashResponse(PlayerId player, ClashId clash,
+        std::string response) override {
+        return state_->submitClash(player, clash, std::move(response));
+    }
+private:
+    std::shared_ptr<LocalSandboxMatchState> state_;
+};
+
+class SandboxSessionCommands final : public ClientSessionCommandSink {
+public:
+    bool quitGame(PlayerId) override { return true; }
+};
+
+class SandboxDriver final : public LocalSandboxSessionDriver {
+public:
+    explicit SandboxDriver(std::shared_ptr<LocalSandboxMatchState> state)
+        : state_(std::move(state)) {}
+    void advance(std::uint64_t elapsedMs) override { state_->advance(elapsedMs); }
+private:
+    std::shared_ptr<LocalSandboxMatchState> state_;
+};
+
+} // namespace
+
+LocalSandboxSession LocalSandboxSessionAdapter::create(std::size_t hunterCount,
+    MapSeed mapSeed, MatchSeed matchSeed, client::ai::AiDifficulty difficulty,
+    client::ai::AiBehavior behavior, client::ai::AiSeed aiSeed) {
+    if (hunterCount < kMinSandboxHunters || hunterCount > kMaxSandboxHunters)
+        return {};
+    std::vector<PlayerId> roster;
+    roster.reserve(hunterCount);
+    for (std::size_t index = 0; index < hunterCount; ++index)
+        roster.push_back(static_cast<PlayerId>(index + 1));
+    MatchState match = MapGenerator::generate(mapSeed, matchSeed, roster, {},
+        sandboxMapConfig(hunterCount));
+    if (match.players.size() != hunterCount) return {};
+    const PlayerId human = roster.front();
+
+    std::vector<client::ai::AiConfig> configs;
+    std::vector<client::ai::AiBehavior> resolvedBehaviors;
+    std::vector<client::PublicPlayerProfile> profiles;
+    profiles.reserve(hunterCount);
+    profiles.push_back({human, "Local Hunter", {"arrow-right-black"}, {"circle-black"}});
+    for (std::size_t index = 1; index < roster.size(); ++index) {
+        const auto seed = client::ai::AiSeed{
+            mixSeed(aiSeed ^ static_cast<std::uint64_t>(roster[index]))};
+        const auto resolved = client::ai::resolveBehavior(behavior, seed);
+        configs.push_back({difficulty, resolved, roster[index], seed});
+        resolvedBehaviors.push_back(resolved);
+        profiles.push_back({roster[index], "BASILISK AI " + std::to_string(index + 1),
+            {"honeycomb-flag-black"}, {"circle-green"}});
+    }
+
+    PublicMatchMetadata metadata = PublicMatchMetadataSystem::build(match);
+    const client::ClientViewContext view{
+        human, human, client::ClientViewMode::Playing, std::nullopt};
+    auto state = std::make_shared<LocalSandboxMatchState>(
+        std::move(match), human, configs);
+    auto session = std::make_unique<ClientSessionController>(
+        std::move(metadata), std::move(profiles), view,
+        std::make_unique<SandboxActionSink>(state),
+        std::make_unique<SandboxSessionCommands>());
+    session->setMatchMode(client::MatchMode::Sandbox);
+    for (std::size_t index = 0; index < configs.size(); ++index) {
+        session->setParticipantSubtitle(configs[index].player,
+            std::string{client::ai::difficultyName(difficulty)} + " \xC2\xB7 " +
+            client::ai::behaviorName(configs[index].behavior));
+    }
+    state->attach(*session);
+
+    LocalSandboxSession result;
+    result.session = std::move(session);
+    result.driver = std::make_unique<SandboxDriver>(state);
+    result.resolvedBehaviors = std::move(resolvedBehaviors);
+#if defined(BASILISK_GAME_DEBUG_BUILD)
+    result.mapProvider = std::make_unique<debug::DebugMapProvider>(
+        state->debugMapTruth(),
+        [state] { return state->debugGameplayTruth(); },
+        [state](BasiliskBehavior next) {
+            return state->forceBasiliskBehavior(next);
+        },
+        [state](ItemType item) { return state->grantItem(item); },
+        [state](debug::DebugKillTarget target) {
+            return state->killPlayer(target);
+        });
+#endif
+    return result;
+}
+
+} // namespace basilisk::game

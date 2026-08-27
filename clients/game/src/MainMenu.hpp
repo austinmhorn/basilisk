@@ -16,6 +16,7 @@ enum class MainMenuPage {
     StartGame,
     PlayOnline,
     PlayAi,
+    Sandbox,
     Leaderboards,
     Settings,
     Cosmetics,
@@ -29,9 +30,14 @@ enum class MainMenuAction {
     StartGame,
     PlayOnline,
     PlayAi,
+    Sandbox,
     CycleAiDifficulty,
     CycleAiBehavior,
     StartAiGame,
+    CycleSandboxHunters,
+    CycleSandboxDifficulty,
+    CycleSandboxBehavior,
+    StartSandbox,
     Leaderboards,
     Settings,
     EditProfile,
@@ -60,6 +66,7 @@ enum class MainMenuResult {
     Logout,
     RequestPlayOnline,
     StartAiGame,
+    StartSandbox,
 };
 
 class MainMenuState {
@@ -78,6 +85,9 @@ public:
     [[nodiscard]] const client::EmblemId& selectedEmblem() const noexcept;
     [[nodiscard]] client::ai::AiDifficulty aiDifficulty() const noexcept;
     [[nodiscard]] client::ai::AiBehavior aiBehavior() const noexcept;
+    [[nodiscard]] std::size_t sandboxHunterCount() const noexcept;
+    [[nodiscard]] client::ai::AiDifficulty sandboxDifficulty() const noexcept;
+    [[nodiscard]] client::ai::AiBehavior sandboxBehavior() const noexcept;
     void openOnline() noexcept;
 
     void select(std::size_t index) noexcept;
@@ -111,6 +121,9 @@ private:
     client::EmblemId selectedEmblem_{"circle-black"};
     client::ai::AiDifficulty aiDifficulty_{client::ai::AiDifficulty::Medium};
     client::ai::AiBehavior aiBehavior_{client::ai::AiBehavior::Balanced};
+    std::size_t sandboxHunterCount_{2};
+    client::ai::AiDifficulty sandboxDifficulty_{client::ai::AiDifficulty::Medium};
+    client::ai::AiBehavior sandboxBehavior_{client::ai::AiBehavior::Balanced};
 };
 
 } // namespace basilisk::game

@@ -18,6 +18,7 @@ constexpr std::array mainActions{
 constexpr std::array startActions{
     MainMenuAction::PlayOnline,
     MainMenuAction::PlayAi,
+    MainMenuAction::Sandbox,
     MainMenuAction::Back,
 };
 constexpr std::array onlineActions{
@@ -30,6 +31,13 @@ constexpr std::array aiActions{
     MainMenuAction::CycleAiDifficulty,
     MainMenuAction::CycleAiBehavior,
     MainMenuAction::StartAiGame,
+    MainMenuAction::Back,
+};
+constexpr std::array sandboxActions{
+    MainMenuAction::CycleSandboxHunters,
+    MainMenuAction::CycleSandboxDifficulty,
+    MainMenuAction::CycleSandboxBehavior,
+    MainMenuAction::StartSandbox,
     MainMenuAction::Back,
 };
 constexpr std::array leaderboardActions{
@@ -57,6 +65,7 @@ std::span<const MainMenuAction> MainMenuState::actions() const noexcept {
         case MainMenuPage::StartGame: return startActions;
         case MainMenuPage::PlayOnline: return onlineActions;
         case MainMenuPage::PlayAi: return aiActions;
+        case MainMenuPage::Sandbox: return sandboxActions;
         case MainMenuPage::Leaderboards: return leaderboardActions;
         case MainMenuPage::Settings: return settingsActions;
         case MainMenuPage::Cosmetics: return cosmeticsActions;
@@ -90,6 +99,13 @@ const client::EmblemId& MainMenuState::selectedEmblem() const noexcept {
 }
 client::ai::AiDifficulty MainMenuState::aiDifficulty() const noexcept { return aiDifficulty_; }
 client::ai::AiBehavior MainMenuState::aiBehavior() const noexcept { return aiBehavior_; }
+std::size_t MainMenuState::sandboxHunterCount() const noexcept { return sandboxHunterCount_; }
+client::ai::AiDifficulty MainMenuState::sandboxDifficulty() const noexcept {
+    return sandboxDifficulty_;
+}
+client::ai::AiBehavior MainMenuState::sandboxBehavior() const noexcept {
+    return sandboxBehavior_;
+}
 void MainMenuState::openOnline() noexcept { setPage(MainMenuPage::PlayOnline); }
 
 void MainMenuState::select(std::size_t index) noexcept {
@@ -119,6 +135,9 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
         case MainMenuAction::PlayAi:
             setPage(MainMenuPage::PlayAi);
             break;
+        case MainMenuAction::Sandbox:
+            setPage(MainMenuPage::Sandbox);
+            break;
         case MainMenuAction::CycleAiDifficulty:
             aiDifficulty_ = static_cast<client::ai::AiDifficulty>(
                 (static_cast<int>(aiDifficulty_) + 1) % 3);
@@ -129,6 +148,19 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
             break;
         case MainMenuAction::StartAiGame:
             return MainMenuResult::StartAiGame;
+        case MainMenuAction::CycleSandboxHunters:
+            sandboxHunterCount_ = sandboxHunterCount_ == 6 ? 2 : sandboxHunterCount_ + 1;
+            break;
+        case MainMenuAction::CycleSandboxDifficulty:
+            sandboxDifficulty_ = static_cast<client::ai::AiDifficulty>(
+                (static_cast<int>(sandboxDifficulty_) + 1) % 3);
+            break;
+        case MainMenuAction::CycleSandboxBehavior:
+            sandboxBehavior_ = static_cast<client::ai::AiBehavior>(
+                (static_cast<int>(sandboxBehavior_) + 1) % 7);
+            break;
+        case MainMenuAction::StartSandbox:
+            return MainMenuResult::StartSandbox;
         case MainMenuAction::Leaderboards:
             leaderboardOffset_ = 0;
             setPage(MainMenuPage::Leaderboards);
@@ -150,7 +182,8 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
                     page_ == MainMenuPage::MatchReady ||
                     page_ == MainMenuPage::FindMatch
                 ? MainMenuPage::PlayOnline :
-                (page_ == MainMenuPage::PlayOnline || page_ == MainMenuPage::PlayAi
+                (page_ == MainMenuPage::PlayOnline || page_ == MainMenuPage::PlayAi ||
+                 page_ == MainMenuPage::Sandbox
                     ? MainMenuPage::StartGame : MainMenuPage::Main));
             break;
         case MainMenuAction::PreviousPage:
@@ -206,7 +239,8 @@ MainMenuResult MainMenuState::back() noexcept {
                 page_ == MainMenuPage::MatchReady ||
                 page_ == MainMenuPage::FindMatch
             ? MainMenuPage::PlayOnline :
-            (page_ == MainMenuPage::PlayOnline || page_ == MainMenuPage::PlayAi
+            (page_ == MainMenuPage::PlayOnline || page_ == MainMenuPage::PlayAi ||
+             page_ == MainMenuPage::Sandbox
                 ? MainMenuPage::StartGame : MainMenuPage::Main));
     return MainMenuResult::None;
 }

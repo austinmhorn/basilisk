@@ -24,6 +24,7 @@
 #include "DemoUi.hpp"
 #include "LocalGameSessionAdapter.hpp"
 #include "LocalAiGameSessionAdapter.hpp"
+#include "LocalSandboxSessionAdapter.hpp"
 #include "MapRenderer.hpp"
 #include "MainMenu.hpp"
 #include "MainMenuRenderer.hpp"
@@ -88,6 +89,7 @@ struct AppState {
     basilisk::game::ClientSessionController* session{nullptr};
     std::unique_ptr<basilisk::game::WebSocketNetworkSession> networkSession;
     std::unique_ptr<basilisk::game::LocalAiSessionDriver> localAiDriver;
+    std::unique_ptr<basilisk::game::LocalSandboxSessionDriver> localSandboxDriver;
     Uint64 localAiLastTick{0};
     bool networkFailureLogged{false};
     basilisk::game::PlayerMapLayout mapLayout;
@@ -191,6 +193,32 @@ SDL_AppResult handleMainMenuResult(
         state.debugMapReveal = basilisk::game::debug::DebugMapRevealState{};
         state.debugGameplayReveal = basilisk::game::debug::DebugMapRevealState{};
         state.debugInventoryMenu.close();
+#endif
+        state.localAiLastTick = SDL_GetTicks();
+        state.screenShellEnabled = true;
+        state.view = AppView::Gameplay;
+        return SDL_APP_CONTINUE;
+    }
+    if (result == basilisk::game::MainMenuResult::StartSandbox) {
+        const Uint64 entropy = SDL_GetPerformanceCounter() ^ SDL_GetTicksNS();
+        auto local = basilisk::game::LocalSandboxSessionAdapter::create(
+            state.mainMenu.sandboxHunterCount(), basilisk::MapSeed{entropy},
+            basilisk::MatchSeed{entropy ^ 0x53414e44424f58ULL},
+            state.mainMenu.sandboxDifficulty(), state.mainMenu.sandboxBehavior(),
+            basilisk::client::ai::AiSeed{entropy ^ 0x48554e54455253ULL});
+        if (local.session == nullptr || local.driver == nullptr) {
+            SDL_Log("Unable to create local Sandbox match");
+            return SDL_APP_CONTINUE;
+        }
+        state.ownedSession = std::move(local.session);
+        state.session = state.ownedSession.get();
+        state.localSandboxDriver = std::move(local.driver);
+#if defined(BASILISK_GAME_DEBUG)
+        state.debugMapProvider = std::move(local.mapProvider);
+        state.debugMapReveal = basilisk::game::debug::DebugMapRevealState{};
+        state.debugGameplayReveal = basilisk::game::debug::DebugMapRevealState{};
+        state.debugInventoryMenu.close();
+        state.debugKillMenu.close();
 #endif
         state.localAiLastTick = SDL_GetTicks();
         state.screenShellEnabled = true;
@@ -317,8 +345,9 @@ bool pointerInRenderCoordinates(
 
 SDL_AppResult finishGameplayQuit(AppState& state) {
     state.pauseMenu.close();
-    if (state.localAiDriver != nullptr) {
+    if (state.localAiDriver != nullptr || state.localSandboxDriver != nullptr) {
         state.localAiDriver.reset();
+        state.localSandboxDriver.reset();
 #if defined(BASILISK_GAME_DEBUG)
         state.debugMapProvider.reset();
         state.debugInventoryMenu.close();
@@ -1238,6 +1267,11 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
     if (state->localAiDriver != nullptr) {
         const Uint64 now = SDL_GetTicks();
         state->localAiDriver->advance(now - state->localAiLastTick);
+        state->localAiLastTick = now;
+    }
+    if (state->localSandboxDriver != nullptr) {
+        const Uint64 now = SDL_GetTicks();
+        state->localSandboxDriver->advance(now - state->localAiLastTick);
         state->localAiLastTick = now;
     }
 

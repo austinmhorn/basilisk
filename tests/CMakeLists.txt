@@ -141,6 +141,14 @@ if(TARGET BasiliskClientAI)
         Basilisk::GameLocalSession Basilisk::ClientAI)
     target_compile_features(BasiliskGameLocalAiSessionTests PRIVATE cxx_std_20)
     add_test(NAME BasiliskGameLocalAiSessionTests COMMAND BasiliskGameLocalAiSessionTests)
+
+    add_executable(BasiliskGameLocalSandboxSessionTests
+        game_local_sandbox_session_tests.cpp)
+    target_link_libraries(BasiliskGameLocalSandboxSessionTests PRIVATE
+        Basilisk::GameLocalSession Basilisk::ClientAI)
+    target_compile_features(BasiliskGameLocalSandboxSessionTests PRIVATE cxx_std_20)
+    add_test(NAME BasiliskGameLocalSandboxSessionTests
+        COMMAND BasiliskGameLocalSandboxSessionTests)
 endif()
 
 if(TARGET BasiliskAiSimulation)

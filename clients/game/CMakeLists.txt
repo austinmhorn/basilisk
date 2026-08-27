@@ -301,6 +301,7 @@ endif()
 add_library(BasiliskGameLocalSession STATIC
     src/LocalGameSessionAdapter.cpp
     src/LocalAiGameSessionAdapter.cpp
+    src/LocalSandboxSessionAdapter.cpp
 )
 
 add_library(Basilisk::GameLocalSession ALIAS BasiliskGameLocalSession)
@@ -594,6 +595,7 @@ if(NOT EMSCRIPTEN)
     add_library(BasiliskGameDebugLocalSession STATIC
         src/LocalGameSessionAdapter.cpp
         src/LocalAiGameSessionAdapter.cpp
+        src/LocalSandboxSessionAdapter.cpp
     )
     add_library(
         Basilisk::GameDebugLocalSession

@@ -473,7 +473,7 @@ bool drawHeaderHud(
             return false;
         }
         hudX = playerCard.x + playerCard.w + 36.0F * scale;
-    } else {
+    } else if (matchPlayers.size() == 2) {
         const PublicPlayerSlot* p1Slot = findSlot(session, PlayerSlot::P1);
         const PublicPlayerSlot* p2Slot = findSlot(session, PlayerSlot::P2);
         const client::PublicPlayerProfile* p1 =
@@ -539,6 +539,29 @@ bool drawHeaderHud(
             versus.x + versus.w,
             versus.y + versus.h * 0.5F);
         hudX = p2Card.x + p2Card.w + 24.0F * scale;
+    } else {
+        const auto localSlot = std::find_if(matchPlayers.begin(), matchPlayers.end(),
+            [&](const PublicPlayerSlot& slot) {
+                return slot.player == session.viewContext().localPlayer;
+            });
+        const client::PublicPlayerProfile* local = localSlot == matchPlayers.end()
+            ? nullptr : findProfile(session, localSlot->player);
+        const SDL_FRect playerCard{
+            matchX + (playerCardHeight + playerCardGap) * scale,
+            top,
+            playerCardWidth * scale,
+            playerCardHeight * scale,
+        };
+        const std::string designation = "SANDBOX \xC2\xB7 " +
+            std::to_string(matchPlayers.size()) + " HUNTERS";
+        if (!drawPlayerCard(context, playerCard, designation,
+                local == nullptr ? "Local Hunter" : local->username,
+                localSlot == matchPlayers.end() ? std::string_view{} :
+                    session.participantSubtitle(localSlot->player),
+                local == nullptr ? nullptr : &local->callingCardId,
+                local == nullptr ? nullptr : &local->emblemId,
+                true, true)) return false;
+        hudX = playerCard.x + playerCard.w + 24.0F * scale;
     }
 
     const SDL_FRect roundBadge{hudX, top + 3.0F * scale, 54.0F * scale, 40.0F * scale};
