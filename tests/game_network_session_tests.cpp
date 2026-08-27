@@ -73,7 +73,7 @@ concept HasLedgerRows = requires(T value) { value.ledgerRows; };
 template <typename T>
 concept HasTrophyMatchId = requires(T value) { value.trophyMatchId; };
 
-static_assert(kProtocolVersion == 6);
+static_assert(kProtocolVersion == 7);
 static_assert(std::variant_size_v<ClientCommandPayload> == 6);
 static_assert(!HasWorld<ServerBootstrap>);
 static_assert(!HasAuthoritativeState<ServerBootstrap>);
@@ -163,6 +163,7 @@ PlayerRoundSnapshot snapshotFor(
 
 ServerBootstrap bootstrapFor(PlayerId localPlayer = PlayerId{1}) {
     ServerBootstrap bootstrap;
+    bootstrap.matchMode = client::MatchMode::Online;
     bootstrap.matchMetadata.totalCaves = 40;
     bootstrap.matchMetadata.players = {
         PublicPlayerSlot{PlayerId{1}, PlayerSlot::P1},
@@ -307,6 +308,7 @@ void allServerFieldsRoundTripExactly() {
     ServerBootstrap decoded;
     assert(decodeServerBootstrap(bytes, decoded, error));
     assert(decoded.protocolVersion == kProtocolVersion);
+    assert(decoded.matchMode == client::MatchMode::Online);
     assert(decoded.trophyTotal == -7);
     assert(decoded.matchMetadata.totalCaves == 40);
     assert(decoded.matchMetadata.players.size() == 2);
@@ -380,6 +382,7 @@ void allServerFieldsRoundTripExactly() {
 
 void sixParticipantMetadataSeatsRoundTrip() {
     ServerBootstrap source = bootstrapFor();
+    source.matchMode = client::MatchMode::Sandbox;
     for (std::uint8_t index = 2; index < 6; ++index) {
         const PlayerId player = static_cast<PlayerId>(index + 1);
         source.matchMetadata.players.push_back(
@@ -392,6 +395,7 @@ void sixParticipantMetadataSeatsRoundTrip() {
     assert(encodeWire(source, bytes, error));
     ServerBootstrap decoded;
     assert(decodeServerBootstrap(bytes, decoded, error));
+    assert(decoded.matchMode == client::MatchMode::Sandbox);
     assert(decoded.matchMetadata.players.size() == 6);
     assert(decoded.matchMetadata.players[2].slot == PlayerSlot::P3);
     assert(decoded.matchMetadata.players[5].slot == PlayerSlot::P6);
@@ -500,7 +504,7 @@ void goldenFixtureIsStable() {
     const WireBytes expected{
         0x42, 0x53, 0x4b, 0x31,
         0x13,
-        0x00, 0x00, 0x00, 0x06,
+        0x00, 0x00, 0x00, 0x07,
         0x00, 0x00, 0x00, 0x2a,
     };
     assert(bytes == expected);
@@ -597,10 +601,15 @@ void malformedWireIsRejected() {
     malformedBootstrap[4] = 0xff;
     assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
 
-    bootstrapBytes[13] = 0x00;
+    malformedBootstrap = bootstrapBytes;
+    malformedBootstrap[9] = 0xff;
+    assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
+    assert(error == "Invalid match mode.");
+
     bootstrapBytes[14] = 0x00;
-    bootstrapBytes[15] = 0x40;
-    bootstrapBytes[16] = 0x01;
+    bootstrapBytes[15] = 0x00;
+    bootstrapBytes[16] = 0x40;
+    bootstrapBytes[17] = 0x01;
     assert(!decodeServerBootstrap(bootstrapBytes, bootstrap, error));
 
     ServerBootstrap missingRequiredProfile = representativeBootstrap();
