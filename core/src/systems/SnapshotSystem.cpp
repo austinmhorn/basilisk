@@ -121,6 +121,7 @@ PlayerRoundSnapshot SnapshotSystem::buildForPlayer(
 
     snapshot.recoverableRivalSigilAvailable =
         player.alive && visibleState.result.status == MatchStatus::Active &&
+        !visibleState.extraction.sigilHolder.has_value() &&
         std::any_of(
             visibleState.bodies.begin(),
             visibleState.bodies.end(),

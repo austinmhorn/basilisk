@@ -59,6 +59,13 @@ add_executable(BasiliskObservationTests
 target_link_libraries(BasiliskObservationTests PRIVATE Basilisk::Core)
 add_test(NAME BasiliskObservationTests COMMAND BasiliskObservationTests)
 
+add_executable(BasiliskMultiplayerSemanticsTests
+    multiplayer_semantics_tests.cpp
+)
+target_link_libraries(BasiliskMultiplayerSemanticsTests PRIVATE Basilisk::Core)
+add_test(NAME BasiliskMultiplayerSemanticsTests
+    COMMAND BasiliskMultiplayerSemanticsTests)
+
 add_executable(BasiliskClientPresentationTests
     client_presentation_tests.cpp
 )

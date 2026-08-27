@@ -59,6 +59,23 @@ void emitRelocation(
     }
 }
 
+CaveId chooseExtractionCave(const MatchState& state, CaveId from) {
+    CaveId best = from;
+    int bestDistance = -1;
+    const auto distances = distancesFrom(state, from);
+    for (const CaveId cave : state.world.caveIds()) {
+        if (cave == from || activePit(state, cave)) continue;
+        const auto distance = distances.find(cave);
+        if (distance == distances.end()) continue;
+        if (distance->second > bestDistance ||
+            (distance->second == bestDistance && cave < best)) {
+            bestDistance = distance->second;
+            best = cave;
+        }
+    }
+    return best;
+}
+
 } // namespace
 
 std::optional<CaveId> nearestRecoverableSigilCave(
@@ -75,6 +92,32 @@ std::optional<CaveId> nearestRecoverableSigilCave(
         if (!best || candidate < *best) best = candidate;
     }
     return best ? std::optional<CaveId>{best->second} : std::nullopt;
+}
+
+void recoverSigilAtCurrentCave(
+    MatchState& state, PlayerState& player, std::vector<GameEvent>& events) {
+    if (!player.alive || player.heldSigilFrom.has_value() ||
+        state.extraction.sigilHolder.has_value()) return;
+    for (auto& body : state.bodies) {
+        if (!body.sigilAvailable || body.owner == player.id) continue;
+        const CaveId sigilCave = body.sigilCave.value_or(body.cave);
+        if (sigilCave != player.cave) continue;
+        if (body.cave == player.cave) {
+            events.push_back(GameEvent{
+                GameEventType::BodyFound, player.id, body.owner, body.cave});
+        }
+        body.sigilAvailable = false;
+        player.heldSigilFrom = body.owner;
+        events.push_back(GameEvent{
+            GameEventType::SigilAcquired, player.id, body.owner, sigilCave});
+        state.extraction.active = true;
+        state.extraction.sigilHolder = player.id;
+        state.extraction.cave = chooseExtractionCave(state, player.cave);
+        events.push_back(GameEvent{
+            GameEventType::ExtractionActivated, player.id, std::nullopt,
+            state.extraction.cave});
+        return;
+    }
 }
 
 void placeSigilsForDeath(

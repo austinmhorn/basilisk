@@ -11,6 +11,7 @@
 #include "basilisk/systems/MapDiscoverySystem.hpp"
 #include "basilisk/systems/PitInvestigationSystem.hpp"
 #include "basilisk/systems/SearchSystem.hpp"
+#include "basilisk/systems/SigilPlacementSystem.hpp"
 #include "basilisk/systems/TurnResolver.hpp"
 
 namespace basilisk {
@@ -63,7 +64,10 @@ std::vector<GameEvent> RoundController::resolveStationaryAction(
         static_cast<std::uint64_t>(state.matchSeed) ^
         (static_cast<std::uint64_t>(state.round) * 0x9E3779B97F4A7C15ULL) ^
         static_cast<std::uint64_t>(player->id)};
-    auto events = PitInvestigationSystem::resolve(state, {action});
+    std::vector<GameEvent> events;
+    auto investigationEvents = PitInvestigationSystem::resolve(state, {action});
+    events.insert(events.end(), investigationEvents.begin(), investigationEvents.end());
+    recoverSigilAtCurrentCave(state, *player, events);
     state.mostRecentSearchCave = player->cave;
     auto searchEvents = SearchSystem::search(*player, state.rules, rng);
     events.insert(events.end(), searchEvents.begin(), searchEvents.end());

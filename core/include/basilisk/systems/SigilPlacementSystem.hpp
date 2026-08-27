@@ -13,6 +13,14 @@ namespace basilisk {
 [[nodiscard]] std::optional<CaveId> nearestRecoverableSigilCave(
     const MatchState& state, CaveId intendedCave);
 
+// Recovers at most one available rival Sigil at the hunter's current cave.
+// The match has one active extraction carrier; competing searches therefore
+// resolve deterministically in authoritative action order.
+void recoverSigilAtCurrentCave(
+    MatchState& state,
+    PlayerState& player,
+    std::vector<GameEvent>& events);
+
 // Creates the dead hunter's body/Sigil and drops any Sigil they carried.
 // All resulting Sigil locations use nearestRecoverableSigilCave().
 void placeSigilsForDeath(

@@ -266,41 +266,6 @@ int movementInterval(BasiliskBehavior behavior) {
     return 0;
 }
 
-CaveId chooseExtractionCave(const MatchState& state, CaveId from) {
-    CaveId best = from;
-    int bestDistance = -1;
-    for (const CaveId cave : state.world.caveIds()) {
-        if (cave == from || caveContainsActivePit(state, cave)) continue;
-        const auto distance = distanceTo(state.world, from, cave);
-        if (!distance.has_value()) continue;
-        if (*distance > bestDistance || (*distance == bestDistance && cave < best)) {
-            bestDistance = *distance;
-            best = cave;
-        }
-    }
-    return best;
-}
-
-void discoverDynamicBodyContents(MatchState& state, PlayerState& player,
-                                 std::vector<GameEvent>& events) {
-    for (auto& body : state.bodies) {
-        if (!body.sigilAvailable || body.owner == player.id) continue;
-        const CaveId sigilCave = body.sigilCave.value_or(body.cave);
-        if (sigilCave != player.cave) continue;
-        if (body.cave == player.cave)
-            events.push_back(GameEvent{GameEventType::BodyFound, player.id, body.owner, body.cave});
-        body.sigilAvailable = false;
-        player.heldSigilFrom = body.owner;
-        events.push_back(GameEvent{GameEventType::SigilAcquired, player.id, body.owner, sigilCave});
-        state.extraction.active = true;
-        state.extraction.sigilHolder = player.id;
-        state.extraction.cave = chooseExtractionCave(state, player.cave);
-        events.push_back(GameEvent{GameEventType::ExtractionActivated, player.id, std::nullopt,
-            state.extraction.cave});
-        return;
-    }
-}
-
 void resolveEscape(MatchState& state, PlayerState& player, std::vector<GameEvent>& events) {
     if (state.result.status != MatchStatus::Active || !player.alive ||
         !state.extraction.active || !state.extraction.cave.has_value() ||
@@ -416,10 +381,12 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
     std::unordered_map<PlayerId, PlayerId> lethalAttackerByTarget;
     for (const auto& damage : pendingDamage) {
         auto& target = playerById(state, damage.target);
+        const int healthBefore = target.health;
         target.health = std::max(0, target.health - damage.amount);
         events.push_back(GameEvent{GameEventType::PlayerDamaged, damage.attacker, target.id,
             damage.cave, damage.amount});
-        if (target.health <= 0) lethalAttackerByTarget[target.id] = damage.attacker;
+        if (healthBefore > 0 && target.health <= 0)
+            lethalAttackerByTarget.try_emplace(target.id, damage.attacker);
     }
     for (auto& player : state.players) {
         if (player.alive && player.health <= 0) {
@@ -439,7 +406,7 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
         auto& player = playerById(state, action.player);
         if (!player.alive) continue;
         mostRecentSearchCave = player.cave;
-        discoverDynamicBodyContents(state, player, events);
+        recoverSigilAtCurrentCave(state, player, events);
         auto searchEvents = SearchSystem::search(player, state.rules, rng);
         events.insert(events.end(), searchEvents.begin(), searchEvents.end());
         if (state.basilisk.alive && state.basilisk.behavior == BasiliskBehavior::Skittish &&
