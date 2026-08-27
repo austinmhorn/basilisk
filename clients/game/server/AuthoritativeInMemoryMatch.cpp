@@ -17,6 +17,7 @@
 #include "basilisk/world/MapGenerator.hpp"
 #include "basilisk/client/SandboxConfiguration.hpp"
 #include "basilisk/client/ai/AiKnowledgeState.hpp"
+#include "basilisk/client/ai/AiTurnScheduler.hpp"
 
 namespace basilisk::game::server {
 namespace {
@@ -94,6 +95,8 @@ struct NetworkAiAgent {
     client::ai::AiDecisionEngine engine;
     client::ai::AiKnowledgeState knowledge;
     std::optional<RoundNumber> decisionRound;
+    client::ai::AiTurnScheduler scheduler;
+    std::optional<ClashId> scheduledClash;
 };
 
 class AuthoritativeInMemoryMatchState {
@@ -114,7 +117,8 @@ public:
           leaderboard_(std::move(leaderboard)) {
 
         for (auto& config : aiConfigs)
-            aiAgents_.push_back({std::move(config), {}, {}, std::nullopt});
+            aiAgents_.push_back({
+                std::move(config), {}, {}, std::nullopt, {}, std::nullopt});
 
         const PlayerMapView physicalMap = fullPhysicalMap(match_);
         fullLayout_.update(physicalMap);
@@ -246,6 +250,7 @@ public:
     }
 
     void advanceTime(std::uint64_t elapsedMs) {
+        nowMs_ += elapsedMs;
         const RoundNumber priorRound = match_.round;
         const auto priorClash = activeClashCopy();
         coordinator_.advanceTime(elapsedMs);
@@ -304,24 +309,65 @@ private:
         for (int step = 0; step < kMaximumSteps; ++step) {
             if (match_.result.status != MatchStatus::Active) return;
             if (const ActiveClash* clash = coordinator_.activeClash()) {
-                auto agent = std::find_if(aiAgents_.begin(), aiAgents_.end(),
-                    [&](const NetworkAiAgent& candidate) {
-                        return std::find(clash->participants.begin(),
-                            clash->participants.end(), candidate.config.player) !=
-                            clash->participants.end();
-                    });
-                if (agent == aiAgents_.end()) return;
+                NetworkAiAgent* dueAgent = nullptr;
+                std::uint64_t dueDeadline = std::numeric_limits<std::uint64_t>::max();
+                for (auto& candidate : aiAgents_) {
+                    const bool participant = std::find(
+                        clash->participants.begin(),
+                        clash->participants.end(),
+                        candidate.config.player) != clash->participants.end();
+                    if (!participant) {
+                        if (candidate.scheduledClash.has_value()) {
+                            candidate.scheduler.clearClash();
+                            candidate.scheduledClash.reset();
+                        }
+                        continue;
+                    }
+                    if (candidate.scheduledClash != clash->id) {
+                        candidate.scheduler.clearClash();
+                        candidate.scheduler.scheduleClash(
+                            clash->id,
+                            clash->challengeWord,
+                            nowMs_,
+                            candidate.config);
+                        candidate.scheduledClash = clash->id;
+                    }
+                    const auto deadline = candidate.scheduler.clashDeadline();
+                    if (deadline.has_value() && *deadline <= nowMs_ &&
+                        *deadline < dueDeadline) {
+                        dueDeadline = *deadline;
+                        dueAgent = &candidate;
+                    }
+                }
+                if (dueAgent == nullptr) return;
+
+                const auto scheduled =
+                    dueAgent->scheduler.takeDueClash(nowMs_);
+                if (!scheduled.has_value()) return;
                 const auto priorClash = activeClashCopy();
                 const RoundNumber priorRound = match_.round;
                 const ClashSubmissionResult result =
                     coordinator_.submitClashResponse(
-                        agent->config.player,
-                        priorClash->id,
-                        priorClash->challengeWord);
+                        dueAgent->config.player,
+                        scheduled->clash,
+                        scheduled->response);
+                for (auto& candidate : aiAgents_) {
+                    if (candidate.scheduledClash == priorClash->id) {
+                        candidate.scheduler.clearClash();
+                        candidate.scheduledClash.reset();
+                    }
+                }
                 if (result != ClashSubmissionResult::Resolved) return;
                 publishCoordinatorOutcome(
-                    priorRound, priorClash, agent->config.player);
+                    priorRound, priorClash, dueAgent->config.player);
                 continue;
+            }
+
+            for (auto& candidate : aiAgents_) {
+                if (candidate.scheduledClash.has_value()) {
+                    candidate.scheduler.clearClash();
+                    candidate.scheduledClash.reset();
+                }
             }
 
             auto agent = std::find_if(aiAgents_.begin(), aiAgents_.end(),
@@ -633,6 +679,7 @@ private:
     bool trophyScoringAttempted_{false};
     std::optional<std::string> trophyScoringError_;
     std::vector<NetworkAiAgent> aiAgents_;
+    std::uint64_t nowMs_{0};
 };
 
 InMemoryMatchEndpoint::InMemoryMatchEndpoint(
