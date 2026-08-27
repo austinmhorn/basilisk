@@ -126,12 +126,31 @@ void metadataBuildLeavesOrdinarySnapshotUnchanged() {
     assert(before.map.caves.size() == 1);
 }
 
+void assignsStableSeatsThroughP6() {
+    auto state = makeMatch();
+    for (PlayerId id = 3; id <= 6; ++id) {
+        PlayerState player;
+        player.id = 100 + id;
+        player.cave = CaveId{10};
+        state.players.push_back(player);
+    }
+    const auto metadata = PublicMatchMetadataSystem::build(state);
+    assert(metadata.players.size() == 6);
+    assert(metadata.players[0].slot == PlayerSlot::P1);
+    assert(metadata.players[1].slot == PlayerSlot::P2);
+    assert(metadata.players[2].slot == PlayerSlot::P3);
+    assert(metadata.players[3].slot == PlayerSlot::P4);
+    assert(metadata.players[4].slot == PlayerSlot::P5);
+    assert(metadata.players[5].slot == PlayerSlot::P6);
+}
+
 } // namespace
 
 int main() {
     exposesScalarCountAndEveryPlayerExactlyOnce();
     slotsFollowStableAuthoritativeOrderNotNumericIds();
     metadataBuildLeavesOrdinarySnapshotUnchanged();
+    assignsStableSeatsThroughP6();
 
     std::cout << "Basilisk public match metadata tests passed.\n";
     return 0;

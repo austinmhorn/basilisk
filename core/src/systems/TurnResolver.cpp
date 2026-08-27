@@ -1,10 +1,12 @@
 #include "basilisk/systems/TurnResolver.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cstdint>
 #include <limits>
 #include <optional>
 #include <queue>
+#include <set>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -336,6 +338,15 @@ void resolveBasiliskContactDeaths(MatchState& state, std::vector<GameEvent>& eve
     resolveMutualDeathDraw(state, events);
 }
 
+void assertDistinctLivingHunterCaves(const MatchState& state) {
+    std::set<CaveId> occupied;
+    for (const PlayerState& player : state.players) {
+        if (!player.alive) continue;
+        assert(occupied.insert(player.cave).second &&
+            "PvP resolution requires unique living hunter occupancy");
+    }
+}
+
 } // namespace
 
 std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
@@ -360,6 +371,7 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
     }
 
     resolveBasiliskContactDeaths(state, events);
+    assertDistinctLivingHunterCaves(state);
 
     struct PendingDamage { PlayerId target; PlayerId attacker; CaveId cave; int amount; };
     std::vector<PendingDamage> pendingDamage;
@@ -371,6 +383,10 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
             !state.world.areConnected(shooter.cave, *action.targetCave)) continue;
         --shooter.arrows;
         events.push_back(GameEvent{GameEventType::ArrowFired, shooter.id, std::nullopt, *action.targetCave});
+        const auto targetCount = std::count_if(state.players.begin(), state.players.end(), [&](const PlayerState& player) {
+            return player.id != shooter.id && player.alive && player.cave == *action.targetCave;
+        });
+        assert(targetCount <= 1 && "Cave-targeted PvP shot found multiple living rivals");
         const auto targetPlayer = std::find_if(state.players.begin(), state.players.end(), [&](const PlayerState& player) {
             return player.id != shooter.id && player.alive && player.cave == *action.targetCave;
         });

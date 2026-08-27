@@ -63,6 +63,8 @@ private:
     [[nodiscard]] bool anotherLivingPlayerIsLocked(PlayerId player) const;
     [[nodiscard]] bool tryResolveRound();
     void resolveClash(std::optional<PlayerId> winner);
+    void startNextClashOrResolve();
+    void completePreparedRound();
     void eliminatePlayer(
         PlayerId player,
         std::optional<GameEventType> reason = std::nullopt);

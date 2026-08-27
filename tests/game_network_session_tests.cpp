@@ -378,6 +378,25 @@ void allServerFieldsRoundTripExactly() {
     assert(decodedUpdate.trophyTotal == 19);
 }
 
+void sixParticipantMetadataSeatsRoundTrip() {
+    ServerBootstrap source = bootstrapFor();
+    for (std::uint8_t index = 2; index < 6; ++index) {
+        const PlayerId player = static_cast<PlayerId>(index + 1);
+        source.matchMetadata.players.push_back(
+            PublicPlayerSlot{player, static_cast<PlayerSlot>(index)});
+        source.profiles.push_back(client::PublicPlayerProfile{
+            player, "Sandbox Hunter " + std::to_string(player),
+            {"arrow-right-black"}, {"circle-black"}});
+    }
+    WireBytes bytes; std::string error;
+    assert(encodeWire(source, bytes, error));
+    ServerBootstrap decoded;
+    assert(decodeServerBootstrap(bytes, decoded, error));
+    assert(decoded.matchMetadata.players.size() == 6);
+    assert(decoded.matchMetadata.players[2].slot == PlayerSlot::P3);
+    assert(decoded.matchMetadata.players[5].slot == PlayerSlot::P6);
+}
+
 void everyClientCommandRoundTrips() {
     PlayerAction action;
     action.player = PlayerId{7};
@@ -815,6 +834,7 @@ void protocolMismatchIsRejectedCleanly() {
 int main() {
     configurableNetworkEndpointsPreserveDefaultsAndCustomValues();
     allServerFieldsRoundTripExactly();
+    sixParticipantMetadataSeatsRoundTrip();
     everyClientCommandRoundTrips();
     publicLeaderboardRequestAndResponseRoundTrip();
     cosmeticLoadoutMessagesRoundTrip();

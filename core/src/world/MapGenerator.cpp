@@ -1,11 +1,14 @@
 #include "basilisk/world/MapGenerator.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <optional>
 #include <queue>
+#include <set>
+#include <span>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -241,24 +244,65 @@ std::optional<std::pair<CaveId, CaveId>> chooseHunterSpawns(
     return candidates[index];
 }
 
+std::optional<std::vector<CaveId>> chooseHunterSpawns(
+    const WorldGraph& world,
+    std::size_t count,
+    const ProceduralMapConfig& config,
+    RandomGenerator& rng) {
+
+    auto candidates = world.caveIds();
+    shuffle(candidates, rng);
+    std::erase_if(candidates, [&](CaveId cave) {
+        return !config.allowHunterSpawnInDeadEnd && isDeadEnd(world, cave);
+    });
+    if (candidates.size() < count) return std::nullopt;
+
+    std::vector<CaveId> selected{candidates.front()};
+    while (selected.size() < count) {
+        std::optional<CaveId> best;
+        int bestMinimum = -1;
+        for (const CaveId candidate : candidates) {
+            if (std::find(selected.begin(), selected.end(), candidate) != selected.end()) continue;
+            int minimum = std::numeric_limits<int>::max();
+            for (const CaveId existing : selected) {
+                const auto distance = distanceBetween(world, candidate, existing);
+                if (!distance.has_value()) { minimum = -1; break; }
+                minimum = std::min(minimum, *distance);
+            }
+            if (minimum > bestMinimum) {
+                bestMinimum = minimum;
+                best = candidate;
+            }
+        }
+        if (!best.has_value() || bestMinimum < config.minHunterSeparation)
+            return std::nullopt;
+        selected.push_back(*best);
+    }
+    return selected;
+}
+
 std::optional<CaveId> chooseBasiliskSpawn(
     const WorldGraph& world,
-    CaveId hunterA,
-    CaveId hunterB,
+    std::span<const CaveId> hunterSpawns,
     const ProceduralMapConfig& config,
     RandomGenerator& rng) {
 
     std::vector<CaveId> candidates;
     for (const CaveId cave : world.caveIds()) {
-        if (cave == hunterA || cave == hunterB) continue;
+        if (std::find(hunterSpawns.begin(), hunterSpawns.end(), cave) != hunterSpawns.end()) continue;
         if (!config.allowBasiliskInDeadEnd && isDeadEnd(world, cave)) continue;
 
-        const auto aDistance = distanceBetween(world, hunterA, cave);
-        const auto bDistance = distanceBetween(world, hunterB, cave);
-        if (!aDistance.has_value() || !bDistance.has_value()) continue;
-        if (*aDistance < config.minHunterBasiliskDistance ||
-            *bDistance < config.minHunterBasiliskDistance) continue;
-        if (std::abs(*aDistance - *bDistance) > config.maxHunterBasiliskDistanceDelta) continue;
+        int minimum = std::numeric_limits<int>::max();
+        int maximum = 0;
+        bool reachable = true;
+        for (const CaveId spawn : hunterSpawns) {
+            const auto distance = distanceBetween(world, spawn, cave);
+            if (!distance.has_value()) { reachable = false; break; }
+            minimum = std::min(minimum, *distance);
+            maximum = std::max(maximum, *distance);
+        }
+        if (!reachable || minimum < config.minHunterBasiliskDistance ||
+            maximum - minimum > config.maxHunterBasiliskDistanceDelta) continue;
 
         candidates.push_back(cave);
     }
@@ -279,13 +323,15 @@ void placePits(
     shuffle(candidates, rng);
 
     std::vector<CaveId> placedPits;
+    std::vector<CaveId> hunterCaves;
+    for (const auto& player : state.players) hunterCaves.push_back(player.cave);
     for (const CaveId cave : candidates) {
         if (state.pits.size() >= config.pitCount) break;
         if (isReserved(cave, reserved)) continue;
         if (!farEnoughFromAll(
                 state.world,
                 cave,
-                {state.players[0].cave, state.players[1].cave},
+                hunterCaves,
                 config.minHunterPitDistance)) continue;
         if (!atLeastDistance(
                 state.world,
@@ -330,13 +376,15 @@ void placeJackals(
     shuffle(candidates, rng);
 
     std::vector<CaveId> placedJackals;
+    std::vector<CaveId> hunterCaves;
+    for (const auto& player : state.players) hunterCaves.push_back(player.cave);
     for (const CaveId cave : candidates) {
         if (state.jackals.size() >= count) break;
         if (isReserved(cave, reserved)) continue;
         if (!farEnoughFromAll(
                 state.world,
                 cave,
-                {state.players[0].cave, state.players[1].cave},
+                hunterCaves,
                 config.minHunterJackalDistance)) continue;
         if (!farEnoughFromAll(
                 state.world,
@@ -364,7 +412,8 @@ MatchState populateMatch(
     const ProceduralMapConfig& config,
     RandomGenerator& spawnRng,
     RandomGenerator& hazardRng,
-    RandomGenerator& aiRng) {
+    RandomGenerator& aiRng,
+    std::span<const PlayerId> roster) {
 
     MatchState state;
     state.mapSeed = mapSeed;
@@ -373,41 +422,39 @@ MatchState populateMatch(
     state.rules.mapDiscoveryMode = MapDiscoveryMode::FogOfWar;
     state.world = std::move(world);
 
-    const auto hunterSpawns = chooseHunterSpawns(state.world, config, spawnRng);
-    if (!hunterSpawns.has_value()) {
-        throw std::runtime_error("No valid hunter spawn pair found.");
+    std::vector<CaveId> hunterSpawns;
+    if (roster.size() == 2) {
+        const auto pair = chooseHunterSpawns(state.world, config, spawnRng);
+        if (!pair.has_value()) throw std::runtime_error("No valid hunter spawn pair found.");
+        hunterSpawns = {pair->first, pair->second};
+    } else {
+        const auto selected = chooseHunterSpawns(state.world, roster.size(), config, spawnRng);
+        if (!selected.has_value())
+            throw std::runtime_error("No valid maximum-separation hunter spawn set found.");
+        hunterSpawns = *selected;
     }
 
     const auto basiliskSpawn = chooseBasiliskSpawn(
         state.world,
-        hunterSpawns->first,
-        hunterSpawns->second,
+        hunterSpawns,
         config,
         spawnRng);
     if (!basiliskSpawn.has_value()) {
         throw std::runtime_error("No fair Basilisk spawn found.");
     }
 
-    PlayerState playerA;
-    playerA.id = 1;
-    playerA.cave = hunterSpawns->first;
-    playerA.health = rules.maxHealth;
-    playerA.arrows = rules.startingArrows;
-
-    PlayerState playerB;
-    playerB.id = 2;
-    playerB.cave = hunterSpawns->second;
-    playerB.health = rules.maxHealth;
-    playerB.arrows = rules.startingArrows;
-
-    state.players = {playerA, playerB};
+    for (std::size_t index = 0; index < roster.size(); ++index) {
+        PlayerState player;
+        player.id = roster[index];
+        player.cave = hunterSpawns[index];
+        player.health = rules.maxHealth;
+        player.arrows = rules.startingArrows;
+        state.players.push_back(std::move(player));
+    }
     state.basilisk.cave = *basiliskSpawn;
 
-    std::unordered_set<CaveId> reserved{
-        playerA.cave,
-        playerB.cave,
-        state.basilisk.cave
-    };
+    std::unordered_set<CaveId> reserved(hunterSpawns.begin(), hunterSpawns.end());
+    reserved.insert(state.basilisk.cave);
 
     placePits(state, config, hazardRng, reserved);
     placeJackals(state, config, aiRng, reserved);
@@ -423,6 +470,25 @@ MatchState MapGenerator::generate(
     const Rules& rules,
     const ProceduralMapConfig& config) {
 
+    const std::array<PlayerId, 2> roster{PlayerId{1}, PlayerId{2}};
+    return generate(mapSeed, matchSeed, roster, rules, config);
+}
+
+MatchState MapGenerator::generate(
+    MapSeed mapSeed,
+    MatchSeed matchSeed,
+    std::span<const PlayerId> roster,
+    const Rules& rules,
+    const ProceduralMapConfig& config) {
+
+    if (roster.size() < 2 || roster.size() > 6) {
+        throw std::invalid_argument("Procedural matches require two to six hunters.");
+    }
+    std::set<PlayerId> unique;
+    for (const PlayerId player : roster) {
+        if (player == 0 || !unique.insert(player).second)
+            throw std::invalid_argument("Hunter roster requires unique nonzero player IDs.");
+    }
     if (config.maxGenerationAttempts == 0) {
         throw std::invalid_argument("maxGenerationAttempts must be greater than zero.");
     }
@@ -447,7 +513,8 @@ MatchState MapGenerator::generate(
                 config,
                 spawnRng,
                 hazardRng,
-                aiRng);
+                aiRng,
+                roster);
 
             if (validateFairness(state, config)) return state;
         } catch (const std::runtime_error&) {
@@ -518,35 +585,44 @@ bool MapGenerator::validateFairness(
     const MatchState& state,
     const ProceduralMapConfig& config) {
 
-    if (state.players.size() != 2 || !state.basilisk.alive) return false;
-
-    const auto& hunterA = state.players[0];
-    const auto& hunterB = state.players[1];
-
-    if (!config.allowHunterSpawnInDeadEnd &&
-        (isDeadEnd(state.world, hunterA.cave) || isDeadEnd(state.world, hunterB.cave))) {
-        return false;
+    if (state.players.size() < 2 || state.players.size() > 6 || !state.basilisk.alive) return false;
+    std::set<PlayerId> playerIds;
+    std::set<CaveId> starts;
+    for (const auto& player : state.players) {
+        if (player.id == 0 || !playerIds.insert(player.id).second ||
+            !starts.insert(player.cave).second ||
+            (!config.allowHunterSpawnInDeadEnd && isDeadEnd(state.world, player.cave)))
+            return false;
     }
     if (!config.allowBasiliskInDeadEnd && isDeadEnd(state.world, state.basilisk.cave)) {
         return false;
     }
 
-    const auto hunterDistance = distanceBetween(state.world, hunterA.cave, hunterB.cave);
-    if (!hunterDistance.has_value() || *hunterDistance < config.minHunterSeparation) return false;
-
-    const auto aDistance = distanceBetween(state.world, hunterA.cave, state.basilisk.cave);
-    const auto bDistance = distanceBetween(state.world, hunterB.cave, state.basilisk.cave);
-    if (!aDistance.has_value() || !bDistance.has_value()) return false;
-    if (*aDistance < config.minHunterBasiliskDistance ||
-        *bDistance < config.minHunterBasiliskDistance) return false;
-    if (std::abs(*aDistance - *bDistance) > config.maxHunterBasiliskDistanceDelta) return false;
+    int minimumBasiliskDistance = std::numeric_limits<int>::max();
+    int maximumBasiliskDistance = 0;
+    for (std::size_t i = 0; i < state.players.size(); ++i) {
+        for (std::size_t j = i + 1; j < state.players.size(); ++j) {
+            const auto distance = distanceBetween(
+                state.world, state.players[i].cave, state.players[j].cave);
+            if (!distance.has_value() || *distance < config.minHunterSeparation) return false;
+        }
+        const auto basiliskDistance = distanceBetween(
+            state.world, state.players[i].cave, state.basilisk.cave);
+        if (!basiliskDistance.has_value() ||
+            *basiliskDistance < config.minHunterBasiliskDistance) return false;
+        minimumBasiliskDistance = std::min(minimumBasiliskDistance, *basiliskDistance);
+        maximumBasiliskDistance = std::max(maximumBasiliskDistance, *basiliskDistance);
+    }
+    if (maximumBasiliskDistance - minimumBasiliskDistance >
+        config.maxHunterBasiliskDistanceDelta) return false;
 
     std::vector<CaveId> pitCaves;
     for (const auto& pit : state.pits) {
         if (!pit.active) continue;
-        if (!atLeastDistance(state.world, hunterA.cave, pit.cave, config.minHunterPitDistance) ||
-            !atLeastDistance(state.world, hunterB.cave, pit.cave, config.minHunterPitDistance) ||
-            !atLeastDistance(state.world, state.basilisk.cave, pit.cave, config.minBasiliskPitDistance) ||
+        if (!std::all_of(state.players.begin(), state.players.end(), [&](const PlayerState& player) {
+                return atLeastDistance(state.world, player.cave, pit.cave,
+                    config.minHunterPitDistance);
+            }) || !atLeastDistance(state.world, state.basilisk.cave, pit.cave, config.minBasiliskPitDistance) ||
             !farEnoughFromAll(state.world, pit.cave, pitCaves, config.minPitSeparation)) {
             return false;
         }
@@ -560,8 +636,10 @@ bool MapGenerator::validateFairness(
 
     std::vector<CaveId> jackalCaves;
     for (const auto& jackal : state.jackals) {
-        if (!atLeastDistance(state.world, hunterA.cave, jackal.cave, config.minHunterJackalDistance) ||
-            !atLeastDistance(state.world, hunterB.cave, jackal.cave, config.minHunterJackalDistance) ||
+        if (!std::all_of(state.players.begin(), state.players.end(), [&](const PlayerState& player) {
+                return atLeastDistance(state.world, player.cave, jackal.cave,
+                    config.minHunterJackalDistance);
+            }) ||
             !farEnoughFromAll(state.world, jackal.cave, jackalCaves, config.minJackalSeparation)) {
             return false;
         }

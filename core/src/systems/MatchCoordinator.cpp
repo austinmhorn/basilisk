@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <cassert>
 #include <cctype>
+#include <limits>
+#include <map>
 #include <set>
+#include <tuple>
 
 #include "basilisk/Body.hpp"
 #include "basilisk/MatchResult.hpp"
@@ -43,13 +46,23 @@ bool pitCave(const MatchState& state, CaveId cave) {
 }
 
 std::optional<CaveId> safeClashRelocation(const MatchState& state, PlayerId loser,
-                                           CaveId contested, ClashId clash) {
+                                           const std::set<CaveId>& reserved,
+                                           ClashId clash) {
     std::vector<CaveId> choices;
     const auto* loserState = findPlayer(state, loser);
     for (const CaveId cave : state.world.caveIds()) {
-        if (cave == contested || (loserState != nullptr && cave == loserState->cave) ||
+        if (reserved.contains(cave) ||
+            (loserState != nullptr && cave == loserState->cave) ||
             pitCave(state, cave) ||
             (state.basilisk.alive && state.basilisk.cave == cave)) continue;
+        const auto safeDegree = std::count_if(
+            state.world.cave(cave).connections.begin(),
+            state.world.cave(cave).connections.end(),
+            [&](CaveId adjacent) {
+                return !pitCave(state, adjacent) &&
+                    (!state.basilisk.alive || state.basilisk.cave != adjacent);
+            });
+        if (safeDegree <= 1) continue;
         const bool occupied = std::any_of(state.players.begin(), state.players.end(),
             [loser, cave](const PlayerState& player) {
                 return player.id != loser && player.alive && player.cave == cave;
@@ -363,47 +376,71 @@ bool MatchCoordinator::tryResolveRound() {
     }
 
     if (!conflicts.empty()) {
-        std::set<PlayerId> involved;
-        for (const auto& conflict : conflicts) { involved.insert(conflict.a); involved.insert(conflict.b); }
-        // Multi-hunter conflict components are deliberately unsupported until
-        // their gameplay rule is defined.
-        if (involved.size() == 2 && conflicts.size() == 1) {
-            const auto& conflict = conflicts.front();
-            PendingClashRound pending;
-            pending.clash.id = nextClashId_++;
-            pending.clash.kind = conflict.kind;
-            pending.clash.participants = {conflict.a, conflict.b};
-            std::sort(pending.clash.participants.begin(), pending.clash.participants.end());
-            pending.clash.challengeWord = challengeWord(state_, pending.clash.id);
-            pending.clash.remainingMs = state_.rules.clashTimeoutMs;
-            pending.actions = actions;
-            for (const auto& action : clashActions) {
-                if (action.type == ActionType::Move && action.targetCave.has_value()) {
-                    pending.moveDestinations.emplace_back(action.player, *action.targetCave);
-                }
-            }
-            pending.mover = conflict.mover;
-            pending.stationary = conflict.stationary;
-            pending.contestedCave = conflict.cave;
-            if (conflict.stationary != 0) {
-                auto actionIt = std::find_if(pending.actions.begin(), pending.actions.end(),
-                    [&](const PlayerAction& action) { return action.player == conflict.stationary; });
-                if (actionIt != pending.actions.end() &&
-                    (actionIt->type == ActionType::Search ||
-                     actionIt->type == ActionType::UseItem)) {
-                    RoundController controller;
-                    pending.completedEvents =
-                        controller.resolveStationaryAction(state_, *actionIt);
-                    actionIt->type = ActionType::Contextual;
-                    actionIt->contextualAction.reset();
-                    lastEvents_.insert(lastEvents_.end(),
-                        pending.completedEvents.begin(), pending.completedEvents.end());
-                }
-            }
-            pendingClash_ = std::move(pending);
-            return true;
+        std::map<PlayerId, PlayerId> parent;
+        const auto root = [&](PlayerId player, auto&& self) -> PlayerId {
+            auto [it, inserted] = parent.emplace(player, player);
+            if (inserted || it->second == player) return player;
+            it->second = self(it->second, self);
+            return it->second;
+        };
+        for (const auto& conflict : conflicts) {
+            const PlayerId aRoot = root(conflict.a, root);
+            const PlayerId bRoot = root(conflict.b, root);
+            if (aRoot != bRoot) parent[std::max(aRoot, bRoot)] = std::min(aRoot, bRoot);
         }
-        return false;
+
+        std::map<PlayerId, std::vector<Conflict>> grouped;
+        for (const auto& conflict : conflicts)
+            grouped[root(conflict.a, root)].push_back(conflict);
+
+        PendingClashRound pending;
+        pending.actions = actions;
+        for (const auto& action : clashActions) {
+            if (action.type == ActionType::Move && action.targetCave.has_value())
+                pending.moveDestinations.emplace_back(action.player, *action.targetCave);
+        }
+        for (auto& [componentRoot, edges] : grouped) {
+            (void)componentRoot;
+            std::set<PlayerId> participants;
+            CaveId contested = std::numeric_limits<CaveId>::max();
+            for (const auto& edge : edges) {
+                participants.insert(edge.a);
+                participants.insert(edge.b);
+                contested = std::min(contested, edge.cave);
+            }
+            std::sort(edges.begin(), edges.end(), [](const Conflict& left, const Conflict& right) {
+                return std::tie(left.cave, left.a, left.b, left.kind) <
+                    std::tie(right.cave, right.a, right.b, right.kind);
+            });
+            pending.components.push_back(PendingClashRound::Component{
+                edges.front().kind,
+                std::vector<PlayerId>(participants.begin(), participants.end()),
+                contested});
+        }
+        std::sort(pending.components.begin(), pending.components.end(),
+            [](const auto& left, const auto& right) {
+                return std::tie(left.contestedCave, left.participants.front()) <
+                    std::tie(right.contestedCave, right.participants.front());
+            });
+
+        std::set<PlayerId> involved;
+        for (const auto& component : pending.components)
+            involved.insert(component.participants.begin(), component.participants.end());
+        RoundController controller;
+        for (auto& action : pending.actions) {
+            if (!involved.contains(action.player) ||
+                (action.type != ActionType::Search && action.type != ActionType::UseItem)) continue;
+            auto events = controller.resolveStationaryAction(state_, action);
+            pending.completedEvents.insert(
+                pending.completedEvents.end(), events.begin(), events.end());
+            lastEvents_.insert(lastEvents_.end(), events.begin(), events.end());
+            action.type = ActionType::Contextual;
+            action.targetItem.reset();
+            action.contextualAction.reset();
+        }
+        pendingClash_ = std::move(pending);
+        startNextClashOrResolve();
+        return true;
     }
 
     RoundController controller;
@@ -421,57 +458,103 @@ bool MatchCoordinator::tryResolveRound() {
 
 void MatchCoordinator::resolveClash(std::optional<PlayerId> winner) {
     if (!pendingClash_) return;
-    PendingClashRound pending = std::move(*pendingClash_);
-    pendingClash_.reset();
-    lastEvents_.insert(lastEvents_.end(), pending.completedEvents.begin(), pending.completedEvents.end());
+    auto& pending = *pendingClash_;
+    const auto participants = pending.clash.participants;
+    if (winner.has_value() &&
+        (std::find(participants.begin(), participants.end(), *winner) == participants.end() ||
+         !isLivingPlayer(*winner))) winner.reset();
 
-    if (winner.has_value()) {
-        const PlayerId loser = pending.clash.participants[0] == *winner
-            ? pending.clash.participants[1] : pending.clash.participants[0];
-        for (auto& action : pending.actions) {
-            if (action.player == loser && action.type == ActionType::Move) {
-                action.targetCave.reset();
-                action.targetTunnel.reset();
-            }
-            if (pending.stationary != 0 && *winner == pending.stationary &&
-                action.player == pending.mover && action.type == ActionType::Move) {
-                action.targetCave.reset();
-                action.targetTunnel.reset();
-            }
+    const auto cancelMove = [&](PlayerId player) {
+        auto action = std::find_if(pending.actions.begin(), pending.actions.end(),
+            [&](const PlayerAction& candidate) { return candidate.player == player; });
+        if (action != pending.actions.end() && action->type == ActionType::Move) {
+            action->targetCave.reset();
+            action->targetTunnel.reset();
         }
-        CaveId winnerCave = pending.contestedCave;
-        const auto winnerDestination = std::find_if(
-            pending.moveDestinations.begin(), pending.moveDestinations.end(),
-            [&](const auto& destination) { return destination.first == *winner; });
-        if (winnerDestination != pending.moveDestinations.end()) {
-            winnerCave = winnerDestination->second;
+    };
+
+    if (!winner.has_value()) {
+        for (const PlayerId participant : participants) cancelMove(participant);
+    } else {
+        std::vector<PlayerId> losers;
+        for (const PlayerId participant : participants)
+            if (participant != *winner) losers.push_back(participant);
+        std::sort(losers.begin(), losers.end());
+        for (const PlayerId loser : losers) cancelMove(loser);
+
+        std::set<CaveId> reserved;
+        for (const PlayerState& player : state_.players) {
+            if (!player.alive || std::find(losers.begin(), losers.end(), player.id) != losers.end())
+                continue;
+            reserved.insert(player.cave);
+            CaveId occupancy = player.cave;
+            const auto action = std::find_if(pending.actions.begin(), pending.actions.end(),
+                [&](const PlayerAction& candidate) { return candidate.player == player.id; });
+            if (action != pending.actions.end() && action->type == ActionType::Move) {
+                const auto destination = std::find_if(
+                    pending.moveDestinations.begin(), pending.moveDestinations.end(),
+                    [&](const auto& entry) { return entry.first == player.id; });
+                if (destination != pending.moveDestinations.end()) occupancy = destination->second;
+            }
+            reserved.insert(occupancy);
         }
-        auto* loserState = findPlayer(state_, loser);
-        if (loserState && loserState->alive) {
+
+        bool relocationFailed = false;
+        for (const PlayerId loser : losers) {
+            auto* loserState = findPlayer(state_, loser);
+            if (!loserState || !loserState->alive) continue;
             loserState->health = std::max(0, loserState->health - state_.rules.clashDamage);
             lastEvents_.push_back(GameEvent{GameEventType::PlayerDamaged, *winner, loser,
                 loserState->cave, state_.rules.clashDamage});
             if (loserState->health == 0) {
                 loserState->alive = false;
-                lastEvents_.push_back(GameEvent{GameEventType::PlayerKilled, *winner, loser, loserState->cave});
-                placeSigilsForDeath(
-                    state_, *loserState, loserState->cave, lastEvents_);
-            } else if (const auto cave = safeClashRelocation(state_, loser, winnerCave, pending.clash.id)) {
+                lastEvents_.push_back(GameEvent{GameEventType::PlayerKilled, *winner, loser,
+                    loserState->cave});
+                placeSigilsForDeath(state_, *loserState, loserState->cave, lastEvents_);
+                continue;
+            }
+            if (const auto cave = safeClashRelocation(
+                    state_, loser, reserved, pending.clash.id)) {
                 loserState->cave = *cave;
+                reserved.insert(*cave);
                 MapDiscoverySystem::discoverCave(*loserState, *cave, lastEvents_);
-            }
+            } else relocationFailed = true;
         }
-    } else {
-        for (auto& action : pending.actions) {
-            if (action.type == ActionType::Move &&
-                std::find(pending.clash.participants.begin(), pending.clash.participants.end(),
-                          action.player) != pending.clash.participants.end()) {
-                action.targetCave.reset();
-                action.targetTunnel.reset();
-            }
-        }
+        if (relocationFailed) cancelMove(*winner);
     }
 
+    ++pending.componentIndex;
+    startNextClashOrResolve();
+}
+
+void MatchCoordinator::startNextClashOrResolve() {
+    if (!pendingClash_) return;
+    auto& pending = *pendingClash_;
+    while (pending.componentIndex < pending.components.size()) {
+        const auto& component = pending.components[pending.componentIndex];
+        std::vector<PlayerId> living;
+        std::copy_if(component.participants.begin(), component.participants.end(),
+            std::back_inserter(living), [&](PlayerId player) { return isLivingPlayer(player); });
+        if (living.size() < 2) {
+            ++pending.componentIndex;
+            continue;
+        }
+        pending.clash.id = nextClashId_++;
+        pending.clash.kind = component.kind;
+        pending.clash.participants = std::move(living);
+        pending.clash.challengeWord = challengeWord(state_, pending.clash.id);
+        pending.clash.remainingMs = state_.rules.clashTimeoutMs;
+        return;
+    }
+    completePreparedRound();
+}
+
+void MatchCoordinator::completePreparedRound() {
+    if (!pendingClash_) return;
+    PendingClashRound pending = std::move(*pendingClash_);
+    pendingClash_.reset();
+    lastEvents_.insert(lastEvents_.end(),
+        pending.completedEvents.begin(), pending.completedEvents.end());
     RoundController controller;
     const auto events = controller.resolve(state_, pending.actions);
     lastEvents_.insert(lastEvents_.end(), events.begin(), events.end());

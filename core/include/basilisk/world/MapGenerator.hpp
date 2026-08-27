@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <span>
 
 #include "basilisk/MatchState.hpp"
 
@@ -61,6 +62,13 @@ public:
     [[nodiscard]] static MatchState generate(
         MapSeed mapSeed,
         MatchSeed matchSeed,
+        const Rules& rules = {},
+        const ProceduralMapConfig& config = {});
+
+    [[nodiscard]] static MatchState generate(
+        MapSeed mapSeed,
+        MatchSeed matchSeed,
+        std::span<const PlayerId> roster,
         const Rules& rules = {},
         const ProceduralMapConfig& config = {});
 

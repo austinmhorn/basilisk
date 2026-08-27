@@ -6,8 +6,8 @@
 namespace basilisk {
 
 PublicMatchMetadata PublicMatchMetadataSystem::build(const MatchState& state) {
-    if (state.players.size() > 2) {
-        throw std::invalid_argument("Public match metadata supports at most two player slots.");
+    if (state.players.size() > 6) {
+        throw std::invalid_argument("Public match metadata supports at most six player slots.");
     }
 
     PublicMatchMetadata metadata;
@@ -26,7 +26,7 @@ PublicMatchMetadata PublicMatchMetadataSystem::build(const MatchState& state) {
 
         // MatchState player order is authoritative and stable for the lifetime
         // of a match. Slot assignment never depends on numeric PlayerId values.
-        const PlayerSlot slot = index == 0 ? PlayerSlot::P1 : PlayerSlot::P2;
+        const PlayerSlot slot = static_cast<PlayerSlot>(index);
         metadata.players.push_back(PublicPlayerSlot{player, slot});
     }
 

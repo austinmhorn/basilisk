@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <set>
 
 #include "basilisk/Action.hpp"
 #include "basilisk/MatchResult.hpp"
@@ -65,6 +66,32 @@ MatchState nonConflictingMoveFixture() {
     state.players = {PlayerState{PlayerId{17}, CaveId{1}}, PlayerState{PlayerId{42}, CaveId{2}}};
     state.basilisk.alive = false;
     return state;
+}
+
+MatchState multiHunterFixture(std::size_t count = 6) {
+    MatchState state; state.matchSeed = 1701;
+    for (CaveId cave = 1; cave <= 16; ++cave) state.world.addCave(cave);
+    for (CaveId cave = 1; cave <= 16; ++cave)
+        state.world.connect(cave, cave == 16 ? CaveId{1} : cave + 1);
+    state.world.addCave(20); state.world.addCave(21);
+    for (CaveId cave = 1; cave <= 6; ++cave) state.world.connect(cave, 20);
+    for (CaveId cave = 7; cave <= 12; ++cave) state.world.connect(cave, 21);
+    for (std::size_t index = 0; index < count; ++index) {
+        PlayerState player;
+        player.id = static_cast<PlayerId>(101 + index);
+        player.cave = static_cast<CaveId>(1 + index);
+        state.players.push_back(player);
+    }
+    state.basilisk.alive = false;
+    return state;
+}
+
+void submitAndLockAll(MatchCoordinator& coordinator,
+                      const std::vector<PlayerAction>& actions) {
+    for (const auto& action : actions) {
+        assert(coordinator.submitAction(action));
+        assert(coordinator.lockAction(action.player));
+    }
 }
 
 const PlayerState& playerById(const MatchState& state, PlayerId id) {
@@ -532,6 +559,212 @@ void terminalDisconnectExpiryDiscardsPendingClashWithoutResolution() {
     assert(coordinator.authoritativeEvents().empty());
 }
 
+void sixHuntersRequireAllLocksAndResolveOnce() {
+    auto state = multiHunterFixture(); MatchCoordinator coordinator(state);
+    const RoundNumber round = state.round;
+    for (PlayerId player = 101; player <= 105; ++player) {
+        assert(coordinator.submitAction(search(player)));
+        assert(coordinator.lockAction(player));
+        assert(state.round == round);
+    }
+    assert(coordinator.submitAction(search(106)));
+    assert(coordinator.lockAction(106));
+    assert(state.round == round + 1);
+    assert(eventCount(coordinator.authoritativeEvents(), GameEventType::SearchCompleted) == 6);
+}
+
+void threeHuntersConvergeIntoOneComponent() {
+    auto state = multiHunterFixture(3); MatchCoordinator coordinator(state);
+    submitAndLockAll(coordinator, {move(101, 20), move(102, 20), move(103, 20)});
+    const ActiveClash clash = *coordinator.activeClash();
+    assert((clash.participants == std::vector<PlayerId>{101, 102, 103}));
+    assert(state.round == 1);
+    assert(coordinator.submitClashResponse(102, clash.id, clash.challengeWord) ==
+        ClashSubmissionResult::Resolved);
+    assert(state.round == 2 && coordinator.activeClash() == nullptr);
+    assert(playerById(state, 102).cave == 20);
+    assert(playerById(state, 101).health == 80);
+    assert(playerById(state, 103).health == 80);
+    assert(playerById(state, 101).cave != playerById(state, 103).cave);
+    std::set<CaveId> occupied;
+    for (const auto& player : state.players) assert(occupied.insert(player.cave).second);
+}
+
+void fiveHuntersCanShareOneConflictComponent() {
+    auto state = multiHunterFixture(5); MatchCoordinator coordinator(state);
+    submitAndLockAll(coordinator,
+        {move(101, 20), move(102, 20), move(103, 20), move(104, 20), move(105, 20)});
+    const ActiveClash clash = *coordinator.activeClash();
+    assert(clash.participants.size() == 5);
+    assert(coordinator.submitClashResponse(105, clash.id, clash.challengeWord) ==
+        ClashSubmissionResult::Resolved);
+    assert(state.round == 2 && playerById(state, 105).cave == 20);
+    std::set<CaveId> occupied;
+    for (const auto& player : state.players) {
+        assert(occupied.insert(player.cave).second);
+        if (player.id != 105) assert(player.health == 80);
+    }
+}
+
+void connectedOppositeAndDestinationConflictsFormOneComponent() {
+    auto state = multiHunterFixture(3); state.world.connect(3, 1);
+    MatchCoordinator coordinator(state);
+    submitAndLockAll(coordinator, {move(101, 2), move(102, 1), move(103, 1)});
+    const ActiveClash clash = *coordinator.activeClash();
+    assert((clash.participants == std::vector<PlayerId>{101, 102, 103}));
+    assert(coordinator.submitClashResponse(103, clash.id, clash.challengeWord) ==
+        ClashSubmissionResult::Resolved);
+    assert(state.round == 2);
+    assert(playerById(state, 103).cave == 1);
+}
+
+void disjointConflictComponentsQueueDeterministically() {
+    auto state = multiHunterFixture(4);
+    state.players[2].cave = 7; state.players[3].cave = 8;
+    MatchCoordinator coordinator(state);
+    submitAndLockAll(coordinator,
+        {move(101, 20), move(102, 20), move(103, 21), move(104, 21)});
+    const ActiveClash first = *coordinator.activeClash();
+    assert((first.participants == std::vector<PlayerId>{101, 102}));
+    assert(coordinator.submitClashResponse(101, first.id, first.challengeWord) ==
+        ClashSubmissionResult::Resolved);
+    assert(state.round == 1);
+    assert(playerById(state, 102).cave != 21);
+    assert(playerById(state, 102).cave != 7);
+    assert(playerById(state, 102).cave != 8);
+    const ActiveClash second = *coordinator.activeClash();
+    assert((second.participants == std::vector<PlayerId>{103, 104}));
+    assert(second.id != first.id);
+    assert(coordinator.submitClashResponse(104, second.id, second.challengeWord) ==
+        ClashSubmissionResult::Resolved);
+    assert(state.round == 2 && coordinator.activeClash() == nullptr);
+    assert(playerById(state, 101).cave == 20);
+    assert(playerById(state, 104).cave == 21);
+}
+
+void multiPartyStalemateCancelsMovesAndPreservesSearchOnce() {
+    auto state = multiHunterFixture(3); MatchCoordinator coordinator(state);
+    submitAndLockAll(coordinator, {move(101, 2), search(102), move(103, 2)});
+    assert(coordinator.activeClash() != nullptr);
+    assert(eventCount(coordinator.authoritativeEvents(), GameEventType::SearchCompleted) == 1);
+    coordinator.advanceTime(state.rules.clashTimeoutMs);
+    assert(state.round == 2 && coordinator.activeClash() == nullptr);
+    assert(playerById(state, 101).cave == 1);
+    assert(playerById(state, 102).cave == 2);
+    assert(playerById(state, 103).cave == 3);
+    assert(eventCount(coordinator.authoritativeEvents(), GameEventType::SearchCompleted) == 1);
+}
+
+void movementChainAndCycleWithUniqueDestinationsRemainLegal() {
+    auto chain = multiHunterFixture(3); MatchCoordinator chainCoordinator(chain);
+    submitAndLockAll(chainCoordinator, {move(101, 2), move(102, 3), move(103, 4)});
+    assert(chainCoordinator.activeClash() == nullptr && chain.round == 2);
+    assert(playerById(chain, 101).cave == 2);
+    assert(playerById(chain, 102).cave == 3);
+    assert(playerById(chain, 103).cave == 4);
+
+    auto cycle = multiHunterFixture(3); MatchCoordinator cycleCoordinator(cycle);
+    cycle.world.connect(3, 1);
+    submitAndLockAll(cycleCoordinator, {move(101, 2), move(102, 3), move(103, 1)});
+    assert(cycleCoordinator.activeClash() == nullptr && cycle.round == 2);
+    assert(playerById(cycle, 101).cave == 2);
+    assert(playerById(cycle, 102).cave == 3);
+    assert(playerById(cycle, 103).cave == 1);
+}
+
+void multiHunterSubmissionOrderDoesNotChangeResolution() {
+    auto forward = multiHunterFixture(4);
+    auto reverse = forward;
+    const std::vector<PlayerAction> actions{
+        move(101, 16), move(102, 3), move(103, 4), move(104, 5)};
+    MatchCoordinator forwardCoordinator(forward);
+    submitAndLockAll(forwardCoordinator, actions);
+    MatchCoordinator reverseCoordinator(reverse);
+    submitAndLockAll(reverseCoordinator,
+        std::vector<PlayerAction>(actions.rbegin(), actions.rend()));
+    assert(forward.round == 2 && reverse.round == 2);
+    for (PlayerId player = 101; player <= 104; ++player)
+        assert(playerById(forward, player).cave == playerById(reverse, player).cave);
+}
+
+void forfeitAndDisconnectExpiryCannotDeadlockMultiHunterReadiness() {
+    auto forfeited = multiHunterFixture(); MatchCoordinator forfeitCoordinator(forfeited);
+    for (PlayerId player = 101; player <= 105; ++player) {
+        assert(forfeitCoordinator.submitAction(search(player)));
+        assert(forfeitCoordinator.lockAction(player));
+    }
+    forfeitCoordinator.forfeit(106);
+    assert(!playerById(forfeited, 106).alive);
+    assert(forfeited.round == 2);
+
+    auto disconnected = multiHunterFixture();
+    disconnected.rules.disconnectGraceMs = 10;
+    MatchCoordinator disconnectCoordinator(disconnected);
+    for (PlayerId player = 101; player <= 105; ++player) {
+        assert(disconnectCoordinator.submitAction(search(player)));
+        assert(disconnectCoordinator.lockAction(player));
+    }
+    disconnectCoordinator.disconnect(106);
+    disconnectCoordinator.advanceTime(10);
+    assert(!playerById(disconnected, 106).alive);
+    assert(disconnected.round == 2);
+}
+
+void participantDeathCannotStrandQueuedConflictRound() {
+    auto state = multiHunterFixture(4);
+    state.players[2].cave = 7; state.players[3].cave = 8;
+    MatchCoordinator coordinator(state);
+    submitAndLockAll(coordinator,
+        {move(101, 20), move(102, 20), move(103, 21), move(104, 21)});
+    assert(coordinator.activeClash() != nullptr);
+    coordinator.forfeit(101);
+    assert(!playerById(state, 101).alive);
+    const ActiveClash second = *coordinator.activeClash();
+    assert((second.participants == std::vector<PlayerId>{103, 104}));
+    assert(coordinator.submitClashResponse(103, second.id, second.challengeWord) ==
+        ClashSubmissionResult::Resolved);
+    assert(state.round == 2 && coordinator.activeClash() == nullptr);
+}
+
+void multipleBodiesCoexistAndLoneSurvivorContinues() {
+    auto state = multiHunterFixture(4); MatchCoordinator coordinator(state);
+    coordinator.forfeit(102);
+    coordinator.forfeit(103);
+    coordinator.forfeit(104);
+    assert(state.result.status == MatchStatus::Active);
+    assert(playerById(state, 101).alive);
+    assert(state.bodies.size() == 3);
+    for (PlayerId owner = 102; owner <= 104; ++owner) {
+        const auto body = std::find_if(state.bodies.begin(), state.bodies.end(),
+            [&](const BodyState& candidate) { return candidate.owner == owner; });
+        assert(body != state.bodies.end());
+    }
+    assert(coordinator.submitAction(search(101)));
+    assert(coordinator.lockAction(101));
+    assert(state.round == 2);
+    coordinator.forfeit(101);
+    assert(state.result.status == MatchStatus::Completed);
+    assert(state.result.outcome == MatchOutcome::Draw);
+}
+
+void multiHunterSnapshotsRemainPlayerSpecific() {
+    auto state = multiHunterFixture(6);
+    state.rules.mapDiscoveryMode = MapDiscoveryMode::FogOfWar;
+    for (const auto& player : state.players) {
+        const auto snapshot = SnapshotSystem::buildForPlayer(state, player.id, {});
+        assert(snapshot.player == player.id);
+        assert(snapshot.currentCave == player.cave);
+        assert(snapshot.map.currentCave == player.cave);
+        assert(snapshot.map.caves.size() == 1);
+        assert(snapshot.map.caves.front().cave == player.cave);
+        for (const auto& rival : state.players) {
+            if (rival.id == player.id) continue;
+            assert(std::none_of(snapshot.map.caves.begin(), snapshot.map.caves.end(),
+                [&](const DiscoveredCaveView& cave) { return cave.cave == rival.cave; }));
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -558,6 +791,18 @@ int main() {
     reconnectDuringClashRestoresSameChallengeAndSearch();
     disconnectGraceExpiryClearsClashAndDoesNotRepeatUseItem();
     terminalDisconnectExpiryDiscardsPendingClashWithoutResolution();
+    sixHuntersRequireAllLocksAndResolveOnce();
+    threeHuntersConvergeIntoOneComponent();
+    fiveHuntersCanShareOneConflictComponent();
+    connectedOppositeAndDestinationConflictsFormOneComponent();
+    disjointConflictComponentsQueueDeterministically();
+    multiPartyStalemateCancelsMovesAndPreservesSearchOnce();
+    movementChainAndCycleWithUniqueDestinationsRemainLegal();
+    multiHunterSubmissionOrderDoesNotChangeResolution();
+    forfeitAndDisconnectExpiryCannotDeadlockMultiHunterReadiness();
+    participantDeathCannotStrandQueuedConflictRound();
+    multipleBodiesCoexistAndLoneSurvivorContinues();
+    multiHunterSnapshotsRemainPlayerSpecific();
 
     std::cout << "Basilisk match coordinator tests passed.\n";
     return 0;

@@ -639,7 +639,7 @@ bool readMetadata(Reader& reader, PublicMatchMetadata& metadata) {
             [&](PublicPlayerSlot& player) {
                 return readId(reader, player.player) &&
                        readEnum(reader, player.slot,
-                           static_cast<std::uint8_t>(PlayerSlot::P2));
+                           static_cast<std::uint8_t>(PlayerSlot::P6));
             })) return false;
     if (metadata.players.empty())
         return reader.fail("Match metadata requires a player.");

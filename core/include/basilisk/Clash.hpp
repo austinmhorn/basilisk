@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <string>
 #include <utility>
 #include <vector>
@@ -40,9 +41,13 @@ struct PendingClashRound {
     std::vector<PlayerAction> actions;
     std::vector<std::pair<PlayerId, CaveId>> moveDestinations;
     std::vector<GameEvent> completedEvents;
-    PlayerId mover{};
-    PlayerId stationary{};
-    CaveId contestedCave{};
+    struct Component {
+        ClashKind kind{ClashKind::MoveToSameCave};
+        std::vector<PlayerId> participants;
+        CaveId contestedCave{};
+    };
+    std::vector<Component> components;
+    std::size_t componentIndex{0};
 };
 
 } // namespace basilisk
