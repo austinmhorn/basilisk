@@ -103,11 +103,13 @@ public:
         std::vector<client::PublicPlayerProfile> profiles,
         std::optional<TrophyScoringContext> trophyScoring,
         std::shared_ptr<PublicTrophyReadModel> leaderboard,
+        client::MatchMode mode,
         std::vector<client::ai::AiConfig> aiConfigs = {})
         : match_(std::move(match)),
           coordinator_(match_),
           metadata_(PublicMatchMetadataSystem::build(match_)),
           profiles_(std::move(profiles)),
+          mode_(mode),
           trophyScoring_(std::move(trophyScoring)),
           leaderboard_(std::move(leaderboard)) {
 
@@ -152,6 +154,7 @@ public:
         PlayerRoundSnapshot snapshot =
             SnapshotSystem::buildForPlayer(match_, context.viewedPlayer, {});
         network::ServerBootstrap bootstrap;
+        bootstrap.matchMode = mode_;
         bootstrap.matchMetadata = metadata_;
         bootstrap.profiles = profiles_;
         bootstrap.viewContext = context;
@@ -229,46 +232,73 @@ public:
             return false;
         }
         const RoundNumber priorRound = match_.round;
+        const auto priorClash = activeClashCopy();
         coordinator_.reconnect(player);
-        const auto& events = coordinator_.authoritativeEvents();
-        if (events.empty()) {
+        if (coordinator_.authoritativeEvents().empty()) {
             error = "Player reconnect grace has expired.";
             return false;
         }
-        if (match_.round != priorRound) ++resolvedRoundCount_;
-        recordTrophyEvents(events);
-        refreshContexts();
-        publishAll(events);
+        publishCoordinatorOutcome(priorRound, priorClash);
         attach(player, endpoint);
-        return enqueueBootstrap(player, *endpoint, error);
+        const bool bootstrapped = enqueueBootstrap(player, *endpoint, error);
+        if (bootstrapped) driveAi();
+        return bootstrapped;
     }
 
     void advanceTime(std::uint64_t elapsedMs) {
         const RoundNumber priorRound = match_.round;
-        const std::optional<ActiveClash> priorClash = coordinator_.activeClash()
-            ? std::optional<ActiveClash>{*coordinator_.activeClash()} : std::nullopt;
+        const auto priorClash = activeClashCopy();
         coordinator_.advanceTime(elapsedMs);
+        publishCoordinatorOutcome(priorRound, priorClash);
         driveAi();
-        if (match_.round != priorRound) ++resolvedRoundCount_;
-        const auto& events = coordinator_.authoritativeEvents();
-        recordTrophyEvents(events);
-        if (match_.round == priorRound && events.empty()) return;
-        refreshContexts();
-        publishAll(events);
-        if (priorClash && coordinator_.activeClash() == nullptr)
-            publishClashResolved(priorClash->id, PlayerId{}, priorClash->participants);
     }
 
     void disconnect(PlayerId player) {
         endpoints_.erase(player);
+        const RoundNumber priorRound = match_.round;
+        const auto priorClash = activeClashCopy();
         coordinator_.disconnect(player);
-        const auto& events = coordinator_.authoritativeEvents();
-        recordTrophyEvents(events);
-        refreshContexts();
-        publishAll(events);
+        publishCoordinatorOutcome(priorRound, priorClash);
     }
 
 private:
+    [[nodiscard]] std::optional<ActiveClash> activeClashCopy() const {
+        const ActiveClash* active = coordinator_.activeClash();
+        return active == nullptr
+            ? std::nullopt
+            : std::optional<ActiveClash>{*active};
+    }
+
+    void publishCoordinatorOutcome(
+        RoundNumber priorRound,
+        const std::optional<ActiveClash>& priorClash,
+        std::optional<PlayerId> clashWinner = std::nullopt) {
+
+        if (match_.round != priorRound) ++resolvedRoundCount_;
+        const auto& events = coordinator_.authoritativeEvents();
+        recordTrophyEvents(events);
+
+        const ActiveClash* active = coordinator_.activeClash();
+        const bool resolvedClash = priorClash.has_value() &&
+            (active == nullptr || active->id != priorClash->id);
+        const bool startedClash = active != nullptr &&
+            (!priorClash.has_value() || active->id != priorClash->id);
+        const bool publishSnapshot =
+            match_.round != priorRound || !events.empty();
+
+        if (!resolvedClash && !startedClash && !publishSnapshot) return;
+
+        refreshContexts();
+        if (resolvedClash) {
+            publishClashResolved(
+                priorClash->id,
+                clashWinner.value_or(PlayerId{}),
+                priorClash->participants);
+        }
+        if (publishSnapshot) publishAll(events);
+        if (startedClash) publishClashStarted(*active);
+    }
+
     void driveAi() {
         constexpr int kMaximumSteps = 64;
         for (int step = 0; step < kMaximumSteps; ++step) {
@@ -281,14 +311,19 @@ private:
                             clash->participants.end();
                     });
                 if (agent == aiAgents_.end()) return;
-                const ActiveClash before = *clash;
-                const auto result = coordinator_.submitClashResponse(
-                    agent->config.player, before.id, before.challengeWord);
-                if (result == ClashSubmissionResult::Resolved)
-                    publishClashResolved(before.id, agent->config.player,
-                        before.participants);
+                const auto priorClash = activeClashCopy();
+                const RoundNumber priorRound = match_.round;
+                const ClashSubmissionResult result =
+                    coordinator_.submitClashResponse(
+                        agent->config.player,
+                        priorClash->id,
+                        priorClash->challengeWord);
+                if (result != ClashSubmissionResult::Resolved) return;
+                publishCoordinatorOutcome(
+                    priorRound, priorClash, agent->config.player);
                 continue;
             }
+
             auto agent = std::find_if(aiAgents_.begin(), aiAgents_.end(),
                 [&](const NetworkAiAgent& candidate) {
                     const PlayerState* player = findPlayer(
@@ -297,6 +332,7 @@ private:
                         candidate.decisionRound != match_.round;
                 });
             if (agent == aiAgents_.end()) return;
+
             PlayerRoundSnapshot snapshot = SnapshotSystem::buildForPlayer(
                 match_, agent->config.player, {});
             agent->decisionRound = match_.round;
@@ -305,7 +341,9 @@ private:
             const auto evaluation = agent->engine.evaluate(
                 snapshot, agent->config, agent->knowledge);
             if (evaluation.actions.empty()) continue;
-            const auto& selected = evaluation.actions[evaluation.chosenIndex].action;
+            const auto& selected =
+                evaluation.actions[evaluation.chosenIndex].action;
+
             PlayerAction action;
             action.player = agent->config.player;
             action.type = selected.type;
@@ -313,10 +351,13 @@ private:
             action.targetTunnel = selected.targetTunnel;
             action.targetItem = selected.targetItem;
             action.contextualAction = selected.contextualAction;
-            if (coordinator_.submitAction(action)) {
-                agent->knowledge.recordDecision(selected);
-                (void)coordinator_.lockAction(agent->config.player);
-            }
+            if (!coordinator_.submitAction(action)) continue;
+
+            agent->knowledge.recordDecision(selected);
+            const RoundNumber priorRound = match_.round;
+            const auto priorClash = activeClashCopy();
+            if (!coordinator_.lockAction(agent->config.player)) return;
+            publishCoordinatorOutcome(priorRound, priorClash);
         }
     }
 
@@ -359,21 +400,13 @@ private:
             return false;
         }
         const RoundNumber priorRound = match_.round;
+        const auto priorClash = activeClashCopy();
         if (!coordinator_.lockAction(authenticatedPlayer)) {
             error = "Coordinator rejected action lock.";
             return false;
         }
+        publishCoordinatorOutcome(priorRound, priorClash);
         driveAi();
-        if (const ActiveClash* clash = coordinator_.activeClash()) {
-            publishAll(coordinator_.authoritativeEvents());
-            publishClashStarted(*clash);
-        }
-        recordTrophyEvents(coordinator_.authoritativeEvents());
-        if (match_.round != priorRound) {
-            ++resolvedRoundCount_;
-            refreshContexts();
-            publishAll(coordinator_.authoritativeEvents());
-        }
         error.clear();
         return true;
     }
@@ -387,21 +420,23 @@ private:
             error = "Clash response is stale or invalid.";
             return false;
         }
-        const ActiveClash before = *active;
+        const auto priorClash = activeClashCopy();
         const RoundNumber priorRound = match_.round;
         const ClashSubmissionResult result = coordinator_.submitClashResponse(
             authenticatedPlayer, command.clash, command.response);
         if (result == ClashSubmissionResult::Rejected) {
-            error = "Clash response was rejected."; return false;
+            error = "Clash response was rejected.";
+            return false;
         }
-        if (result == ClashSubmissionResult::Incorrect) { error.clear(); return true; }
+        if (result == ClashSubmissionResult::Incorrect) {
+            error.clear();
+            return true;
+        }
+        publishCoordinatorOutcome(
+            priorRound, priorClash, authenticatedPlayer);
         driveAi();
-        if (match_.round != priorRound) ++resolvedRoundCount_;
-        recordTrophyEvents(coordinator_.authoritativeEvents());
-        refreshContexts();
-        publishClashResolved(before.id, authenticatedPlayer, before.participants);
-        publishAll(coordinator_.authoritativeEvents());
-        error.clear(); return true;
+        error.clear();
+        return true;
     }
 
     [[nodiscard]] bool handle(
@@ -435,14 +470,11 @@ private:
             error = "Authenticated player does not match quit request.";
             return false;
         }
-        const std::optional<ActiveClash> priorClash = coordinator_.activeClash()
-            ? std::optional<ActiveClash>{*coordinator_.activeClash()} : std::nullopt;
+        const RoundNumber priorRound = match_.round;
+        const auto priorClash = activeClashCopy();
         coordinator_.forfeit(authenticatedPlayer);
-        recordTrophyEvents(coordinator_.authoritativeEvents());
-        refreshContexts();
-        if (priorClash && coordinator_.activeClash() == nullptr)
-            publishClashResolved(priorClash->id, PlayerId{}, priorClash->participants);
-        publishAll(coordinator_.authoritativeEvents());
+        publishCoordinatorOutcome(priorRound, priorClash);
+        driveAi();
         error.clear();
         return true;
     }
@@ -589,6 +621,7 @@ private:
     MatchCoordinator coordinator_;
     PublicMatchMetadata metadata_;
     std::vector<client::PublicPlayerProfile> profiles_;
+    client::MatchMode mode_{client::MatchMode::Online};
     PlayerMapLayout fullLayout_;
     std::map<PlayerId, client::ClientViewContext> viewContexts_;
     std::map<PlayerId, std::int64_t> trophyTotals_;
@@ -697,7 +730,7 @@ AuthoritativeInMemoryMatch::create(
     }
     auto state = std::make_shared<AuthoritativeInMemoryMatchState>(
         std::move(match), std::move(profiles), std::move(trophyScoring),
-        std::move(leaderboard));
+        std::move(leaderboard), mode);
     return std::unique_ptr<AuthoritativeInMemoryMatch>(
         new AuthoritativeInMemoryMatch(std::move(state)));
 }
@@ -742,7 +775,7 @@ AuthoritativeInMemoryMatch::createSandbox(
     }
     auto state = std::make_shared<AuthoritativeInMemoryMatchState>(
         std::move(match), std::move(profiles), std::nullopt, nullptr,
-        std::move(aiPlayers));
+        client::MatchMode::Sandbox, std::move(aiPlayers));
     error.clear();
     return std::unique_ptr<AuthoritativeInMemoryMatch>(
         new AuthoritativeInMemoryMatch(std::move(state)));
