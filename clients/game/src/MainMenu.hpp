@@ -71,6 +71,8 @@ enum class MainMenuAction {
     SubmitLobbyCode,
     CancelLobby,
     CancelFindMatch,
+    ToggleSandboxReady,
+    StartSandboxMatch,
     Logout,
 };
 
@@ -88,6 +90,8 @@ enum class MainMenuResult {
     RequestHostSandboxLobby,
     RequestJoinSandboxLobby,
     RequestLeaveSandboxLobby,
+    RequestSetSandboxReady,
+    RequestStartSandboxMatch,
     Logout,
     RequestPlayOnline,
     StartAiGame,
@@ -118,6 +122,9 @@ public:
     [[nodiscard]] SandboxEntryMode sandboxEntryMode() const noexcept;
     [[nodiscard]] const std::vector<network::SandboxLobbySlotView>&
         sandboxLobbyRoster() const noexcept;
+    [[nodiscard]] PlayerId sandboxLobbyLocalPlayer() const noexcept;
+    [[nodiscard]] bool sandboxLocalReady() const noexcept;
+    [[nodiscard]] bool sandboxLaunchEligible() const noexcept;
     void openOnline() noexcept;
 
     void select(std::size_t index) noexcept;
@@ -160,6 +167,7 @@ private:
     SandboxEntryMode sandboxEntryMode_{SandboxEntryMode::Ai};
     std::string sandboxValidationError_;
     std::vector<network::SandboxLobbySlotView> sandboxLobbyRoster_;
+    PlayerId sandboxLobbyLocalPlayer_{};
 };
 
 } // namespace basilisk::game

@@ -119,9 +119,11 @@ int main() {
         authoritativeSlots.push_back({static_cast<std::uint8_t>(slot.slot),
             slot.player, slot.kind,
             slot.kind != basilisk::client::SandboxLobbySlotKind::EmptyHuman ||
-                slot.slot == 2});
+                slot.slot == 2,
+            slot.kind == basilisk::client::SandboxLobbySlotKind::Host ||
+                slot.kind == basilisk::client::SandboxLobbySlotKind::Ai});
     menu.sandboxLobbyUpdated({"SBX-TEST12", onlineLobbyConfig,
-        authoritativeSlots});
+        authoritativeSlots, basilisk::PlayerId{1}});
     assert(menu.page() == MainMenuPage::SandboxLobby);
     const auto onlineSlots = basilisk::client::sandboxLobbySlots(menu.sandboxConfig());
     assert(onlineSlots.size() == 6);
@@ -131,6 +133,25 @@ int main() {
     assert(onlineSlots[2].kind ==
         basilisk::client::SandboxLobbySlotKind::EmptyHuman);
     assert(onlineSlots[3].kind == basilisk::client::SandboxLobbySlotKind::Ai);
+    assert(menu.selectedAction() == MainMenuAction::StartSandboxMatch);
+    assert(!menu.sandboxLaunchEligible());
+    assert(menu.activate(MainMenuAction::StartSandboxMatch) == MainMenuResult::None);
+
+    authoritativeSlots[1].ready = true;
+    authoritativeSlots[2].occupied = true;
+    authoritativeSlots[2].ready = true;
+    menu.sandboxLobbyUpdated({"SBX-TEST12", onlineLobbyConfig,
+        authoritativeSlots, basilisk::PlayerId{1}});
+    assert(menu.sandboxLaunchEligible());
+    assert(menu.activate(MainMenuAction::StartSandboxMatch) ==
+        MainMenuResult::RequestStartSandboxMatch);
+
+    menu.sandboxLobbyUpdated({"SBX-TEST12", onlineLobbyConfig,
+        authoritativeSlots, basilisk::PlayerId{2}});
+    assert(menu.selectedAction() == MainMenuAction::ToggleSandboxReady);
+    assert(menu.sandboxLocalReady());
+    assert(menu.activate(MainMenuAction::ToggleSandboxReady) ==
+        MainMenuResult::RequestSetSandboxReady);
     assert(menu.back() == MainMenuResult::RequestLeaveSandboxLobby);
     menu.sandboxLobbyClosed("Sandbox lobby closed.");
     assert(menu.page() == MainMenuPage::OnlineSandbox);

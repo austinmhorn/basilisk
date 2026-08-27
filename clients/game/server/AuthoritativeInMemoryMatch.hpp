@@ -15,6 +15,8 @@
 #include "basilisk/client/MatchMode.hpp"
 #include "basilisk/Types.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
+#include "basilisk/client/SandboxConfiguration.hpp"
+#include "basilisk/client/ai/AiDecisionEngine.hpp"
 
 namespace basilisk::game::server {
 
@@ -62,6 +64,11 @@ public:
         std::optional<TrophyScoringContext> trophyScoring = std::nullopt,
         std::shared_ptr<PublicTrophyReadModel> leaderboard = nullptr,
         client::MatchMode mode = client::MatchMode::Online);
+    [[nodiscard]] static std::unique_ptr<AuthoritativeInMemoryMatch> createSandbox(
+        const client::SandboxSessionConfig& config,
+        std::vector<client::PublicPlayerProfile> profiles,
+        std::vector<client::ai::AiConfig> aiPlayers,
+        std::string& error);
 
     [[nodiscard]] std::shared_ptr<InMemoryMatchEndpoint> connect(
         PlayerId authenticatedPlayer,

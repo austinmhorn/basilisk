@@ -845,6 +845,8 @@ bool readHeader(
         case WireMessageType::HostSandboxLobby:
         case WireMessageType::JoinSandboxLobby:
         case WireMessageType::LeaveSandboxLobby:
+        case WireMessageType::SetSandboxReady:
+        case WireMessageType::StartSandboxMatch:
         case WireMessageType::UpdateCosmeticLoadout:
             break;
         default:
@@ -937,6 +939,8 @@ bool inspectWireMessageType(
         case WireMessageType::HostSandboxLobby:
         case WireMessageType::JoinSandboxLobby:
         case WireMessageType::LeaveSandboxLobby:
+        case WireMessageType::SetSandboxReady:
+        case WireMessageType::StartSandboxMatch:
         case WireMessageType::UpdateCosmeticLoadout:
             type = candidate;
             return true;
@@ -1210,6 +1214,10 @@ bool encodeWire(const LobbyRequest& message, WireBytes& bytes, std::string& erro
             return WireMessageType::JoinSandboxLobby;
         if constexpr (std::is_same_v<T, LeaveSandboxLobbyRequest>)
             return WireMessageType::LeaveSandboxLobby;
+        if constexpr (std::is_same_v<T, SetSandboxReadyRequest>)
+            return WireMessageType::SetSandboxReady;
+        if constexpr (std::is_same_v<T, StartSandboxMatchRequest>)
+            return WireMessageType::StartSandboxMatch;
         return WireMessageType::CancelFindMatch;
     }, message.payload);
     writeHeader(writer, type, message.protocolVersion);
@@ -1220,7 +1228,13 @@ bool encodeWire(const LobbyRequest& message, WireBytes& bytes, std::string& erro
                       std::is_same_v<T, CancelFindMatchRequest>) return true;
         else if constexpr (std::is_same_v<T, HostSandboxLobbyRequest>)
             return writeSandboxConfig(writer, request.config);
-        else return !request.lobbyCode.empty() && writer.string(request.lobbyCode);
+        else {
+            if (request.lobbyCode.empty() || !writer.string(request.lobbyCode))
+                return false;
+            if constexpr (std::is_same_v<T, SetSandboxReadyRequest>)
+                writer.boolean(request.ready);
+            return true;
+        }
     }, message.payload);
     if (!written || !writer.finish()) return false;
     LobbyRequest validated;
@@ -1265,7 +1279,9 @@ bool encodeWire(const LobbyResponse& message, WireBytes& bytes, std::string& err
                 writer.u32(slot.player);
                 writer.u8(static_cast<std::uint8_t>(slot.kind));
                 writer.boolean(slot.occupied);
+                writer.boolean(slot.ready);
             }
+            writer.u32(response.localPlayer);
             return true;
         } else {
             return true;
@@ -1617,7 +1633,9 @@ bool decodeLobbyRequest(std::span<const std::uint8_t> bytes,
         type != WireMessageType::CancelFindMatch &&
         type != WireMessageType::HostSandboxLobby &&
         type != WireMessageType::JoinSandboxLobby &&
-        type != WireMessageType::LeaveSandboxLobby)
+        type != WireMessageType::LeaveSandboxLobby &&
+        type != WireMessageType::SetSandboxReady &&
+        type != WireMessageType::StartSandboxMatch)
         return (error = "Unexpected wire message type."), false;
     Reader reader(bytes, error);
     LobbyRequest decoded;
@@ -1641,7 +1659,15 @@ bool decodeLobbyRequest(std::span<const std::uint8_t> bytes,
             decoded.payload = CancelHostedLobbyRequest{std::move(code)};
         else if (type == WireMessageType::JoinSandboxLobby)
             decoded.payload = JoinSandboxLobbyRequest{std::move(code)};
-        else decoded.payload = LeaveSandboxLobbyRequest{std::move(code)};
+        else if (type == WireMessageType::LeaveSandboxLobby)
+            decoded.payload = LeaveSandboxLobbyRequest{std::move(code)};
+        else if (type == WireMessageType::StartSandboxMatch)
+            decoded.payload = StartSandboxMatchRequest{std::move(code)};
+        else {
+            bool ready{};
+            if (!reader.boolean(ready)) return false;
+            decoded.payload = SetSandboxReadyRequest{std::move(code), ready};
+        }
     }
     if (!finishRead(reader)) return false;
     message = std::move(decoded);
@@ -1687,12 +1713,18 @@ bool decodeLobbyResponse(std::span<const std::uint8_t> bytes,
             std::uint8_t kind{};
             if (!reader.u8(slot.slot) || !reader.u32(player) ||
                 !reader.u8(kind) || !reader.boolean(slot.occupied) ||
+                !reader.boolean(slot.ready) ||
                 slot.slot != index + 1 || player != slot.slot || kind > 2)
                 return reader.fail("Invalid Sandbox lobby slot.");
             slot.player = player;
             slot.kind = static_cast<client::SandboxLobbySlotKind>(kind);
             response.slots.push_back(slot);
         }
+        std::uint32_t localPlayer{};
+        if (!reader.u32(localPlayer) || localPlayer == 0 ||
+            localPlayer > response.config.humanPlayerCount)
+            return reader.fail("Invalid local Sandbox lobby slot.");
+        response.localPlayer = localPlayer;
         decoded.payload = std::move(response);
         if (!finishRead(reader)) return false;
         message = std::move(decoded);

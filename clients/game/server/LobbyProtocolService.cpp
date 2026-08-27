@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <type_traits>
+#include <utility>
 
 namespace basilisk::game::server {
 
@@ -21,15 +22,19 @@ bool LobbyProtocolService::process(
         return true;
     };
     const auto deliverSandboxChange = [&](const SandboxLobbyChange& change) {
-        const network::LobbyResponse response{network::kProtocolVersion,
-            change.closed
-                ? network::LobbyResponsePayload{network::SandboxLobbyClosed{
-                    change.snapshot.lobby.value}}
-                : network::LobbyResponsePayload{network::SandboxLobbyUpdated{
-                    change.snapshot.lobby.value, change.snapshot.config,
-                    change.snapshot.slots}}};
-        for (const auto& recipient : change.recipients)
+        for (const auto& recipient : change.recipients) {
+            const auto member = change.memberPlayers.find(recipient);
+            const network::LobbyResponse response{network::kProtocolVersion,
+                change.closed
+                    ? network::LobbyResponsePayload{network::SandboxLobbyClosed{
+                        change.snapshot.lobby.value}}
+                    : network::LobbyResponsePayload{network::SandboxLobbyUpdated{
+                        change.snapshot.lobby.value, change.snapshot.config,
+                        change.snapshot.slots,
+                        member == change.memberPlayers.end()
+                            ? PlayerId{} : member->second}}};
             if (!deliver(recipient, response)) return false;
+        }
         for (const auto& removed : change.removed) {
             if (std::find(change.recipients.begin(), change.recipients.end(), removed) !=
                 change.recipients.end()) continue;
@@ -105,15 +110,35 @@ bool LobbyProtocolService::process(
                 return deliver(account, {network::kProtocolVersion,
                     network::LobbyFailure{error}});
             return deliverSandboxChange(change);
-        } else {
+        } else if constexpr (std::is_same_v<T, network::LeaveSandboxLobbyRequest>) {
             SandboxLobbyChange change;
             if (!coordinator_.leaveSandbox(
                     account, LobbyCode{payload.lobbyCode}, change, error))
                 return deliver(account, {network::kProtocolVersion,
                     network::LobbyFailure{error}});
             return deliverSandboxChange(change);
+        } else if constexpr (std::is_same_v<T, network::SetSandboxReadyRequest>) {
+            SandboxLobbyChange change;
+            if (!coordinator_.setSandboxReady(account,
+                    LobbyCode{payload.lobbyCode}, payload.ready, change, error))
+                return deliver(account, {network::kProtocolVersion,
+                    network::LobbyFailure{error}});
+            return deliverSandboxChange(change);
+        } else {
+            SandboxMatchAssignment assignment;
+            if (!coordinator_.startSandbox(account,
+                    LobbyCode{payload.lobbyCode}, assignment, error))
+                return deliver(account, {network::kProtocolVersion,
+                    network::LobbyFailure{error}});
+            sandboxLaunch_ = std::move(assignment);
+            deliveries.clear();
+            return true;
         }
     }, request.payload);
+}
+
+std::optional<SandboxMatchAssignment> LobbyProtocolService::takeSandboxLaunch() {
+    return std::exchange(sandboxLaunch_, std::nullopt);
 }
 
 void LobbyProtocolService::disconnect(
@@ -126,13 +151,16 @@ void LobbyProtocolService::disconnect(
     for (const auto& change : changes) {
         for (const auto& recipient : change.recipients) {
             network::WireBytes bytes;
+            const auto member = change.memberPlayers.find(recipient);
             const network::LobbyResponse response{network::kProtocolVersion,
                 change.closed
                     ? network::LobbyResponsePayload{network::SandboxLobbyClosed{
                         change.snapshot.lobby.value}}
                     : network::LobbyResponsePayload{network::SandboxLobbyUpdated{
                         change.snapshot.lobby.value, change.snapshot.config,
-                        change.snapshot.slots}}};
+                        change.snapshot.slots,
+                        member == change.memberPlayers.end()
+                            ? PlayerId{} : member->second}}};
             if (network::encodeWire(response, bytes, error))
                 deliveries.push_back({recipient, std::move(bytes)});
         }

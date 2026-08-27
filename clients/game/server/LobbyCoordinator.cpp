@@ -178,9 +178,21 @@ SandboxLobbySnapshot sandboxSnapshot(
         snapshot.slots.push_back({static_cast<std::uint8_t>(slot),
             static_cast<PlayerId>(slot), kind,
             kind == client::SandboxLobbySlotKind::Ai ||
-                state.humans.contains(slot)});
+                state.humans.contains(slot),
+            kind == client::SandboxLobbySlotKind::Host ||
+                kind == client::SandboxLobbySlotKind::Ai ||
+                (state.humans.contains(slot) &&
+                 state.ready.contains(state.humans.at(slot)))});
     }
     return snapshot;
+}
+
+std::map<AccountIdentity, PlayerId> sandboxMemberPlayers(
+    const LobbyCoordinator::SandboxLobbyState& state) {
+    std::map<AccountIdentity, PlayerId> players;
+    for (const auto& [slot, account] : state.humans)
+        players.emplace(account, PlayerId{static_cast<std::uint32_t>(slot)});
+    return players;
 }
 
 std::vector<AccountIdentity> sandboxRecipients(
@@ -221,7 +233,8 @@ bool LobbyCoordinator::hostSandbox(
         auto [found, inserted] = sandboxWaiting_.emplace(code, std::move(state));
         if (!inserted) continue;
         sandboxMembership_.emplace(account, code);
-        change = {sandboxSnapshot(code, found->second), {account}, {}, false};
+        change = {sandboxSnapshot(code, found->second), {account}, {}, false,
+            sandboxMemberPlayers(found->second)};
         error.clear();
         return true;
     }
@@ -260,7 +273,8 @@ bool LobbyCoordinator::joinSandbox(
     }
     state.humans.emplace(openSlot, account);
     sandboxMembership_.emplace(account, code);
-    change = {sandboxSnapshot(code, state), sandboxRecipients(state), {}, false};
+    change = {sandboxSnapshot(code, state), sandboxRecipients(state), {}, false,
+        sandboxMemberPlayers(state)};
     error.clear();
     return true;
 }
@@ -282,10 +296,12 @@ bool LobbyCoordinator::leaveSandbox(
         change.recipients = sandboxRecipients(state);
         change.removed = change.recipients;
         change.closed = true;
+        change.memberPlayers = sandboxMemberPlayers(state);
         for (const auto& recipient : change.recipients)
             sandboxMembership_.erase(recipient);
         sandboxWaiting_.erase(found);
     } else {
+        state.ready.erase(account);
         for (auto slot = state.humans.begin(); slot != state.humans.end(); ++slot) {
             if (slot->second != account) continue;
             state.humans.erase(slot);
@@ -293,8 +309,77 @@ bool LobbyCoordinator::leaveSandbox(
         }
         sandboxMembership_.erase(member);
         change = {sandboxSnapshot(code, state), sandboxRecipients(state),
-            {account}, false};
+            {account}, false, sandboxMemberPlayers(state)};
     }
+    error.clear();
+    return true;
+}
+
+bool LobbyCoordinator::setSandboxReady(
+    const AccountIdentity& account, const LobbyCode& code, bool ready,
+    SandboxLobbyChange& change, std::string& error) {
+    std::lock_guard lock(mutex_);
+    const auto member = sandboxMembership_.find(account);
+    const auto found = sandboxWaiting_.find(code);
+    if (member == sandboxMembership_.end() || member->second != code ||
+        found == sandboxWaiting_.end() || found->second.launching) {
+        error = "Sandbox lobby membership is stale.";
+        return false;
+    }
+    auto& state = found->second;
+    if (state.host == account) {
+        error = "The host does not use ready state.";
+        return false;
+    }
+    if (ready) state.ready.insert(account);
+    else state.ready.erase(account);
+    change = {sandboxSnapshot(code, state), sandboxRecipients(state), {}, false,
+        sandboxMemberPlayers(state)};
+    error.clear();
+    return true;
+}
+
+bool LobbyCoordinator::startSandbox(
+    const AccountIdentity& account, const LobbyCode& code,
+    SandboxMatchAssignment& assignment, std::string& error) {
+    std::lock_guard lock(mutex_);
+    const auto found = sandboxWaiting_.find(code);
+    if (found == sandboxWaiting_.end() || found->second.host != account) {
+        error = "Only the Sandbox host may start this lobby.";
+        return false;
+    }
+    auto& state = found->second;
+    if (state.launching) {
+        error = "Sandbox lobby is already launching.";
+        return false;
+    }
+    if (client::validateOnlineSandboxSessionConfig(state.config).has_value()) {
+        error = "Sandbox lobby configuration is no longer valid.";
+        return false;
+    }
+    if (state.humans.size() != state.config.humanPlayerCount) {
+        error = "All reserved human slots must be occupied.";
+        return false;
+    }
+    for (const auto& [slot, member] : state.humans) {
+        if (slot != 1 && !state.ready.contains(member)) {
+            error = "All joined hunters must be ready.";
+            return false;
+        }
+    }
+    state.launching = true;
+    assignment = {code, state.config, {}, {}};
+    for (const auto& [slot, member] : state.humans)
+        assignment.humans.emplace(static_cast<PlayerId>(slot), member);
+    for (std::size_t slot = state.config.humanPlayerCount + 1;
+         slot <= state.config.hunterCount; ++slot)
+        assignment.aiPlayers.push_back(static_cast<PlayerId>(slot));
+    for (const auto& [slot, member] : state.humans) {
+        (void)slot;
+        sandboxMembership_.erase(member);
+    }
+    consumed_.insert(code);
+    sandboxWaiting_.erase(found);
     error.clear();
     return true;
 }

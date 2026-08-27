@@ -337,6 +337,48 @@ void authenticatedServerReturnsOnlyPublicLeaderboardFields() {
     }
 }
 
+void sandboxLaunchPreservesSlotsAndRunsServerAi() {
+    auto config = client::defaultSandboxSessionConfig(6);
+    config.humanPlayerCount = 3;
+    config.mapSeed = MapSeed{606060};
+    std::vector<client::PublicPlayerProfile> sandboxProfiles;
+    for (std::uint32_t slot = 1; slot <= 6; ++slot)
+        sandboxProfiles.push_back({PlayerId{slot}, "Hunter " + std::to_string(slot),
+            {"arrow-right-black"}, {"circle-black"}});
+    std::vector<client::ai::AiConfig> aiPlayers;
+    for (std::uint32_t slot = 4; slot <= 6; ++slot)
+        aiPlayers.push_back({client::ai::AiDifficulty::Medium,
+            client::ai::AiBehavior::Balanced, PlayerId{slot},
+            client::ai::AiSeed{1000 + slot}});
+    std::string error;
+    auto host = AuthoritativeInMemoryMatch::createSandbox(
+        config, sandboxProfiles, aiPlayers, error);
+    assert(host != nullptr);
+    ConnectedClient p1 = connectClient(*host, PlayerId{1});
+    ConnectedClient p2 = connectClient(*host, PlayerId{2});
+    ConnectedClient p3 = connectClient(*host, PlayerId{3});
+    for (const ConnectedClient* client : {&p1, &p2, &p3}) {
+        const auto& players = client->session->controller().matchMetadata().players;
+        assert(players.size() == 6);
+        for (std::uint32_t slot = 1; slot <= 6; ++slot) {
+            assert(players[slot - 1].player == PlayerId{slot});
+            assert(players[slot - 1].slot == static_cast<PlayerSlot>(slot - 1));
+        }
+    }
+    for (ConnectedClient* client : {&p1, &p2, &p3}) {
+        const auto* snapshot = client->session->controller().displayedSnapshot();
+        assert(snapshot != nullptr);
+        assert(client->session->controller().submitAndLock(
+            actionOfType(*snapshot, ActionType::Search)));
+    }
+    assert(host->authoritativeRound() == RoundNumber{2});
+    assert(host->resolvedRoundCount() == 1);
+    p1.ingestUpdates();
+    p2.ingestUpdates();
+    p3.ingestUpdates();
+    assert(p1.session->controller().displayedSnapshot()->round == RoundNumber{2});
+}
+
 } // namespace
 
 int main() {
@@ -345,5 +387,6 @@ int main() {
     spoofedMalformedAndForgedCommandsAreRejected();
     explicitQuitEliminatesImmediatelyAndSurvivorContinues();
     authenticatedServerReturnsOnlyPublicLeaderboardFields();
+    sandboxLaunchPreservesSlotsAndRunsServerAi();
     return 0;
 }

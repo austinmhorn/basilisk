@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include <ixwebsocket/IXGetFreePort.h>
@@ -881,6 +882,98 @@ void authenticatedAssignmentLaunchesAuthoritativeGameplay() {
     assert(host->controller() == nullptr);
 }
 
+void authenticatedSandboxLobbyReadiesAndLaunchesAuthoritativeGameplay() {
+    TemporaryTrophyDatabase database;
+    std::string error;
+    auto auth = SQLiteAccountAuth::open(database.path(), error);
+    assert(auth != nullptr && error.empty());
+    AuthSessionToken hostToken;
+    AuthSessionToken guestToken;
+    for (const auto& [email, username, token] : std::array{
+            std::tuple{"sandbox-host@example.test", "sandbox-host", &hostToken},
+            std::tuple{"sandbox-guest@example.test", "sandbox-guest", &guestToken}}) {
+        AccountIdentity account;
+        assert(auth->createAccount(EmailAddress{email},
+            "correct horse battery staple", PublicAccountProfile{Username{username}},
+            account, error) == CreateAccountResult::Created);
+        assert(auth->authenticate(EmailAddress{email},
+            "correct horse battery staple", *token, error));
+    }
+    LocalWebSocketServerConfig config;
+    config.port = static_cast<std::uint16_t>(ix::getFreePort());
+    config.authentication = auth;
+    config.profiles = profiles();
+    auto server = LocalWebSocketMatchServer::start(std::move(config), error);
+    assert(server != nullptr && error.empty());
+    auto host = WebSocketNetworkSession::connectForAuthentication(url(*server), error);
+    auto guest = WebSocketNetworkSession::connectForAuthentication(url(*server), error);
+    assert(host != nullptr && guest != nullptr);
+    assert(waitUntil([&] {
+        host->pump(); guest->pump();
+        return host->state() == NetworkConnectionState::Connected &&
+            guest->state() == NetworkConnectionState::Connected;
+    }));
+    assert(host->authenticate({network::kProtocolVersion,
+        network::AuthenticateSessionRequest{hostToken.value}}));
+    assert(guest->authenticate({network::kProtocolVersion,
+        network::AuthenticateSessionRequest{guestToken.value}}));
+    assert(waitUntil([&] {
+        host->pump(); guest->pump();
+        return host->authenticationResponse().has_value() &&
+            guest->authenticationResponse().has_value();
+    }));
+
+    auto sandbox = client::defaultSandboxSessionConfig(3);
+    sandbox.humanPlayerCount = 2;
+    assert(host->requestLobby({network::kProtocolVersion,
+        network::HostSandboxLobbyRequest{sandbox}}));
+    assert(waitUntil([&] {
+        host->pump();
+        return host->lobbyResponse().has_value() &&
+            std::holds_alternative<network::SandboxLobbyUpdated>(
+                host->lobbyResponse()->payload);
+    }));
+    const auto hosted = std::get<network::SandboxLobbyUpdated>(
+        host->lobbyResponse()->payload);
+    assert(hosted.localPlayer == PlayerId{1});
+    assert(guest->requestLobby({network::kProtocolVersion,
+        network::JoinSandboxLobbyRequest{hosted.lobbyCode}}));
+    assert(waitUntil([&] {
+        host->pump(); guest->pump();
+        if (!guest->lobbyResponse().has_value()) return false;
+        const auto* update = std::get_if<network::SandboxLobbyUpdated>(
+            &guest->lobbyResponse()->payload);
+        return update != nullptr && update->localPlayer == PlayerId{2};
+    }));
+    assert(guest->requestLobby({network::kProtocolVersion,
+        network::SetSandboxReadyRequest{hosted.lobbyCode, true}}));
+    assert(waitUntil([&] {
+        host->pump(); guest->pump();
+        const auto* update = host->lobbyResponse().has_value()
+            ? std::get_if<network::SandboxLobbyUpdated>(
+                &host->lobbyResponse()->payload) : nullptr;
+        return update != nullptr && update->slots[1].ready;
+    }));
+    assert(host->requestLobby({network::kProtocolVersion,
+        network::StartSandboxMatchRequest{hosted.lobbyCode}}));
+    assert(waitUntil([&] {
+        host->pump(); guest->pump();
+        return host->controller() != nullptr && guest->controller() != nullptr;
+    }, 10000));
+    assert(host->controller()->viewContext().localPlayer == PlayerId{1});
+    assert(guest->controller()->viewContext().localPlayer == PlayerId{2});
+    assert(host->controller()->profiles().size() == 3);
+    const RoundNumber round = host->controller()->displayedSnapshot()->round;
+    assert(host->controller()->submitAndLock(searchAction(*host->controller())));
+    assert(guest->controller()->submitAndLock(searchAction(*guest->controller())));
+    assert(waitUntil([&] {
+        host->pump(); guest->pump();
+        return host->controller()->displayedSnapshot()->round > round &&
+            guest->controller()->displayedSnapshot()->round ==
+                host->controller()->displayedSnapshot()->round;
+    }, 10000));
+}
+
 void dynamicAssignedMatchesUsePersistentTrophyStore() {
     TemporaryTrophyDatabase authenticationDatabase;
     TemporaryTrophyDatabase trophyDatabase;
@@ -1149,6 +1242,7 @@ int main() {
     rejectedSessionRestoreKeepsAuthenticationConnectionUsable();
     logoutReturnsConnectionToUsableAuthenticationState();
     authenticatedAssignmentLaunchesAuthoritativeGameplay();
+    authenticatedSandboxLobbyReadiesAndLaunchesAuthoritativeGameplay();
     dynamicAssignedMatchesUsePersistentTrophyStore();
     authenticatedPlayerReclaimsAssignedMatchWithinGrace();
 }

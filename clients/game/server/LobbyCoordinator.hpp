@@ -38,6 +38,13 @@ struct SandboxLobbyChange {
     std::vector<AccountIdentity> recipients;
     std::vector<AccountIdentity> removed;
     bool closed{};
+    std::map<AccountIdentity, PlayerId> memberPlayers;
+};
+struct SandboxMatchAssignment {
+    LobbyCode lobby;
+    client::SandboxSessionConfig config;
+    std::map<PlayerId, AccountIdentity> humans;
+    std::vector<PlayerId> aiPlayers;
 };
 
 class LobbyCoordinator {
@@ -47,6 +54,8 @@ public:
         AccountIdentity host;
         client::SandboxSessionConfig config;
         std::map<std::size_t, AccountIdentity> humans;
+        std::set<AccountIdentity> ready;
+        bool launching{};
     };
 
     LobbyCoordinator();
@@ -78,6 +87,12 @@ public:
     [[nodiscard]] bool leaveSandbox(
         const AccountIdentity& account, const LobbyCode& code,
         SandboxLobbyChange& change, std::string& error);
+    [[nodiscard]] bool setSandboxReady(
+        const AccountIdentity& account, const LobbyCode& code, bool ready,
+        SandboxLobbyChange& change, std::string& error);
+    [[nodiscard]] bool startSandbox(
+        const AccountIdentity& account, const LobbyCode& code,
+        SandboxMatchAssignment& assignment, std::string& error);
     void disconnectSandbox(
         const AccountIdentity& account, std::vector<SandboxLobbyChange>& changes);
 

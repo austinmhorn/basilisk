@@ -90,10 +90,14 @@ struct CancelFindMatchRequest {};
 struct HostSandboxLobbyRequest { client::SandboxSessionConfig config; };
 struct JoinSandboxLobbyRequest { std::string lobbyCode; };
 struct LeaveSandboxLobbyRequest { std::string lobbyCode; };
+struct SetSandboxReadyRequest { std::string lobbyCode; bool ready{}; };
+struct StartSandboxMatchRequest { std::string lobbyCode; };
 using LobbyRequestPayload = std::variant<
     HostLobbyRequest, JoinLobbyRequest, CancelHostedLobbyRequest,
     FindMatchRequest, CancelFindMatchRequest, HostSandboxLobbyRequest,
-    JoinSandboxLobbyRequest, LeaveSandboxLobbyRequest>;
+    JoinSandboxLobbyRequest, LeaveSandboxLobbyRequest,
+    SetSandboxReadyRequest, StartSandboxMatchRequest>;
+// Keep Sandbox lobby control messages in the same authenticated request family.
 struct LobbyRequest {
     std::uint32_t protocolVersion{kProtocolVersion};
     LobbyRequestPayload payload;
@@ -114,11 +118,13 @@ struct SandboxLobbySlotView {
     PlayerId player{};
     client::SandboxLobbySlotKind kind{client::SandboxLobbySlotKind::Ai};
     bool occupied{};
+    bool ready{};
 };
 struct SandboxLobbyUpdated {
     std::string lobbyCode;
     client::SandboxSessionConfig config;
     std::vector<SandboxLobbySlotView> slots;
+    PlayerId localPlayer{};
 };
 struct SandboxLobbyClosed { std::string lobbyCode; };
 using LobbyResponsePayload = std::variant<

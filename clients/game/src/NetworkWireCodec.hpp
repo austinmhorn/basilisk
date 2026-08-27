@@ -42,6 +42,8 @@ enum class WireMessageType : std::uint8_t {
     HostSandboxLobby = 42,
     JoinSandboxLobby = 43,
     LeaveSandboxLobby = 44,
+    SetSandboxReady = 45,
+    StartSandboxMatch = 46,
     CosmeticLoadoutUpdated = 13,
     CosmeticLoadoutUpdateFailed = 14,
     ClashStarted = 15,

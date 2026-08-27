@@ -171,6 +171,7 @@ target_link_libraries(
         Basilisk::GameNetworkSession
     PRIVATE
         Basilisk::Core
+        Basilisk::ClientAI
 )
 target_compile_features(
     BasiliskAuthoritativeNetworkSession

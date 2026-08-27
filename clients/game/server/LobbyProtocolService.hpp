@@ -1,6 +1,7 @@
 #pragma once
 
 #include <span>
+#include <optional>
 #include <vector>
 
 #include "LobbyCoordinator.hpp"
@@ -28,9 +29,11 @@ public:
     void disconnect(
         const AccountIdentity& authenticatedAccount,
         std::vector<LobbyProtocolDelivery>& deliveries);
+    [[nodiscard]] std::optional<SandboxMatchAssignment> takeSandboxLaunch();
 
 private:
     LobbyCoordinator& coordinator_;
+    std::optional<SandboxMatchAssignment> sandboxLaunch_;
 };
 
 } // namespace basilisk::game::server

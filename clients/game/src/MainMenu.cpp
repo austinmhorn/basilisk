@@ -80,7 +80,10 @@ constexpr std::array sandboxLobbyActions{
     MainMenuAction::LaunchSandbox,
     MainMenuAction::Back,
 };
-constexpr std::array onlineSandboxLobbyActions{MainMenuAction::Back};
+constexpr std::array sandboxHostLobbyActions{
+    MainMenuAction::StartSandboxMatch, MainMenuAction::Back};
+constexpr std::array sandboxGuestLobbyActions{
+    MainMenuAction::ToggleSandboxReady, MainMenuAction::Back};
 constexpr std::array leaderboardActions{
     MainMenuAction::PreviousPage,
     MainMenuAction::NextPage,
@@ -114,7 +117,9 @@ std::span<const MainMenuAction> MainMenuState::actions() const noexcept {
             : std::span<const MainMenuAction>{sandboxAiActions};
         case MainMenuPage::SandboxLobby: return sandboxEntryMode_ ==
                 SandboxEntryMode::Online
-            ? std::span<const MainMenuAction>{onlineSandboxLobbyActions}
+            ? (sandboxLobbyLocalPlayer_ == PlayerId{1}
+                ? std::span<const MainMenuAction>{sandboxHostLobbyActions}
+                : std::span<const MainMenuAction>{sandboxGuestLobbyActions})
             : std::span<const MainMenuAction>{sandboxLobbyActions};
         case MainMenuPage::JoinSandboxLobby: return joinSandboxLobbyActions;
         case MainMenuPage::Leaderboards: return leaderboardActions;
@@ -170,6 +175,25 @@ SandboxEntryMode MainMenuState::sandboxEntryMode() const noexcept {
 }
 const std::vector<network::SandboxLobbySlotView>&
 MainMenuState::sandboxLobbyRoster() const noexcept { return sandboxLobbyRoster_; }
+PlayerId MainMenuState::sandboxLobbyLocalPlayer() const noexcept {
+    return sandboxLobbyLocalPlayer_;
+}
+bool MainMenuState::sandboxLocalReady() const noexcept {
+    const auto found = std::find_if(sandboxLobbyRoster_.begin(),
+        sandboxLobbyRoster_.end(), [this](const auto& slot) {
+            return slot.player == sandboxLobbyLocalPlayer_;
+        });
+    return found != sandboxLobbyRoster_.end() && found->ready;
+}
+bool MainMenuState::sandboxLaunchEligible() const noexcept {
+    if (sandboxLobbyLocalPlayer_ != PlayerId{1} ||
+        sandboxLobbyRoster_.size() != sandboxConfig_.hunterCount) return false;
+    return std::all_of(sandboxLobbyRoster_.begin(), sandboxLobbyRoster_.end(),
+        [](const auto& slot) {
+            return slot.kind == client::SandboxLobbySlotKind::Ai ||
+                (slot.occupied && slot.ready);
+        });
+}
 void MainMenuState::openOnline() noexcept { setPage(MainMenuPage::PlayOnline); }
 
 void MainMenuState::select(std::size_t index) noexcept {
@@ -465,6 +489,12 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
             return MainMenuResult::RequestCancelLobby;
         case MainMenuAction::CancelFindMatch:
             return MainMenuResult::RequestCancelFindMatch;
+        case MainMenuAction::ToggleSandboxReady:
+            return MainMenuResult::RequestSetSandboxReady;
+        case MainMenuAction::StartSandboxMatch:
+            return sandboxLaunchEligible()
+                ? MainMenuResult::RequestStartSandboxMatch
+                : MainMenuResult::None;
     }
     return MainMenuResult::None;
 }
@@ -519,6 +549,7 @@ void MainMenuState::sandboxLobbyUpdated(network::SandboxLobbyUpdated update) {
     lobbyCode_ = std::move(update.lobbyCode);
     sandboxConfig_ = update.config;
     sandboxLobbyRoster_ = std::move(update.slots);
+    sandboxLobbyLocalPlayer_ = update.localPlayer;
     lobbyWaiting_ = false;
     lobbyError_.clear();
     setPage(MainMenuPage::SandboxLobby);
@@ -526,6 +557,7 @@ void MainMenuState::sandboxLobbyUpdated(network::SandboxLobbyUpdated update) {
 
 void MainMenuState::sandboxLobbyClosed(std::string message) {
     sandboxLobbyRoster_.clear();
+    sandboxLobbyLocalPlayer_ = {};
     lobbyCode_.clear();
     lobbyWaiting_ = false;
     lobbyError_ = std::move(message);

@@ -293,6 +293,8 @@ std::string_view actionLabel(MainMenuAction action) {
         case MainMenuAction::SubmitLobbyCode: return "JOIN";
         case MainMenuAction::CancelLobby: return "CANCEL";
         case MainMenuAction::CancelFindMatch: return "CANCEL";
+        case MainMenuAction::ToggleSandboxReady: return "READY";
+        case MainMenuAction::StartSandboxMatch: return "START MATCH";
     }
     return {};
 }
@@ -551,6 +553,9 @@ bool renderMainMenu(
             const bool occupied = authoritative.empty()
                 ? kind != client::SandboxLobbySlotKind::EmptyHuman
                 : authoritative[index].occupied;
+            const bool ready = authoritative.empty()
+                ? kind != client::SandboxLobbySlotKind::EmptyHuman
+                : authoritative[index].ready;
             const std::size_t slotNumber = index + 1;
             const PresentationRect row{left, buttonY, 640.0 * scale, 42.0 * scale};
             roundedPanel(renderer, row, 8.0 * scale, ui::Theme::surfaceRaised,
@@ -563,7 +568,8 @@ bool renderMainMenu(
             } else if (kind == client::SandboxLobbySlotKind::EmptyHuman) {
                 slotName = std::to_string(slotNumber) + ".  " +
                     (occupied ? "HUMAN PLAYER" : "EMPTY HUMAN SLOT");
-                detail = occupied ? "CONNECTED" : "WAITING FOR PLAYER";
+                detail = occupied ? (ready ? "READY" : "NOT READY")
+                    : "WAITING FOR PLAYER";
             } else {
                 slotName = std::to_string(slotNumber) + ".  BASILISK AI " +
                     std::to_string(slotNumber);
@@ -579,8 +585,8 @@ bool renderMainMenu(
                     row.x + 390.0 * scale, row.y + 13.0 * scale, error)) return false;
             buttonY += 49.0 * scale;
         }
-        if (menu.sandboxConfig().humanPlayerCount > 1) {
-            if (!label(text, "Waiting for human players...",
+        if (!menu.sandboxLaunchEligible()) {
+            if (!label(text, "Waiting for players to join and ready...",
                     FontWeight::Medium, static_cast<float>(10.0 * scale),
                     ui::Theme::gold, left, buttonY + 8.0 * scale, error)) return false;
         } else if (!label(text, "All slots are ready.", FontWeight::Medium,
@@ -875,9 +881,11 @@ bool renderMainMenu(
             buttonY,
             buttonWidth, buttonHeight};
         const bool selected = index == menu.selectedIndex();
+        const bool enabled = actions[index] != MainMenuAction::StartSandboxMatch ||
+            menu.sandboxLaunchEligible();
         pill(renderer, bounds,
-            selected ? ui::Theme::surfaceSoft : ui::Theme::surfaceRaised,
-            selected ? ui::Theme::gold : ui::Theme::border);
+            selected && enabled ? ui::Theme::surfaceSoft : ui::Theme::surfaceRaised,
+            selected && enabled ? ui::Theme::gold : ui::Theme::border);
         std::string dynamicLabel;
         if (actions[index] == MainMenuAction::CycleAiDifficulty) {
             dynamicLabel = "DIFFICULTY  ";
@@ -916,12 +924,15 @@ bool renderMainMenu(
         } else if (actions[index] == MainMenuAction::LaunchSandbox &&
             menu.sandboxConfig().humanPlayerCount > 1) {
             dynamicLabel = "WAITING FOR PLAYERS";
+        } else if (actions[index] == MainMenuAction::ToggleSandboxReady) {
+            dynamicLabel = menu.sandboxLocalReady() ? "NOT READY" : "READY";
         }
         const std::string_view displayLabel = dynamicLabel.empty()
             ? actionLabel(actions[index]) : std::string_view{dynamicLabel};
         if (!label(text, displayLabel, FontWeight::SemiBold,
                 static_cast<float>(11.0 * scale),
-                selected ? ui::Theme::gold : ui::Theme::text,
+                !enabled ? ui::Theme::muted :
+                    (selected ? ui::Theme::gold : ui::Theme::text),
                 bounds.x + 18.0 * scale,
                 bounds.y + (sandboxCompact ? 9.0 : 15.0) * scale, error))
             return false;

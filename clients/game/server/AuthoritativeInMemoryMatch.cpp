@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <stdexcept>
 #include <utility>
 
 #include "MapLayout.hpp"
@@ -14,6 +15,8 @@
 #include "basilisk/systems/PublicMatchMetadataSystem.hpp"
 #include "basilisk/systems/SnapshotSystem.hpp"
 #include "basilisk/world/MapGenerator.hpp"
+#include "basilisk/client/SandboxConfiguration.hpp"
+#include "basilisk/client/ai/AiKnowledgeState.hpp"
 
 namespace basilisk::game::server {
 namespace {
@@ -86,19 +89,30 @@ PlayerFixedMapGeometry playerGeometry(
 
 } // namespace
 
+struct NetworkAiAgent {
+    client::ai::AiConfig config;
+    client::ai::AiDecisionEngine engine;
+    client::ai::AiKnowledgeState knowledge;
+    std::optional<RoundNumber> decisionRound;
+};
+
 class AuthoritativeInMemoryMatchState {
 public:
     AuthoritativeInMemoryMatchState(
         MatchState match,
         std::vector<client::PublicPlayerProfile> profiles,
         std::optional<TrophyScoringContext> trophyScoring,
-        std::shared_ptr<PublicTrophyReadModel> leaderboard)
+        std::shared_ptr<PublicTrophyReadModel> leaderboard,
+        std::vector<client::ai::AiConfig> aiConfigs = {})
         : match_(std::move(match)),
           coordinator_(match_),
           metadata_(PublicMatchMetadataSystem::build(match_)),
           profiles_(std::move(profiles)),
           trophyScoring_(std::move(trophyScoring)),
           leaderboard_(std::move(leaderboard)) {
+
+        for (auto& config : aiConfigs)
+            aiAgents_.push_back({std::move(config), {}, {}, std::nullopt});
 
         const PlayerMapView physicalMap = fullPhysicalMap(match_);
         fullLayout_.update(physicalMap);
@@ -111,6 +125,7 @@ public:
                 std::nullopt,
             });
         }
+        driveAi();
     }
 
     [[nodiscard]] bool containsPlayer(PlayerId player) const {
@@ -233,6 +248,7 @@ public:
         const std::optional<ActiveClash> priorClash = coordinator_.activeClash()
             ? std::optional<ActiveClash>{*coordinator_.activeClash()} : std::nullopt;
         coordinator_.advanceTime(elapsedMs);
+        driveAi();
         if (match_.round != priorRound) ++resolvedRoundCount_;
         const auto& events = coordinator_.authoritativeEvents();
         recordTrophyEvents(events);
@@ -253,6 +269,57 @@ public:
     }
 
 private:
+    void driveAi() {
+        constexpr int kMaximumSteps = 64;
+        for (int step = 0; step < kMaximumSteps; ++step) {
+            if (match_.result.status != MatchStatus::Active) return;
+            if (const ActiveClash* clash = coordinator_.activeClash()) {
+                auto agent = std::find_if(aiAgents_.begin(), aiAgents_.end(),
+                    [&](const NetworkAiAgent& candidate) {
+                        return std::find(clash->participants.begin(),
+                            clash->participants.end(), candidate.config.player) !=
+                            clash->participants.end();
+                    });
+                if (agent == aiAgents_.end()) return;
+                const ActiveClash before = *clash;
+                const auto result = coordinator_.submitClashResponse(
+                    agent->config.player, before.id, before.challengeWord);
+                if (result == ClashSubmissionResult::Resolved)
+                    publishClashResolved(before.id, agent->config.player,
+                        before.participants);
+                continue;
+            }
+            auto agent = std::find_if(aiAgents_.begin(), aiAgents_.end(),
+                [&](const NetworkAiAgent& candidate) {
+                    const PlayerState* player = findPlayer(
+                        match_, candidate.config.player);
+                    return player != nullptr && player->alive &&
+                        candidate.decisionRound != match_.round;
+                });
+            if (agent == aiAgents_.end()) return;
+            PlayerRoundSnapshot snapshot = SnapshotSystem::buildForPlayer(
+                match_, agent->config.player, {});
+            agent->decisionRound = match_.round;
+            if (snapshot.availableActions.empty()) continue;
+            agent->knowledge.observe(snapshot);
+            const auto evaluation = agent->engine.evaluate(
+                snapshot, agent->config, agent->knowledge);
+            if (evaluation.actions.empty()) continue;
+            const auto& selected = evaluation.actions[evaluation.chosenIndex].action;
+            PlayerAction action;
+            action.player = agent->config.player;
+            action.type = selected.type;
+            action.targetCave = selected.targetCave;
+            action.targetTunnel = selected.targetTunnel;
+            action.targetItem = selected.targetItem;
+            action.contextualAction = selected.contextualAction;
+            if (coordinator_.submitAction(action)) {
+                agent->knowledge.recordDecision(selected);
+                (void)coordinator_.lockAction(agent->config.player);
+            }
+        }
+    }
+
     [[nodiscard]] bool handle(
         PlayerId authenticatedPlayer,
         const network::SubmitActionCommand& command,
@@ -296,6 +363,7 @@ private:
             error = "Coordinator rejected action lock.";
             return false;
         }
+        driveAi();
         if (const ActiveClash* clash = coordinator_.activeClash()) {
             publishAll(coordinator_.authoritativeEvents());
             publishClashStarted(*clash);
@@ -327,6 +395,7 @@ private:
             error = "Clash response was rejected."; return false;
         }
         if (result == ClashSubmissionResult::Incorrect) { error.clear(); return true; }
+        driveAi();
         if (match_.round != priorRound) ++resolvedRoundCount_;
         recordTrophyEvents(coordinator_.authoritativeEvents());
         refreshContexts();
@@ -530,6 +599,7 @@ private:
     std::vector<GameEvent> trophyEvents_;
     bool trophyScoringAttempted_{false};
     std::optional<std::string> trophyScoringError_;
+    std::vector<NetworkAiAgent> aiAgents_;
 };
 
 InMemoryMatchEndpoint::InMemoryMatchEndpoint(
@@ -628,6 +698,52 @@ AuthoritativeInMemoryMatch::create(
     auto state = std::make_shared<AuthoritativeInMemoryMatchState>(
         std::move(match), std::move(profiles), std::move(trophyScoring),
         std::move(leaderboard));
+    return std::unique_ptr<AuthoritativeInMemoryMatch>(
+        new AuthoritativeInMemoryMatch(std::move(state)));
+}
+
+std::unique_ptr<AuthoritativeInMemoryMatch>
+AuthoritativeInMemoryMatch::createSandbox(
+    const client::SandboxSessionConfig& config,
+    std::vector<client::PublicPlayerProfile> profiles,
+    std::vector<client::ai::AiConfig> aiPlayers,
+    std::string& error) {
+    if (const auto invalid = client::validateOnlineSandboxSessionConfig(config)) {
+        error = std::string{*invalid};
+        return nullptr;
+    }
+    std::vector<PlayerId> roster;
+    for (std::size_t index = 0; index < config.hunterCount; ++index)
+        roster.push_back(static_cast<PlayerId>(index + 1));
+    MatchState match;
+    try {
+        match = MapGenerator::generate(config.mapSeed, config.matchSeed, roster,
+            client::sandboxRules(config), client::sandboxMapConfig(config));
+    } catch (const std::runtime_error& exception) {
+        error = exception.what();
+        return nullptr;
+    }
+    std::set<PlayerId> expected(roster.begin(), roster.end());
+    std::set<PlayerId> profilePlayers;
+    for (const auto& profile : profiles) profilePlayers.insert(profile.player);
+    if (profiles.size() != roster.size() || profilePlayers != expected) {
+        error = "One public profile is required for each Sandbox slot.";
+        return nullptr;
+    }
+    std::set<PlayerId> expectedAi;
+    for (std::size_t slot = config.humanPlayerCount + 1;
+         slot <= config.hunterCount; ++slot)
+        expectedAi.insert(static_cast<PlayerId>(slot));
+    std::set<PlayerId> configuredAi;
+    for (const auto& ai : aiPlayers) configuredAi.insert(ai.player);
+    if (configuredAi != expectedAi || configuredAi.size() != aiPlayers.size()) {
+        error = "AI policies must uniquely match the configured Sandbox AI slots.";
+        return nullptr;
+    }
+    auto state = std::make_shared<AuthoritativeInMemoryMatchState>(
+        std::move(match), std::move(profiles), std::nullopt, nullptr,
+        std::move(aiPlayers));
+    error.clear();
     return std::unique_ptr<AuthoritativeInMemoryMatch>(
         new AuthoritativeInMemoryMatch(std::move(state)));
 }

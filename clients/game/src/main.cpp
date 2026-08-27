@@ -333,6 +333,23 @@ SDL_AppResult handleMainMenuResult(
                     state.mainMenu.lobbyCode()}}))
             state.mainMenu.lobbyFailed("Unable to leave Sandbox lobby.");
     }
+    if (result == basilisk::game::MainMenuResult::RequestSetSandboxReady &&
+        state.networkSession != nullptr) {
+        if (!state.networkSession->requestLobby({
+                basilisk::game::network::kProtocolVersion,
+                basilisk::game::network::SetSandboxReadyRequest{
+                    state.mainMenu.lobbyCode(),
+                    !state.mainMenu.sandboxLocalReady()}}))
+            state.mainMenu.lobbyFailed("Unable to update ready state.");
+    }
+    if (result == basilisk::game::MainMenuResult::RequestStartSandboxMatch &&
+        state.networkSession != nullptr) {
+        if (!state.networkSession->requestLobby({
+                basilisk::game::network::kProtocolVersion,
+                basilisk::game::network::StartSandboxMatchRequest{
+                    state.mainMenu.lobbyCode()}}))
+            state.mainMenu.lobbyFailed("Unable to start Sandbox match.");
+    }
     return SDL_APP_CONTINUE;
 }
 
@@ -1418,6 +1435,14 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         }
         if (state->view == AppView::MainMenu &&
             state->mainMenu.page() == basilisk::game::MainMenuPage::MatchReady &&
+            state->session != nullptr &&
+            state->session->displayedSnapshot() != nullptr) {
+            state->view = AppView::Gameplay;
+            state->screenShellEnabled = true;
+            state->resumeGameplayOnBootstrap = false;
+        }
+        if (state->view == AppView::MainMenu &&
+            state->mainMenu.page() == basilisk::game::MainMenuPage::SandboxLobby &&
             state->session != nullptr &&
             state->session->displayedSnapshot() != nullptr) {
             state->view = AppView::Gameplay;
