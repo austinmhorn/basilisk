@@ -135,7 +135,7 @@ std::unique_ptr<IncompatibleServer> startIncompatibleServer() {
     assert(endpoint != nullptr);
     auto frame = endpoint->takeNextServerFrame();
     assert(frame.has_value() && frame->size() > 8);
-    (*frame)[8] = 7; // V6's big-endian version header becomes unsupported V7.
+    (*frame)[8] = 8; // V7's big-endian version header becomes unsupported V8.
 
     for (int attempt = 0; attempt < 10; ++attempt) {
         const auto port = static_cast<std::uint16_t>(ix::getFreePort());
@@ -177,6 +177,8 @@ void twoRealWebSocketsAdvanceOneAuthoritativeRound() {
 
     assert(p1->controller()->viewContext().localPlayer == PlayerId{1});
     assert(p2->controller()->viewContext().localPlayer == PlayerId{2});
+    assert(p1->controller()->matchMode() == client::MatchMode::Online);
+    assert(p2->controller()->matchMode() == client::MatchMode::Online);
     assert(p1->controller()->displayedSnapshot()->player == PlayerId{1});
     assert(p2->controller()->displayedSnapshot()->player == PlayerId{2});
     assert(p1->controller()->submitAndLock(searchAction(*p1->controller())));
@@ -962,6 +964,8 @@ void authenticatedSandboxLobbyReadiesAndLaunchesAuthoritativeGameplay() {
     }, 10000));
     assert(host->controller()->viewContext().localPlayer == PlayerId{1});
     assert(guest->controller()->viewContext().localPlayer == PlayerId{2});
+    assert(host->controller()->matchMode() == client::MatchMode::Sandbox);
+    assert(guest->controller()->matchMode() == client::MatchMode::Sandbox);
     assert(host->controller()->profiles().size() == 3);
     const RoundNumber round = host->controller()->displayedSnapshot()->round;
     assert(host->controller()->submitAndLock(searchAction(*host->controller())));
