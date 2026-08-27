@@ -86,6 +86,10 @@ public:
     [[nodiscard]] debug::DebugGameplayTruth debugGameplayTruth() const {
         return debug::buildDebugGameplayTruth(state_);
     }
+    [[nodiscard]] std::vector<debug::DebugParticipant> debugParticipants() const {
+        if (state_.players.empty()) return {};
+        return {{state_.players.front().id, "HOST", state_.players.front().alive}};
+    }
 
     [[nodiscard]] bool forceBasiliskBehavior(
         BasiliskBehavior behavior) noexcept {
@@ -222,9 +226,10 @@ LocalGameSessionAdapter::DebugSession LocalGameSessionAdapter::createDebug(
         [actions = assembly.actions](BasiliskBehavior behavior) {
             return actions->forceBasiliskBehavior(behavior);
         },
-        [actions = assembly.actions](ItemType item) {
+        [actions = assembly.actions](PlayerId, ItemType item) {
             return actions->grantItem(item);
-        });
+        }, debug::DebugMapProvider::KillPlayerSource{},
+        [actions = assembly.actions] { return actions->debugParticipants(); });
     return {std::move(assembly.session), std::move(provider)};
 }
 #endif

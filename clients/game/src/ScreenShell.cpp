@@ -447,7 +447,43 @@ bool drawHeaderHud(
         playerCardHeight * (400.0F / 75.0F);
     float hudX = matchX;
     const auto& matchPlayers = session.matchMetadata().players;
-    if (matchPlayers.size() == 1) {
+    if (session.matchMode() == client::MatchMode::Sandbox) {
+        const auto participants = sandboxParticipantPresentation(session);
+        constexpr float stripWidth = 570.0F;
+        const float gap = 5.0F * scale;
+        const float chipWidth = (stripWidth * scale -
+            gap * static_cast<float>(participants.size() - 1U)) /
+            static_cast<float>(participants.size());
+        float chipX = matchX;
+        for (const auto& participant : participants) {
+            const SDL_FRect chip{chipX, top, chipWidth, playerCardHeight * scale};
+            const SDL_Color border = participant.viewed
+                ? ui::Theme::gold
+                : participant.alive ? ui::Theme::border : ui::Theme::red;
+            drawPanel(context.renderer, chip, 7.0F * scale,
+                participant.viewed ? SDL_Color{39, 34, 23, SDL_ALPHA_OPAQUE}
+                                   : ui::Theme::surface,
+                border, scale);
+            const std::string status = participant.alive ? "ALIVE" : "DEAD";
+            if (!context.label(participant.label, FontWeight::Bold,
+                    8.0F, participant.viewed ? ui::Theme::gold : ui::Theme::text,
+                    chip.x + 7.0F * scale, chip.y + 5.0F * scale) ||
+                !context.label(status, FontWeight::SemiBold, 7.0F,
+                    participant.alive ? ui::Theme::muted : ui::Theme::red,
+                    chip.x + 7.0F * scale, chip.y + 18.0F * scale) ||
+                !context.label(participant.subtitle, FontWeight::Regular, 5.5F,
+                    ui::Theme::muted, chip.x + 7.0F * scale,
+                    chip.y + 30.0F * scale)) return false;
+            if (participant.viewed) {
+                const std::string badge = participant.local ? "YOU" : "WATCHING";
+                if (!context.label(badge, FontWeight::Bold, 6.0F,
+                        ui::Theme::gold, chip.x + chip.w - 38.0F * scale,
+                        chip.y + 5.0F * scale)) return false;
+            }
+            chipX += chipWidth + gap;
+        }
+        hudX = matchX + stripWidth * scale + 16.0F * scale;
+    } else if (matchPlayers.size() == 1) {
         const PublicPlayerSlot& onlySlot = matchPlayers.front();
         const client::PublicPlayerProfile* profile =
             findProfile(session, onlySlot.player);
@@ -539,29 +575,6 @@ bool drawHeaderHud(
             versus.x + versus.w,
             versus.y + versus.h * 0.5F);
         hudX = p2Card.x + p2Card.w + 24.0F * scale;
-    } else {
-        const auto localSlot = std::find_if(matchPlayers.begin(), matchPlayers.end(),
-            [&](const PublicPlayerSlot& slot) {
-                return slot.player == session.viewContext().localPlayer;
-            });
-        const client::PublicPlayerProfile* local = localSlot == matchPlayers.end()
-            ? nullptr : findProfile(session, localSlot->player);
-        const SDL_FRect playerCard{
-            matchX + (playerCardHeight + playerCardGap) * scale,
-            top,
-            playerCardWidth * scale,
-            playerCardHeight * scale,
-        };
-        const std::string designation = "SANDBOX \xC2\xB7 " +
-            std::to_string(matchPlayers.size()) + " HUNTERS";
-        if (!drawPlayerCard(context, playerCard, designation,
-                local == nullptr ? "Local Hunter" : local->username,
-                localSlot == matchPlayers.end() ? std::string_view{} :
-                    session.participantSubtitle(localSlot->player),
-                local == nullptr ? nullptr : &local->callingCardId,
-                local == nullptr ? nullptr : &local->emblemId,
-                true, true)) return false;
-        hudX = playerCard.x + playerCard.w + 24.0F * scale;
     }
 
     const SDL_FRect roundBadge{hudX, top + 3.0F * scale, 54.0F * scale, 40.0F * scale};
@@ -1468,7 +1481,7 @@ bool drawLifecycleModal(
 
     geometry = {};
     const auto presentation = lifecycleModalPresentation(
-        snapshot, session.viewContext(), session.profiles());
+        snapshot, session.viewContext(), session.profiles(), session.matchMode());
     if (!presentation.has_value()) return true;
 
     geometry.blocking = true;

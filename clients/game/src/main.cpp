@@ -738,6 +738,17 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         return SDL_APP_CONTINUE;
     }
 
+    const basilisk::PlayerRoundSnapshot* snapshot = state == nullptr ||
+            state->session == nullptr
+        ? nullptr
+        : state->session->displayedSnapshot();
+    const bool lifecycleModalActive = snapshot != nullptr &&
+        basilisk::game::lifecycleModalPresentation(
+            *snapshot,
+            state->session->viewContext(),
+            state->session->profiles(),
+            state->session->matchMode()).has_value();
+
     if (state != nullptr && state->session != nullptr &&
         state->session->activeClash().has_value()) {
         (void)SDL_StartTextInput(state->window);
@@ -754,6 +765,14 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             }
         }
         return SDL_APP_CONTINUE;
+    }
+
+    if (lifecycleModalActive && state != nullptr) {
+        state->pauseMenu.close();
+#if defined(BASILISK_GAME_DEBUG)
+        state->debugInventoryMenu.close();
+        state->debugKillMenu.close();
+#endif
     }
 
     if (state != nullptr && state->pauseMenu.active()) {
@@ -794,7 +813,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 
 #if defined(BASILISK_GAME_DEBUG)
     if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
-        !event->key.repeat && event->key.key == SDLK_F1) {
+        !lifecycleModalActive && !event->key.repeat && event->key.key == SDLK_F1) {
         if (state->debugMapProvider == nullptr) {
             SDL_Log("Debug map reveal requires a local debug match");
         } else {
@@ -806,7 +825,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         return SDL_APP_CONTINUE;
     }
     if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
-        !event->key.repeat && event->key.key == SDLK_F2) {
+        !lifecycleModalActive && !event->key.repeat && event->key.key == SDLK_F2) {
         if (state->debugMapProvider == nullptr) {
             SDL_Log("Debug gameplay truth requires a local debug match");
         } else {
@@ -820,7 +839,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         return SDL_APP_CONTINUE;
     }
     if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
-        !event->key.repeat && event->key.key == SDLK_F3) {
+        !lifecycleModalActive && !event->key.repeat && event->key.key == SDLK_F3) {
         if (state->debugMapProvider == nullptr) {
             SDL_Log("Debug Basilisk behavior control requires a local debug match");
         } else if (!state->debugMapProvider->cycleBasiliskBehavior()) {
@@ -831,12 +850,15 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         return SDL_APP_CONTINUE;
     }
     if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
-        !event->key.repeat && event->key.key == SDLK_F4) {
+        !lifecycleModalActive && !event->key.repeat && event->key.key == SDLK_F4) {
         if (state->debugMapProvider == nullptr) {
             SDL_Log("Debug inventory requires a local debug match");
         } else {
             state->debugKillMenu.close();
-            state->debugInventoryMenu.toggle();
+            state->debugInventoryMenu.toggle(
+                state->debugMapProvider->participants(),
+                state->session != nullptr &&
+                    state->session->matchMode() == basilisk::client::MatchMode::Sandbox);
         }
         return SDL_APP_CONTINUE;
     }
@@ -852,10 +874,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 state->debugInventoryMenu.moveSelection(1);
             } else if (event->key.key == SDLK_RETURN ||
                        event->key.key == SDLK_KP_ENTER) {
-                const basilisk::ItemType item =
-                    state->debugInventoryMenu.selectedItem();
+                const auto grant = state->debugInventoryMenu.activate();
+                if (!grant.has_value()) return SDL_APP_CONTINUE;
                 if (state->debugMapProvider == nullptr ||
-                    !state->debugMapProvider->grantItem(item)) {
+                    !state->debugMapProvider->grantItem(
+                        grant->first, grant->second)) {
                     SDL_Log("Debug item grant failed (inventory may be full)");
                 } else {
                     SDL_Log("Debug item granted");
@@ -865,13 +888,13 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         return SDL_APP_CONTINUE;
     }
     if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
-        !event->key.repeat && event->key.key == SDLK_F5) {
+        !lifecycleModalActive && !event->key.repeat && event->key.key == SDLK_F5) {
         if (state->debugMapProvider == nullptr ||
             !state->debugMapProvider->killControlAvailable()) {
             SDL_Log("Debug kill control requires a Play AI debug match");
         } else {
             state->debugInventoryMenu.close();
-            state->debugKillMenu.toggle();
+            state->debugKillMenu.toggle(state->debugMapProvider->participants());
         }
         return SDL_APP_CONTINUE;
     }
@@ -887,7 +910,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                        event->key.key == SDLK_KP_ENTER) {
                 if (state->debugMapProvider == nullptr ||
                     !state->debugMapProvider->killPlayer(
-                        state->debugKillMenu.selectedTarget())) {
+                        state->debugKillMenu.selectedPlayer())) {
                     SDL_Log("Debug kill failed");
                 } else {
                     state->debugKillMenu.close();
@@ -982,16 +1005,6 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         }
     }
 
-    const basilisk::PlayerRoundSnapshot* snapshot = state == nullptr ||
-            state->session == nullptr
-        ? nullptr
-        : state->session->displayedSnapshot();
-    const bool lifecycleModalActive = snapshot != nullptr &&
-        basilisk::game::lifecycleModalPresentation(
-            *snapshot,
-            state->session->viewContext(),
-            state->session->profiles()).has_value();
-
     if (state != nullptr && event->type == SDL_EVENT_WINDOW_MOUSE_LEAVE) {
         state->hoveredActionIndex.reset();
         basilisk::game::updateMapHover(
@@ -1009,6 +1022,28 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 state->mapPresentation,
                 basilisk::game::MapHitTarget{});
             state->pauseMenu.open();
+        }
+        return SDL_APP_CONTINUE;
+    }
+
+    if (state != nullptr && state->session != nullptr && snapshot != nullptr &&
+        !lifecycleModalActive &&
+        state->session->viewContext().mode ==
+            basilisk::client::ClientViewMode::Spectating &&
+        state->session->matchMode() == basilisk::client::MatchMode::Sandbox &&
+        event->type == SDL_EVENT_KEY_DOWN && !event->key.repeat &&
+        (event->key.key == SDLK_LEFT || event->key.key == SDLK_UP ||
+         event->key.key == SDLK_RIGHT || event->key.key == SDLK_DOWN)) {
+        const int direction = event->key.key == SDLK_LEFT || event->key.key == SDLK_UP
+            ? -1 : 1;
+        if (state->session->cycleSpectatedPlayer(direction)) {
+            state->mapActionMenu.dismiss();
+            state->hoveredActionIndex.reset();
+            state->mapPresentation = {};
+            state->mapLayout = {};
+            SDL_Log("Sandbox now watching player %llu",
+                static_cast<unsigned long long>(
+                    state->session->viewContext().viewedPlayer));
         }
         return SDL_APP_CONTINUE;
     }
@@ -1491,6 +1526,23 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
           const basilisk::PlayerRoundSnapshot* snapshot = state->session == nullptr
               ? nullptr
               : state->session->displayedSnapshot();
+          const bool blockingLifecycle = snapshot != nullptr && state->session != nullptr &&
+              basilisk::game::lifecycleModalPresentation(
+                  *snapshot, state->session->viewContext(), state->session->profiles(),
+                  state->session->matchMode()).has_value();
+          if (state->session != nullptr && state->session->activeClash().has_value()) {
+              state->pauseMenu.close();
+#if defined(BASILISK_GAME_DEBUG)
+              state->debugInventoryMenu.close();
+              state->debugKillMenu.close();
+#endif
+          } else if (blockingLifecycle) {
+              state->pauseMenu.close();
+#if defined(BASILISK_GAME_DEBUG)
+              state->debugInventoryMenu.close();
+              state->debugKillMenu.close();
+#endif
+          }
           if (state->screenShellEnabled) {
             if (snapshot != nullptr && state->session != nullptr) {
                 state->actionSelection.synchronize(

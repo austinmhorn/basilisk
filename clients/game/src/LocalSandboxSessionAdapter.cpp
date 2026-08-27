@@ -166,18 +166,16 @@ public:
         publish({});
         return true;
     }
-    [[nodiscard]] bool grantItem(ItemType item) {
+    [[nodiscard]] bool grantItem(PlayerId target, ItemType item) {
         const auto player = std::find_if(state_.players.begin(), state_.players.end(),
-            [&](const PlayerState& candidate) { return candidate.id == human_; });
+            [&](const PlayerState& candidate) { return candidate.id == target; });
         if (player == state_.players.end() || !player->alive ||
             !player->inventory.add(ItemInstance{item},
                 state_.rules.maxInventoryItems)) return false;
         publish({});
         return true;
     }
-    [[nodiscard]] bool killPlayer(debug::DebugKillTarget target) {
-        const PlayerId victim = target == debug::DebugKillTarget::Host
-            ? human_ : agents_.front().player;
+    [[nodiscard]] bool killPlayer(PlayerId victim) {
         const auto player = std::find_if(state_.players.begin(), state_.players.end(),
             [&](const PlayerState& candidate) { return candidate.id == victim; });
         if (player == state_.players.end() || !player->alive ||
@@ -189,6 +187,16 @@ public:
         publish(coordinator_.authoritativeEvents());
         scheduleActions();
         return true;
+    }
+    [[nodiscard]] std::vector<debug::DebugParticipant> debugParticipants() const {
+        std::vector<debug::DebugParticipant> result;
+        result.reserve(state_.players.size());
+        for (std::size_t index = 0; index < state_.players.size(); ++index) {
+            const PlayerState& player = state_.players[index];
+            result.push_back({player.id, index == 0 ? "HOST" :
+                "AI " + std::to_string(index + 1), player.alive});
+        }
+        return result;
     }
 #endif
 
@@ -316,19 +324,30 @@ private:
         auto context = controller_->viewContext();
         const auto human = std::find_if(state_.players.begin(), state_.players.end(),
             [&](const PlayerState& player) { return player.id == human_; });
-        if (human == state_.players.end() || human->alive ||
-            context.mode != client::ClientViewMode::Playing) return;
-        std::optional<PlayerId> survivor;
+        if (human == state_.players.end() || human->alive) return;
+        std::vector<PlayerId> survivors;
         for (const PlayerState& player : state_.players) {
-            if (player.alive && player.id != human_) {
-                if (!survivor.has_value() || player.id < *survivor) survivor = player.id;
-            }
+            if (player.alive && player.id != human_) survivors.push_back(player.id);
         }
-        context.mode = client::ClientViewMode::Defeated;
-        context.viewedPlayer = human_;
-        context.spectatablePlayer = state_.result.status == MatchStatus::Active
-            ? survivor : std::nullopt;
-        controller_->setViewContext(context);
+        const std::optional<PlayerId> firstSurvivor = survivors.empty()
+            ? std::nullopt : std::optional<PlayerId>{survivors.front()};
+        if (context.mode == client::ClientViewMode::Playing) {
+            context.mode = client::ClientViewMode::Defeated;
+            context.viewedPlayer = human_;
+            context.spectatablePlayer = state_.result.status == MatchStatus::Active
+                ? firstSurvivor : std::nullopt;
+            controller_->setViewContext(context);
+            return;
+        }
+        if (context.mode == client::ClientViewMode::Spectating) {
+            const bool viewedAlive = std::find(
+                survivors.begin(), survivors.end(), context.viewedPlayer) != survivors.end();
+            if (!viewedAlive && firstSurvivor.has_value())
+                context.viewedPlayer = *firstSurvivor;
+            context.spectatablePlayer = state_.result.status == MatchStatus::Active
+                ? firstSurvivor : std::nullopt;
+            controller_->setViewContext(context);
+        }
     }
 
     void publish(const std::vector<GameEvent>& events) {
@@ -445,10 +464,11 @@ LocalSandboxSession LocalSandboxSessionAdapter::create(std::size_t hunterCount,
         [state](BasiliskBehavior next) {
             return state->forceBasiliskBehavior(next);
         },
-        [state](ItemType item) { return state->grantItem(item); },
-        [state](debug::DebugKillTarget target) {
-            return state->killPlayer(target);
-        });
+        [state](PlayerId player, ItemType item) {
+            return state->grantItem(player, item);
+        },
+        [state](PlayerId player) { return state->killPlayer(player); },
+        [state] { return state->debugParticipants(); });
 #endif
     return result;
 }

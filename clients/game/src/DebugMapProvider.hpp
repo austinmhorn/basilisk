@@ -70,6 +70,12 @@ struct DebugHunterLabel {
     std::string label;
 };
 
+struct DebugParticipant {
+    PlayerId player{};
+    std::string label;
+    bool alive{false};
+};
+
 [[nodiscard]] DebugMapTruth buildDebugMapTruth(
     const MatchState& state, const PlayerMapLayout& layout);
 [[nodiscard]] DebugGameplayTruth buildDebugGameplayTruth(
@@ -80,22 +86,27 @@ class DebugMapProvider {
 public:
     using GameplayTruthSource = std::function<DebugGameplayTruth()>;
     using BehaviorControlSource = std::function<bool(BasiliskBehavior)>;
-    using ItemGrantSource = std::function<bool(ItemType)>;
-    using KillPlayerSource = std::function<bool(DebugKillTarget)>;
+    using ParticipantSource = std::function<std::vector<DebugParticipant>()>;
+    using ItemGrantSource = std::function<bool(PlayerId, ItemType)>;
+    using KillPlayerSource = std::function<bool(PlayerId)>;
 
     DebugMapProvider(
         DebugMapTruth mapTruth,
         GameplayTruthSource gameplayTruthSource,
         BehaviorControlSource behaviorControlSource,
         ItemGrantSource itemGrantSource = {},
-        KillPlayerSource killPlayerSource = {});
+        KillPlayerSource killPlayerSource = {},
+        ParticipantSource participantSource = {});
 
     [[nodiscard]] const DebugMapTruth& mapTruth() const noexcept;
     [[nodiscard]] DebugGameplayTruth gameplayTruth() const;
     [[nodiscard]] bool cycleBasiliskBehavior();
     [[nodiscard]] bool grantItem(ItemType item);
+    [[nodiscard]] bool grantItem(PlayerId player, ItemType item);
     [[nodiscard]] bool killPlayer(DebugKillTarget target);
+    [[nodiscard]] bool killPlayer(PlayerId player);
     [[nodiscard]] bool killControlAvailable() const noexcept;
+    [[nodiscard]] std::vector<DebugParticipant> participants() const;
 
 private:
     DebugMapTruth mapTruth_;
@@ -103,6 +114,7 @@ private:
     BehaviorControlSource behaviorControlSource_;
     ItemGrantSource itemGrantSource_;
     KillPlayerSource killPlayerSource_;
+    ParticipantSource participantSource_;
 };
 
 class DebugMapRevealState {

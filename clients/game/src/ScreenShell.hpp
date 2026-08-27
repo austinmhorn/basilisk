@@ -13,6 +13,7 @@
 #include "MapActionMenu.hpp"
 #include "MapLayout.hpp"
 #include "MapPresentation.hpp"
+#include "SandboxPresentation.hpp"
 #include "SvgTextureManager.hpp"
 #include "TextRenderer.hpp"
 #include "basilisk/ClientSnapshot.hpp"
@@ -62,6 +63,7 @@ struct LifecycleModalGeometry {
     PresentationRect quitButton;
     bool blocking{false};
 };
+
 
 [[nodiscard]] std::optional<std::size_t> hitTestActionRow(
     const ActionPanelGeometry& geometry,

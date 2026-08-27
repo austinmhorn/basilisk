@@ -10,6 +10,7 @@
 #include "LocalGameSessionAdapter.hpp"
 #include "LocalAiGameSessionAdapter.hpp"
 #include "LocalSandboxSessionAdapter.hpp"
+#include "SandboxPresentation.hpp"
 #include "basilisk/MatchState.hpp"
 #include "basilisk/world/MapGenerator.hpp"
 #include "basilisk/systems/SigilPlacementSystem.hpp"
@@ -543,6 +544,68 @@ void sandboxDebugTruthLabelsEveryLivingHunter() {
         }));
 }
 
+void sandboxDebugMenusTargetEveryParticipantAndSpectatingCycles() {
+    auto sandbox = LocalSandboxSessionAdapter::create(5, MapSeed{9005},
+        MatchSeed{42001}, client::ai::AiDifficulty::Hard,
+        client::ai::AiBehavior::Random, client::ai::AiSeed{78});
+    assert(sandbox.session != nullptr && sandbox.mapProvider != nullptr);
+    const auto participants = sandbox.mapProvider->participants();
+    assert(participants.size() == 5);
+    assert(participants.front().label == "HOST");
+    for (std::size_t index = 1; index < participants.size(); ++index)
+        assert(participants[index].label == "AI " + std::to_string(index + 1));
+
+    DebugInventoryMenuState inventory;
+    inventory.toggle(participants, true);
+    assert(inventory.active() && inventory.selectingParticipant());
+    for (std::size_t index = 0; index < participants.size(); ++index) {
+        if (index != 0) inventory.moveSelection(1);
+        assert(inventory.selectedPlayer() == participants[index].player);
+    }
+    inventory.close();
+    for (const auto& participant : participants) {
+        assert(sandbox.mapProvider->grantItem(
+            participant.player, ItemType::HealingDraught));
+        const auto* snapshot = sandbox.session->snapshotFor(participant.player);
+        assert(snapshot != nullptr && std::ranges::find(snapshot->inventory.items,
+            ItemType::HealingDraught) != snapshot->inventory.items.end());
+    }
+
+    const PlayerId host = participants.front().player;
+    assert(sandbox.mapProvider->killPlayer(host));
+    assert(!sandbox.session->snapshotFor(host)->alive);
+    const auto stripAfterDeath = sandboxParticipantPresentation(*sandbox.session);
+    assert(stripAfterDeath.size() == participants.size());
+    assert(!stripAfterDeath.front().alive && stripAfterDeath.front().local);
+    assert(sandbox.session->viewContext().mode == client::ClientViewMode::Defeated);
+    assert(sandbox.session->watchRemainingHunter());
+    std::set<PlayerId> watched;
+    for (std::size_t index = 1; index < participants.size(); ++index) {
+        const PlayerId viewed = sandbox.session->viewContext().viewedPlayer;
+        watched.insert(viewed);
+        assert(sandbox.session->displayedSnapshot() ==
+            sandbox.session->snapshotFor(viewed));
+        assert(sandbox.session->cycleSpectatedPlayer(1));
+    }
+    assert(watched.size() == participants.size() - 1);
+
+    const PlayerId killedViewed = sandbox.session->viewContext().viewedPlayer;
+    assert(sandbox.mapProvider->killPlayer(killedViewed));
+    assert(!sandbox.session->snapshotFor(killedViewed)->alive);
+    assert(sandbox.session->viewContext().viewedPlayer != killedViewed);
+    assert(sandbox.session->displayedSnapshot()->alive);
+
+    DebugKillMenuState kill;
+    kill.toggle(sandbox.mapProvider->participants());
+    assert(kill.active() && kill.selectedPlayer() == host);
+    assert(!kill.participants().front().alive);
+    for (const auto& participant : participants) {
+        if (!sandbox.session->snapshotFor(participant.player)->alive) continue;
+        assert(sandbox.mapProvider->killPlayer(participant.player));
+        assert(!sandbox.session->snapshotFor(participant.player)->alive);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -562,5 +625,6 @@ int main() {
     sigilTruthTracksMapCarrierAndUnavailableStates();
     sigilTruthReportsAuthoritativeRelocation();
     sandboxDebugTruthLabelsEveryLivingHunter();
+    sandboxDebugMenusTargetEveryParticipantAndSpectatingCycles();
     return 0;
 }

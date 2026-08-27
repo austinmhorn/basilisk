@@ -60,6 +60,7 @@ public:
     void setActiveClash(std::optional<ActiveClash> clash);
     [[nodiscard]] bool submitClashResponse(std::string response);
     [[nodiscard]] bool watchRemainingHunter();
+    [[nodiscard]] bool cycleSpectatedPlayer(int direction);
     [[nodiscard]] bool quit();
 
 private:

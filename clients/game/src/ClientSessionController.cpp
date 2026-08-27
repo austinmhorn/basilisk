@@ -1,5 +1,6 @@
 #include "ClientSessionController.hpp"
 
+#include <algorithm>
 #include <utility>
 
 namespace basilisk::game {
@@ -136,6 +137,31 @@ bool ClientSessionController::watchRemainingHunter() {
         return false;
     }
     return beginSpectating(viewContext_);
+}
+
+bool ClientSessionController::cycleSpectatedPlayer(int direction) {
+    if (matchMode_ != client::MatchMode::Sandbox ||
+        viewContext_.mode != client::ClientViewMode::Spectating || direction == 0) {
+        return false;
+    }
+    std::vector<PlayerId> survivors;
+    for (const PublicPlayerSlot& slot : matchMetadata_.players) {
+        const PlayerRoundSnapshot* snapshot = snapshotFor(slot.player);
+        if (slot.player != viewContext_.localPlayer && snapshot != nullptr &&
+            snapshot->alive && snapshot->matchStatus == MatchStatus::Active) {
+            survivors.push_back(slot.player);
+        }
+    }
+    if (survivors.empty()) return false;
+    const auto current = std::find(
+        survivors.begin(), survivors.end(), viewContext_.viewedPlayer);
+    const std::size_t index = current == survivors.end()
+        ? 0U : static_cast<std::size_t>(current - survivors.begin());
+    const int count = static_cast<int>(survivors.size());
+    const int next = (static_cast<int>(index) + (direction < 0 ? -1 : 1) + count) % count;
+    viewContext_.viewedPlayer = survivors[static_cast<std::size_t>(next)];
+    viewContext_.spectatablePlayer = viewContext_.viewedPlayer;
+    return true;
 }
 
 bool ClientSessionController::quit() {

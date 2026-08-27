@@ -166,6 +166,17 @@ public:
         publish({});
         return true;
     }
+    [[nodiscard]] std::vector<debug::DebugParticipant> debugParticipants() const {
+        std::vector<debug::DebugParticipant> result;
+        for (const auto [player, label] :
+             {std::pair{human_, std::string{"HOST"}},
+              std::pair{ai_, std::string{"AI"}}}) {
+            const auto state = std::find_if(state_.players.begin(), state_.players.end(),
+                [&](const PlayerState& candidate) { return candidate.id == player; });
+            result.push_back({player, label, state != state_.players.end() && state->alive});
+        }
+        return result;
+    }
     [[nodiscard]] bool killPlayer(debug::DebugKillTarget target) {
         const PlayerId victim = target == debug::DebugKillTarget::Host ? human_ : ai_;
         const auto player = std::find_if(state_.players.begin(), state_.players.end(),
@@ -359,8 +370,15 @@ LocalAiSession LocalAiGameSessionAdapter::create(MapSeed mapSeed, MatchSeed matc
         [state](BasiliskBehavior next) {
             return state->forceBasiliskBehavior(next);
         },
-        [state](ItemType item) { return state->grantItem(item); },
-        [state](debug::DebugKillTarget target) { return state->killPlayer(target); });
+        [state, human](PlayerId player, ItemType item) {
+            return player == human && state->grantItem(item);
+        },
+        [state, human, ai](PlayerId player) {
+            if (player == human) return state->killPlayer(debug::DebugKillTarget::Host);
+            if (player == ai) return state->killPlayer(debug::DebugKillTarget::Ai);
+            return false;
+        },
+        [state] { return state->debugParticipants(); });
 #endif
     return result;
 }

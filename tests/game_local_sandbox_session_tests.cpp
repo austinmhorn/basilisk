@@ -4,6 +4,7 @@
 #include <set>
 
 #include "LocalSandboxSessionAdapter.hpp"
+#include "SandboxPresentation.hpp"
 #include "basilisk/client/MatchMode.hpp"
 
 using namespace basilisk;
@@ -63,6 +64,16 @@ int main() {
         for (const PublicPlayerSlot& slot : local.session->matchMetadata().players) {
             assert(players.insert(slot.player).second);
             assert(local.session->snapshotFor(slot.player) != nullptr);
+        }
+        const auto strip = sandboxParticipantPresentation(*local.session);
+        assert(strip.size() == hunterCount);
+        assert(strip.front().label == "HOST");
+        assert(strip.front().local && strip.front().viewed && strip.front().alive);
+        for (std::size_t index = 1; index < strip.size(); ++index) {
+            assert(strip[index].label == "BASILISK AI " + std::to_string(index + 1));
+            assert(!strip[index].subtitle.empty());
+            assert(strip[index].subtitle.find("Random") == std::string::npos);
+            assert(!strip[index].local && strip[index].alive);
         }
         const PlayerId human = local.session->viewContext().localPlayer;
         const PlayerRoundSnapshot before = *local.session->snapshotFor(human);

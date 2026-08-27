@@ -74,12 +74,14 @@ DebugMapProvider::DebugMapProvider(
     GameplayTruthSource gameplayTruthSource,
     BehaviorControlSource behaviorControlSource,
     ItemGrantSource itemGrantSource,
-    KillPlayerSource killPlayerSource)
+    KillPlayerSource killPlayerSource,
+    ParticipantSource participantSource)
     : mapTruth_(std::move(mapTruth)),
       gameplayTruthSource_(std::move(gameplayTruthSource)),
       behaviorControlSource_(std::move(behaviorControlSource)),
       itemGrantSource_(std::move(itemGrantSource)),
-      killPlayerSource_(std::move(killPlayerSource)) {}
+      killPlayerSource_(std::move(killPlayerSource)),
+      participantSource_(std::move(participantSource)) {}
 
 const DebugMapTruth& DebugMapProvider::mapTruth() const noexcept {
     return mapTruth_;
@@ -106,15 +108,36 @@ bool DebugMapProvider::cycleBasiliskBehavior() {
 }
 
 bool DebugMapProvider::grantItem(ItemType item) {
-    return itemGrantSource_ != nullptr && itemGrantSource_(item);
+    const auto roster = participants();
+    return !roster.empty() && grantItem(roster.front().player, item);
+}
+
+bool DebugMapProvider::grantItem(PlayerId player, ItemType item) {
+    return itemGrantSource_ != nullptr && itemGrantSource_(player, item);
 }
 
 bool DebugMapProvider::killPlayer(DebugKillTarget target) {
-    return killPlayerSource_ != nullptr && killPlayerSource_(target);
+    const auto roster = participants();
+    if (roster.empty()) return false;
+    const auto selected = target == DebugKillTarget::Host
+        ? roster.begin()
+        : std::find_if(std::next(roster.begin()), roster.end(),
+            [](const DebugParticipant&) { return true; });
+    return selected != roster.end() && killPlayer(selected->player);
+}
+
+bool DebugMapProvider::killPlayer(PlayerId player) {
+    return killPlayerSource_ != nullptr && killPlayerSource_(player);
 }
 
 bool DebugMapProvider::killControlAvailable() const noexcept {
     return killPlayerSource_ != nullptr;
+}
+
+std::vector<DebugParticipant> DebugMapProvider::participants() const {
+    return participantSource_ == nullptr
+        ? std::vector<DebugParticipant>{}
+        : participantSource_();
 }
 
 void DebugMapRevealState::toggle() noexcept {

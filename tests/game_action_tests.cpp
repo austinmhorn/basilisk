@@ -507,6 +507,29 @@ void finalDeathOffersQuitOnly() {
     assert(!beginSpectating(view));
 }
 
+void sandboxLifecycleCopyIsParticipantNeutral() {
+    PlayerRoundSnapshot snapshot;
+    snapshot.player = PlayerId{1};
+    snapshot.alive = false;
+    snapshot.matchStatus = MatchStatus::Active;
+    client::ClientViewContext view{PlayerId{1}, PlayerId{1},
+        client::ClientViewMode::Defeated, PlayerId{2}};
+    const auto firstDeath = lifecycleModalPresentation(
+        snapshot, view, demoProfiles(), client::MatchMode::Sandbox);
+    assert(firstDeath.has_value());
+    assert(firstDeath->detail == "Surviving hunters continue the hunt.");
+
+    snapshot.alive = true;
+    snapshot.matchStatus = MatchStatus::Completed;
+    snapshot.matchOutcome = MatchOutcome::SimultaneousBasiliskKill;
+    view.mode = client::ClientViewMode::Spectating;
+    view.viewedPlayer = PlayerId{2};
+    const auto terminal = lifecycleModalPresentation(
+        snapshot, view, demoProfiles(), client::MatchMode::Sandbox);
+    assert(terminal.has_value());
+    assert(terminal->detail.starts_with("Multiple hunters"));
+}
+
 void spectatorTerminalResultUsesPublicWinnerProfile() {
     PlayerRoundSnapshot snapshot;
     snapshot.player = PlayerId{2};
@@ -1071,6 +1094,7 @@ int main() {
     rivalReconnectStatusFollowsPlayerSafeObservations();
     firstDeathCanTransitionToViewOnlySpectating();
     finalDeathOffersQuitOnly();
+    sandboxLifecycleCopyIsParticipantNeutral();
     spectatorTerminalResultUsesPublicWinnerProfile();
     controllerOwnsMetadataAndSelectsNewestLocalSnapshot();
     controllerHandlesMissingSpectatorSnapshotSafely();

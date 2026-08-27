@@ -13,9 +13,16 @@ void setColor(SDL_Renderer* renderer, SDL_Color color) {
 } // namespace
 
 void DebugKillMenuState::toggle() noexcept { active_ = !active_; }
+void DebugKillMenuState::toggle(std::vector<DebugParticipant> participants) {
+    active_ = !active_;
+    participants_ = std::move(participants);
+    selected_ = 0;
+}
 void DebugKillMenuState::close() noexcept { active_ = false; }
 void DebugKillMenuState::moveSelection(int direction) noexcept {
-    const int count = static_cast<int>(kTargets.size());
+    const int count = static_cast<int>(
+        participants_.empty() ? kTargets.size() : participants_.size());
+    if (count == 0) return;
     selected_ = static_cast<std::size_t>(
         (static_cast<int>(selected_) + direction + count) % count);
 }
@@ -23,6 +30,12 @@ bool DebugKillMenuState::active() const noexcept { return active_; }
 std::size_t DebugKillMenuState::selectedIndex() const noexcept { return selected_; }
 DebugKillTarget DebugKillMenuState::selectedTarget() const noexcept {
     return kTargets[selected_];
+}
+PlayerId DebugKillMenuState::selectedPlayer() const noexcept {
+    return participants_.empty() ? PlayerId{} : participants_[selected_].player;
+}
+const std::vector<DebugParticipant>& DebugKillMenuState::participants() const noexcept {
+    return participants_;
 }
 
 bool renderDebugKillMenu(
@@ -43,7 +56,9 @@ bool renderDebugKillMenu(
     SDL_RenderFillRect(renderer, &overlay);
     const float width = 430.0F * scale;
     const float rowHeight = 42.0F * scale;
-    const float height = (92.0F + 42.0F * kTargets.size()) * scale;
+    const std::size_t rowCount = menu.participants().empty()
+        ? kTargets.size() : menu.participants().size();
+    const float height = (92.0F + 42.0F * rowCount) * scale;
     const SDL_FRect panel{(outputWidth - width) * 0.5F,
         (outputHeight - height) * 0.5F, width, height};
     setColor(renderer, SDL_Color{15, 22, 29, 250});
@@ -53,7 +68,7 @@ bool renderDebugKillMenu(
     if (!textRenderer.drawText("DEBUG KILL", FontWeight::Bold, 18.0F * scale,
             SDL_Color{225, 78, 86, 255},
             {panel.x + 24.0F * scale, panel.y + 20.0F * scale}, error)) return false;
-    for (std::size_t index = 0; index < kTargets.size(); ++index) {
+    for (std::size_t index = 0; index < rowCount; ++index) {
         const SDL_FRect row{panel.x + 18.0F * scale,
             panel.y + 64.0F * scale + rowHeight * index,
             panel.w - 36.0F * scale, rowHeight - 5.0F * scale};
@@ -63,7 +78,11 @@ bool renderDebugKillMenu(
             setColor(renderer, SDL_Color{225, 78, 86, 255});
             SDL_RenderRect(renderer, &row);
         }
-        if (!textRenderer.drawText(std::to_string(index + 1) + "  " + kLabels[index],
+        const std::string label = menu.participants().empty()
+            ? std::string{kLabels[index]}
+            : "KILL " + menu.participants()[index].label +
+                (menu.participants()[index].alive ? "" : " · DEAD");
+        if (!textRenderer.drawText(std::to_string(index + 1) + "  " + label,
                 FontWeight::SemiBold, 13.0F * scale,
                 SDL_Color{229, 234, 238, 255},
                 {row.x + 14.0F * scale, row.y + 9.0F * scale}, error)) return false;
