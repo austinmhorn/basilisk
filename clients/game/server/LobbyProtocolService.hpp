@@ -25,6 +25,9 @@ public:
         std::span<const std::uint8_t> request,
         std::vector<LobbyProtocolDelivery>& deliveries,
         std::string& error);
+    void disconnect(
+        const AccountIdentity& authenticatedAccount,
+        std::vector<LobbyProtocolDelivery>& deliveries);
 
 private:
     LobbyCoordinator& coordinator_;

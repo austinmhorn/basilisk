@@ -34,7 +34,11 @@ struct SandboxSessionConfig {
     ai::AiSeed aiSeed{77};
 };
 
-enum class SandboxLobbySlotKind { Host, EmptyHuman, Ai };
+enum class SandboxLobbySlotKind : std::uint8_t {
+    Host = 0,
+    EmptyHuman = 1,
+    Ai = 2,
+};
 
 struct SandboxLobbySlot {
     std::size_t slot{};

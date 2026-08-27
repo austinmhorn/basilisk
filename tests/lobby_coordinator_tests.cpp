@@ -88,4 +88,63 @@ int main() {
     assert(network::decodeLobbyResponse(deliveries[1].bytes, response, error));
     assert(std::get<network::LobbyMatchAssigned>(response.payload).role ==
            network::LobbyAssignmentRole::Guest);
+
+    const AccountIdentity third{"account-third"};
+    const AccountIdentity fourth{"account-fourth"};
+    const AccountIdentity fifth{"account-fifth"};
+    auto sandboxConfig = basilisk::client::defaultSandboxSessionConfig(4);
+    sandboxConfig.humanPlayerCount = 3;
+    assert(network::encodeWire(network::LobbyRequest{
+        network::kProtocolVersion,
+        network::HostSandboxLobbyRequest{sandboxConfig}}, request, error));
+    assert(protocol.process(host, request, deliveries, error));
+    assert(deliveries.size() == 1);
+    assert(network::decodeLobbyResponse(deliveries[0].bytes, response, error));
+    const auto hostedSandbox =
+        std::get<network::SandboxLobbyUpdated>(response.payload);
+    assert(hostedSandbox.lobbyCode == "SBX-NET123");
+    assert(hostedSandbox.slots.size() == 4);
+    assert(hostedSandbox.slots[0].occupied);
+    assert(!hostedSandbox.slots[1].occupied);
+    assert(hostedSandbox.slots[3].kind ==
+        basilisk::client::SandboxLobbySlotKind::Ai);
+
+    // Standard and Sandbox code namespaces are enforced by request type.
+    assert(network::encodeWire(network::LobbyRequest{
+        network::kProtocolVersion,
+        network::JoinLobbyRequest{hostedSandbox.lobbyCode}}, request, error));
+    assert(protocol.process(third, request, deliveries, error));
+    assert(network::decodeLobbyResponse(deliveries[0].bytes, response, error));
+    assert(std::holds_alternative<network::LobbyFailure>(response.payload));
+    assert(network::encodeWire(network::LobbyRequest{
+        network::kProtocolVersion,
+        network::JoinSandboxLobbyRequest{"NET123"}}, request, error));
+    assert(protocol.process(third, request, deliveries, error));
+    assert(network::decodeLobbyResponse(deliveries[0].bytes, response, error));
+    assert(std::holds_alternative<network::LobbyFailure>(response.payload));
+
+    assert(network::encodeWire(network::LobbyRequest{
+        network::kProtocolVersion,
+        network::JoinSandboxLobbyRequest{hostedSandbox.lobbyCode}}, request, error));
+    assert(protocol.process(third, request, deliveries, error));
+    assert(deliveries.size() == 2);
+    assert(protocol.process(fourth, request, deliveries, error));
+    assert(deliveries.size() == 3);
+    assert(protocol.process(fifth, request, deliveries, error));
+    assert(deliveries.size() == 1);
+    assert(network::decodeLobbyResponse(deliveries[0].bytes, response, error));
+    assert(std::holds_alternative<network::LobbyFailure>(response.payload));
+
+    std::vector<LobbyProtocolDelivery> disconnectDeliveries;
+    protocol.disconnect(third, disconnectDeliveries);
+    assert(disconnectDeliveries.size() == 2);
+    assert(network::decodeLobbyResponse(
+        disconnectDeliveries[0].bytes, response, error));
+    assert(!std::get<network::SandboxLobbyUpdated>(response.payload)
+        .slots[1].occupied);
+    protocol.disconnect(host, disconnectDeliveries);
+    assert(!disconnectDeliveries.empty());
+    assert(network::decodeLobbyResponse(
+        disconnectDeliveries[0].bytes, response, error));
+    assert(std::holds_alternative<network::SandboxLobbyClosed>(response.payload));
 }

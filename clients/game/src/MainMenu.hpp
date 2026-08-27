@@ -4,7 +4,9 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <vector>
 
+#include "NetworkProtocol.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
 #include "basilisk/client/AccountCosmetics.hpp"
 #include "basilisk/client/SandboxConfiguration.hpp"
@@ -19,8 +21,10 @@ enum class MainMenuPage {
     OnlineStandard,
     PlayAi,
     AiStandard,
+    OnlineSandbox,
     Sandbox,
     SandboxLobby,
+    JoinSandboxLobby,
     Leaderboards,
     Settings,
     Cosmetics,
@@ -38,6 +42,8 @@ enum class MainMenuAction {
     SandboxOnline,
     StandardAi,
     SandboxAi,
+    HostSandboxGame,
+    JoinSandboxGame,
     CycleAiDifficulty,
     CycleAiBehavior,
     StartAiGame,
@@ -79,6 +85,9 @@ enum class MainMenuResult {
     RequestCancelLobby,
     RequestFindMatch,
     RequestCancelFindMatch,
+    RequestHostSandboxLobby,
+    RequestJoinSandboxLobby,
+    RequestLeaveSandboxLobby,
     Logout,
     RequestPlayOnline,
     StartAiGame,
@@ -107,6 +116,8 @@ public:
     [[nodiscard]] client::ai::AiDifficulty sandboxDifficulty() const noexcept;
     [[nodiscard]] client::ai::AiBehavior sandboxBehavior() const noexcept;
     [[nodiscard]] SandboxEntryMode sandboxEntryMode() const noexcept;
+    [[nodiscard]] const std::vector<network::SandboxLobbySlotView>&
+        sandboxLobbyRoster() const noexcept;
     void openOnline() noexcept;
 
     void select(std::size_t index) noexcept;
@@ -128,6 +139,8 @@ public:
     void applyConfirmedCosmeticLoadout(
         const client::AccountCosmeticLoadout& loadout);
     void setSandboxConfig(client::SandboxSessionConfig config);
+    void sandboxLobbyUpdated(network::SandboxLobbyUpdated update);
+    void sandboxLobbyClosed(std::string message);
 
 private:
     void setPage(MainMenuPage page) noexcept;
@@ -146,6 +159,7 @@ private:
     client::SandboxSessionConfig sandboxConfig_ = client::defaultSandboxSessionConfig();
     SandboxEntryMode sandboxEntryMode_{SandboxEntryMode::Ai};
     std::string sandboxValidationError_;
+    std::vector<network::SandboxLobbySlotView> sandboxLobbyRoster_;
 };
 
 } // namespace basilisk::game

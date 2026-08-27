@@ -36,6 +36,15 @@ constexpr std::array aiActions{
     MainMenuAction::SandboxAi,
     MainMenuAction::Back,
 };
+constexpr std::array onlineSandboxActions{
+    MainMenuAction::HostSandboxGame,
+    MainMenuAction::JoinSandboxGame,
+    MainMenuAction::Back,
+};
+constexpr std::array joinSandboxLobbyActions{
+    MainMenuAction::SubmitLobbyCode,
+    MainMenuAction::Back,
+};
 constexpr std::array aiStandardActions{
     MainMenuAction::CycleAiDifficulty,
     MainMenuAction::CycleAiBehavior,
@@ -71,6 +80,7 @@ constexpr std::array sandboxLobbyActions{
     MainMenuAction::LaunchSandbox,
     MainMenuAction::Back,
 };
+constexpr std::array onlineSandboxLobbyActions{MainMenuAction::Back};
 constexpr std::array leaderboardActions{
     MainMenuAction::PreviousPage,
     MainMenuAction::NextPage,
@@ -98,10 +108,15 @@ std::span<const MainMenuAction> MainMenuState::actions() const noexcept {
         case MainMenuPage::OnlineStandard: return onlineStandardActions;
         case MainMenuPage::PlayAi: return aiActions;
         case MainMenuPage::AiStandard: return aiStandardActions;
+        case MainMenuPage::OnlineSandbox: return onlineSandboxActions;
         case MainMenuPage::Sandbox: return sandboxEntryMode_ == SandboxEntryMode::Online
             ? std::span<const MainMenuAction>{sandboxActions}
             : std::span<const MainMenuAction>{sandboxAiActions};
-        case MainMenuPage::SandboxLobby: return sandboxLobbyActions;
+        case MainMenuPage::SandboxLobby: return sandboxEntryMode_ ==
+                SandboxEntryMode::Online
+            ? std::span<const MainMenuAction>{onlineSandboxLobbyActions}
+            : std::span<const MainMenuAction>{sandboxLobbyActions};
+        case MainMenuPage::JoinSandboxLobby: return joinSandboxLobbyActions;
         case MainMenuPage::Leaderboards: return leaderboardActions;
         case MainMenuPage::Settings: return settingsActions;
         case MainMenuPage::Cosmetics: return cosmeticsActions;
@@ -153,6 +168,8 @@ client::ai::AiBehavior MainMenuState::sandboxBehavior() const noexcept {
 SandboxEntryMode MainMenuState::sandboxEntryMode() const noexcept {
     return sandboxEntryMode_;
 }
+const std::vector<network::SandboxLobbySlotView>&
+MainMenuState::sandboxLobbyRoster() const noexcept { return sandboxLobbyRoster_; }
 void MainMenuState::openOnline() noexcept { setPage(MainMenuPage::PlayOnline); }
 
 void MainMenuState::select(std::size_t index) noexcept {
@@ -279,7 +296,19 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
             sandboxEntryMode_ = SandboxEntryMode::Online;
             sandboxConfig_.humanPlayerCount = std::max<std::size_t>(
                 2, sandboxConfig_.humanPlayerCount);
+            setPage(MainMenuPage::OnlineSandbox);
+            break;
+        case MainMenuAction::HostSandboxGame:
+            sandboxEntryMode_ = SandboxEntryMode::Online;
+            sandboxConfig_.humanPlayerCount = std::max<std::size_t>(
+                2, sandboxConfig_.humanPlayerCount);
             setPage(MainMenuPage::Sandbox);
+            break;
+        case MainMenuAction::JoinSandboxGame:
+            lobbyCode_.clear();
+            lobbyError_.clear();
+            lobbyWaiting_ = false;
+            setPage(MainMenuPage::JoinSandboxLobby);
             break;
         case MainMenuAction::StandardAi:
             setPage(MainMenuPage::AiStandard);
@@ -336,8 +365,9 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
                 break;
             }
             sandboxValidationError_.clear();
-            setPage(MainMenuPage::SandboxLobby);
-            break;
+            lobbyWaiting_ = true;
+            lobbyError_.clear();
+            return MainMenuResult::RequestHostSandboxLobby;
         case MainMenuAction::LaunchSandbox:
             if (sandboxEntryMode_ == SandboxEntryMode::Online) {
                 sandboxValidationError_ = "Waiting for human players.";
@@ -366,12 +396,17 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
             if (page_ == MainMenuPage::FindMatch && lobbyWaiting_)
                 return MainMenuResult::RequestCancelFindMatch;
             if (page_ == MainMenuPage::SandboxLobby) {
-                setPage(MainMenuPage::Sandbox);
-                break;
+                return MainMenuResult::RequestLeaveSandboxLobby;
             }
             if (page_ == MainMenuPage::Sandbox) {
                 setPage(sandboxEntryMode_ == SandboxEntryMode::Online
-                    ? MainMenuPage::PlayOnline : MainMenuPage::PlayAi);
+                    ? MainMenuPage::OnlineSandbox : MainMenuPage::PlayAi);
+                break;
+            }
+            if (page_ == MainMenuPage::OnlineSandbox ||
+                page_ == MainMenuPage::JoinSandboxLobby) {
+                setPage(page_ == MainMenuPage::JoinSandboxLobby
+                    ? MainMenuPage::OnlineSandbox : MainMenuPage::PlayOnline);
                 break;
             }
             if (page_ == MainMenuPage::OnlineStandard) {
@@ -423,7 +458,9 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
             }
             lobbyWaiting_ = true;
             lobbyError_.clear();
-            return MainMenuResult::RequestJoinLobby;
+            return page_ == MainMenuPage::JoinSandboxLobby
+                ? MainMenuResult::RequestJoinSandboxLobby
+                : MainMenuResult::RequestJoinLobby;
         case MainMenuAction::CancelLobby:
             return MainMenuResult::RequestCancelLobby;
         case MainMenuAction::CancelFindMatch:
@@ -438,10 +475,14 @@ MainMenuResult MainMenuState::back() noexcept {
     if (page_ == MainMenuPage::FindMatch && lobbyWaiting_)
         return MainMenuResult::RequestCancelFindMatch;
     if (page_ == MainMenuPage::SandboxLobby) {
-        setPage(MainMenuPage::Sandbox);
+        return MainMenuResult::RequestLeaveSandboxLobby;
     } else if (page_ == MainMenuPage::Sandbox) {
         setPage(sandboxEntryMode_ == SandboxEntryMode::Online
-            ? MainMenuPage::PlayOnline : MainMenuPage::PlayAi);
+            ? MainMenuPage::OnlineSandbox : MainMenuPage::PlayAi);
+    } else if (page_ == MainMenuPage::OnlineSandbox ||
+               page_ == MainMenuPage::JoinSandboxLobby) {
+        setPage(page_ == MainMenuPage::JoinSandboxLobby
+            ? MainMenuPage::OnlineSandbox : MainMenuPage::PlayOnline);
     } else if (page_ == MainMenuPage::OnlineStandard) {
         setPage(MainMenuPage::PlayOnline);
     } else if (page_ == MainMenuPage::AiStandard) {
@@ -458,16 +499,37 @@ MainMenuResult MainMenuState::back() noexcept {
 }
 
 void MainMenuState::appendLobbyCode(std::string_view text) {
-    if (page_ != MainMenuPage::JoinLobby || lobbyWaiting_) return;
+    if ((page_ != MainMenuPage::JoinLobby &&
+         page_ != MainMenuPage::JoinSandboxLobby) || lobbyWaiting_) return;
     for (unsigned char value : text) {
         if (lobbyCode_.size() >= 12) break;
-        if (std::isalnum(value) != 0)
+        if (std::isalnum(value) != 0 ||
+            (page_ == MainMenuPage::JoinSandboxLobby && value == '-'))
             lobbyCode_.push_back(static_cast<char>(std::toupper(value)));
     }
 }
 void MainMenuState::eraseLobbyCode() {
-    if (page_ == MainMenuPage::JoinLobby && !lobbyWaiting_ && !lobbyCode_.empty())
+    if ((page_ == MainMenuPage::JoinLobby ||
+         page_ == MainMenuPage::JoinSandboxLobby) &&
+        !lobbyWaiting_ && !lobbyCode_.empty())
         lobbyCode_.pop_back();
+}
+
+void MainMenuState::sandboxLobbyUpdated(network::SandboxLobbyUpdated update) {
+    lobbyCode_ = std::move(update.lobbyCode);
+    sandboxConfig_ = update.config;
+    sandboxLobbyRoster_ = std::move(update.slots);
+    lobbyWaiting_ = false;
+    lobbyError_.clear();
+    setPage(MainMenuPage::SandboxLobby);
+}
+
+void MainMenuState::sandboxLobbyClosed(std::string message) {
+    sandboxLobbyRoster_.clear();
+    lobbyCode_.clear();
+    lobbyWaiting_ = false;
+    lobbyError_ = std::move(message);
+    setPage(MainMenuPage::OnlineSandbox);
 }
 void MainMenuState::lobbyHosted(std::string code) {
     lobbyCode_ = std::move(code);

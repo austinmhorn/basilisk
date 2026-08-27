@@ -263,6 +263,8 @@ std::string_view actionLabel(MainMenuAction action) {
         case MainMenuAction::SandboxOnline: return "SANDBOX";
         case MainMenuAction::StandardAi: return "STANDARD";
         case MainMenuAction::SandboxAi: return "SANDBOX";
+        case MainMenuAction::HostSandboxGame: return "HOST SANDBOX GAME";
+        case MainMenuAction::JoinSandboxGame: return "JOIN SANDBOX GAME";
         case MainMenuAction::CycleAiDifficulty: return "DIFFICULTY";
         case MainMenuAction::CycleAiBehavior: return "BEHAVIOR";
         case MainMenuAction::StartAiGame: return "START MATCH";
@@ -303,8 +305,10 @@ std::string_view pageTitle(MainMenuPage page) {
         case MainMenuPage::OnlineStandard: return "STANDARD ONLINE";
         case MainMenuPage::PlayAi: return "PLAY AI";
         case MainMenuPage::AiStandard: return "PLAY AI";
+        case MainMenuPage::OnlineSandbox: return "ONLINE SANDBOX";
         case MainMenuPage::Sandbox: return "SANDBOX";
         case MainMenuPage::SandboxLobby: return "SANDBOX LOBBY";
+        case MainMenuPage::JoinSandboxLobby: return "JOIN SANDBOX GAME";
         case MainMenuPage::Leaderboards: return "TROPHY LEADERBOARD";
         case MainMenuPage::Settings: return "SETTINGS";
         case MainMenuPage::Cosmetics: return "COSMETICS";
@@ -515,6 +519,11 @@ bool renderMainMenu(
                 FontWeight::Regular, static_cast<float>(11.0 * scale),
                 ui::Theme::mutedBright, left, buttonY, error)) return false;
         buttonY += 44.0 * scale;
+    } else if (menu.page() == MainMenuPage::OnlineSandbox) {
+        if (!label(text, "Host or join an authenticated Sandbox lobby.",
+                FontWeight::Regular, static_cast<float>(11.0 * scale),
+                ui::Theme::mutedBright, left, buttonY, error)) return false;
+        buttonY += 44.0 * scale;
     } else if (menu.page() == MainMenuPage::Sandbox) {
         const std::string_view subtitle = menu.sandboxEntryMode() ==
                 SandboxEntryMode::Online
@@ -529,26 +538,35 @@ bool renderMainMenu(
                 static_cast<float>(9.0 * scale), ui::Theme::red,
                 left, shell.y + shell.height - 24.0 * scale, error)) return false;
     } else if (menu.page() == MainMenuPage::SandboxLobby) {
-        const auto slots = client::sandboxLobbySlots(menu.sandboxConfig());
+        const auto fallbackSlots = client::sandboxLobbySlots(menu.sandboxConfig());
         if (!label(text, "PARTICIPANTS", FontWeight::SemiBold,
                 static_cast<float>(10.0 * scale), ui::Theme::muted,
                 left, buttonY, error)) return false;
         buttonY += 28.0 * scale;
-        for (const auto& slot : slots) {
+        const auto& authoritative = menu.sandboxLobbyRoster();
+        for (std::size_t index = 0; index < menu.sandboxConfig().hunterCount; ++index) {
+            const auto fallback = fallbackSlots[index];
+            const auto kind = authoritative.empty() ? fallback.kind :
+                authoritative[index].kind;
+            const bool occupied = authoritative.empty()
+                ? kind != client::SandboxLobbySlotKind::EmptyHuman
+                : authoritative[index].occupied;
+            const std::size_t slotNumber = index + 1;
             const PresentationRect row{left, buttonY, 640.0 * scale, 42.0 * scale};
             roundedPanel(renderer, row, 8.0 * scale, ui::Theme::surfaceRaised,
                 ui::Theme::borderSoft);
             std::string slotName;
             std::string detail;
-            if (slot.kind == client::SandboxLobbySlotKind::Host) {
+            if (kind == client::SandboxLobbySlotKind::Host) {
                 slotName = "1.  HOST";
-                detail = "LOCAL PLAYER";
-            } else if (slot.kind == client::SandboxLobbySlotKind::EmptyHuman) {
-                slotName = std::to_string(slot.slot) + ".  EMPTY HUMAN SLOT";
-                detail = "WAITING FOR PLAYER";
+                detail = occupied ? "CONNECTED" : "DISCONNECTED";
+            } else if (kind == client::SandboxLobbySlotKind::EmptyHuman) {
+                slotName = std::to_string(slotNumber) + ".  " +
+                    (occupied ? "HUMAN PLAYER" : "EMPTY HUMAN SLOT");
+                detail = occupied ? "CONNECTED" : "WAITING FOR PLAYER";
             } else {
-                slotName = std::to_string(slot.slot) + ".  BASILISK AI " +
-                    std::to_string(slot.slot);
+                slotName = std::to_string(slotNumber) + ".  BASILISK AI " +
+                    std::to_string(slotNumber);
                 detail = std::string{client::ai::difficultyName(
                     menu.sandboxDifficulty())} + " · " +
                     client::ai::behaviorName(menu.sandboxBehavior());
@@ -562,7 +580,7 @@ bool renderMainMenu(
             buttonY += 49.0 * scale;
         }
         if (menu.sandboxConfig().humanPlayerCount > 1) {
-            if (!label(text, "Waiting for human players — online joining is coming soon.",
+            if (!label(text, "Waiting for human players...",
                     FontWeight::Medium, static_cast<float>(10.0 * scale),
                     ui::Theme::gold, left, buttonY + 8.0 * scale, error)) return false;
         } else if (!label(text, "All slots are ready.", FontWeight::Medium,
@@ -682,7 +700,8 @@ bool renderMainMenu(
                 static_cast<float>(13.0 * scale), ui::Theme::mutedBright,
                 left, buttonY, error)) return false;
         buttonY += 140.0 * scale;
-    } else if (menu.page() == MainMenuPage::JoinLobby) {
+    } else if (menu.page() == MainMenuPage::JoinLobby ||
+               menu.page() == MainMenuPage::JoinSandboxLobby) {
         if (!label(text, "LOBBY CODE", FontWeight::SemiBold,
                 static_cast<float>(10.0 * scale), ui::Theme::muted,
                 left, buttonY, error)) return false;
@@ -727,14 +746,17 @@ bool renderMainMenu(
     const bool footerBack = menu.page() == MainMenuPage::StartGame ||
         menu.page() == MainMenuPage::PlayOnline ||
         menu.page() == MainMenuPage::OnlineStandard ||
+        menu.page() == MainMenuPage::OnlineSandbox ||
         menu.page() == MainMenuPage::PlayAi ||
         menu.page() == MainMenuPage::AiStandard ||
         menu.page() == MainMenuPage::Leaderboards ||
         menu.page() == MainMenuPage::Settings ||
         menu.page() == MainMenuPage::Sandbox;
+    const bool joinSandboxFooter = menu.page() == MainMenuPage::JoinSandboxLobby;
     for (std::size_t index = 0; index < actions.size(); ++index) {
         if (actions[index] == MainMenuAction::EditProfile) continue;
-        if (footerBack && actions[index] == MainMenuAction::Back) continue;
+        if ((footerBack || joinSandboxFooter) &&
+            actions[index] == MainMenuAction::Back) continue;
         if (menu.page() == MainMenuPage::Leaderboards &&
             (actions[index] == MainMenuAction::PreviousPage ||
              actions[index] == MainMenuAction::NextPage)) continue;
@@ -924,7 +946,7 @@ bool renderMainMenu(
         return true;
     };
 
-    if (footerBack && !drawFooterButton(MainMenuAction::Back,
+    if ((footerBack || joinSandboxFooter) && !drawFooterButton(MainMenuAction::Back,
             {left, shell.y + shell.height - 64.0 * scale,
                 100.0 * scale, 38.0 * scale}, "BACK")) return false;
 

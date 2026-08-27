@@ -268,7 +268,9 @@ public:
                  preMatchType == network::WireMessageType::LobbyCancelled ||
                  preMatchType == network::WireMessageType::LobbyFailure ||
                  preMatchType == network::WireMessageType::MatchmakingQueued ||
-                 preMatchType == network::WireMessageType::MatchmakingCancelled)) {
+                 preMatchType == network::WireMessageType::MatchmakingCancelled ||
+                 preMatchType == network::WireMessageType::SandboxLobbyUpdated ||
+                 preMatchType == network::WireMessageType::SandboxLobbyClosed)) {
                 network::LobbyResponse response;
                 if (!network::decodeLobbyResponse(frame, response, decodeError)) {
                     fail("Invalid lobby response: " + decodeError);

@@ -86,6 +86,15 @@ int main() {
     assert(menu.back() == MainMenuResult::None);
     assert(menu.page() == MainMenuPage::PlayOnline);
     assert(menu.activate(MainMenuAction::SandboxOnline) == MainMenuResult::None);
+    assert(menu.page() == MainMenuPage::OnlineSandbox);
+    assert(menu.activate(MainMenuAction::JoinSandboxGame) == MainMenuResult::None);
+    assert(menu.page() == MainMenuPage::JoinSandboxLobby);
+    menu.appendLobbyCode("sbx-test12");
+    assert(menu.activate(MainMenuAction::SubmitLobbyCode) ==
+        MainMenuResult::RequestJoinSandboxLobby);
+    assert(menu.back() == MainMenuResult::None);
+    assert(menu.page() == MainMenuPage::OnlineSandbox);
+    assert(menu.activate(MainMenuAction::HostSandboxGame) == MainMenuResult::None);
     assert(menu.page() == MainMenuPage::Sandbox);
     assert(menu.sandboxEntryMode() == SandboxEntryMode::Online);
     assert(menu.sandboxConfig().humanPlayerCount == 2);
@@ -103,7 +112,16 @@ int main() {
     assert(!basilisk::client::validateOnlineSandboxSessionConfig(
         onlineLobbyConfig).has_value());
     menu.setSandboxConfig(onlineLobbyConfig);
-    assert(menu.activate(MainMenuAction::CreateSandboxLobby) == MainMenuResult::None);
+    assert(menu.activate(MainMenuAction::CreateSandboxLobby) ==
+        MainMenuResult::RequestHostSandboxLobby);
+    std::vector<network::SandboxLobbySlotView> authoritativeSlots;
+    for (const auto& slot : basilisk::client::sandboxLobbySlots(onlineLobbyConfig))
+        authoritativeSlots.push_back({static_cast<std::uint8_t>(slot.slot),
+            slot.player, slot.kind,
+            slot.kind != basilisk::client::SandboxLobbySlotKind::EmptyHuman ||
+                slot.slot == 2});
+    menu.sandboxLobbyUpdated({"SBX-TEST12", onlineLobbyConfig,
+        authoritativeSlots});
     assert(menu.page() == MainMenuPage::SandboxLobby);
     const auto onlineSlots = basilisk::client::sandboxLobbySlots(menu.sandboxConfig());
     assert(onlineSlots.size() == 6);
@@ -113,10 +131,9 @@ int main() {
     assert(onlineSlots[2].kind ==
         basilisk::client::SandboxLobbySlotKind::EmptyHuman);
     assert(onlineSlots[3].kind == basilisk::client::SandboxLobbySlotKind::Ai);
-    assert(menu.activate(MainMenuAction::LaunchSandbox) == MainMenuResult::None);
-    assert(menu.page() == MainMenuPage::SandboxLobby);
-    assert(menu.back() == MainMenuResult::None);
-    assert(menu.page() == MainMenuPage::Sandbox);
+    assert(menu.back() == MainMenuResult::RequestLeaveSandboxLobby);
+    menu.sandboxLobbyClosed("Sandbox lobby closed.");
+    assert(menu.page() == MainMenuPage::OnlineSandbox);
     assert(menu.back() == MainMenuResult::None);
     assert(menu.page() == MainMenuPage::PlayOnline);
     assert(menu.back() == MainMenuResult::None);

@@ -39,11 +39,16 @@ enum class WireMessageType : std::uint8_t {
     FindMatch = 39,
     CancelFindMatch = 40,
     UpdateCosmeticLoadout = 41,
+    HostSandboxLobby = 42,
+    JoinSandboxLobby = 43,
+    LeaveSandboxLobby = 44,
     CosmeticLoadoutUpdated = 13,
     CosmeticLoadoutUpdateFailed = 14,
     ClashStarted = 15,
     ClashResolved = 21,
     SubmitClashResponse = 22,
+    SandboxLobbyUpdated = 23,
+    SandboxLobbyClosed = 24,
 };
 
 [[nodiscard]] bool inspectWireMessageType(

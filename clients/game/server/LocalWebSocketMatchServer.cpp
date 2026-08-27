@@ -403,7 +403,10 @@ private:
              type == network::WireMessageType::JoinLobby ||
              type == network::WireMessageType::CancelHostedLobby ||
              type == network::WireMessageType::FindMatch ||
-             type == network::WireMessageType::CancelFindMatch)) {
+             type == network::WireMessageType::CancelFindMatch ||
+             type == network::WireMessageType::HostSandboxLobby ||
+             type == network::WireMessageType::JoinSandboxLobby ||
+             type == network::WireMessageType::LeaveSandboxLobby)) {
             std::vector<LobbyProtocolDelivery> deliveries;
             if (!lobbyProtocol_.process(
                     *found->second.account, bytes, deliveries, error)) {
@@ -521,7 +524,10 @@ private:
             type != network::WireMessageType::JoinLobby &&
             type != network::WireMessageType::CancelHostedLobby &&
             type != network::WireMessageType::FindMatch &&
-            type != network::WireMessageType::CancelFindMatch) {
+            type != network::WireMessageType::CancelFindMatch &&
+            type != network::WireMessageType::HostSandboxLobby &&
+            type != network::WireMessageType::JoinSandboxLobby &&
+            type != network::WireMessageType::LeaveSandboxLobby) {
             socket.close(1008, "Unexpected pre-match message type");
             return;
         }
@@ -806,6 +812,9 @@ private:
         pendingAuthentication_.erase(&socket);
         const auto preMatch = authenticatedPreMatch_.find(&socket);
         if (preMatch != authenticatedPreMatch_.end()) {
+            std::vector<LobbyProtocolDelivery> sandboxDeliveries;
+            lobbyProtocol_.disconnect(preMatch->second.account, sandboxDeliveries);
+            handleLobbyDeliveries(sandboxDeliveries);
             lobbies_.cancelHostedBy(preMatch->second.account);
             std::string ignored;
             (void)lobbies_.cancelFindMatch(preMatch->second.account, ignored);
@@ -816,6 +825,9 @@ private:
         if (found->second.account.has_value())
             lobbies_.cancelHostedBy(*found->second.account);
         if (found->second.account.has_value()) {
+            std::vector<LobbyProtocolDelivery> sandboxDeliveries;
+            lobbyProtocol_.disconnect(*found->second.account, sandboxDeliveries);
+            handleLobbyDeliveries(sandboxDeliveries);
             std::string ignored;
             (void)lobbies_.cancelFindMatch(*found->second.account, ignored);
         }

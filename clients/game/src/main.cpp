@@ -309,6 +309,30 @@ SDL_AppResult handleMainMenuResult(
                 basilisk::game::network::CancelFindMatchRequest{}}))
             state.mainMenu.lobbyFailed("Unable to cancel matchmaking.");
     }
+    if (result == basilisk::game::MainMenuResult::RequestHostSandboxLobby &&
+        state.networkSession != nullptr) {
+        if (!state.networkSession->requestLobby({
+                basilisk::game::network::kProtocolVersion,
+                basilisk::game::network::HostSandboxLobbyRequest{
+                    state.mainMenu.sandboxConfig()}}))
+            state.mainMenu.lobbyFailed("Unable to create Sandbox lobby.");
+    }
+    if (result == basilisk::game::MainMenuResult::RequestJoinSandboxLobby &&
+        state.networkSession != nullptr) {
+        if (!state.networkSession->requestLobby({
+                basilisk::game::network::kProtocolVersion,
+                basilisk::game::network::JoinSandboxLobbyRequest{
+                    state.mainMenu.lobbyCode()}}))
+            state.mainMenu.lobbyFailed("Unable to join Sandbox lobby.");
+    }
+    if (result == basilisk::game::MainMenuResult::RequestLeaveSandboxLobby &&
+        state.networkSession != nullptr) {
+        if (!state.networkSession->requestLobby({
+                basilisk::game::network::kProtocolVersion,
+                basilisk::game::network::LeaveSandboxLobbyRequest{
+                    state.mainMenu.lobbyCode()}}))
+            state.mainMenu.lobbyFailed("Unable to leave Sandbox lobby.");
+    }
     return SDL_APP_CONTINUE;
 }
 
@@ -675,14 +699,18 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     }
 
     if (state != nullptr && state->view == AppView::MainMenu) {
-        if (state->mainMenu.page() == basilisk::game::MainMenuPage::JoinLobby &&
+        if ((state->mainMenu.page() == basilisk::game::MainMenuPage::JoinLobby ||
+             state->mainMenu.page() ==
+                basilisk::game::MainMenuPage::JoinSandboxLobby) &&
             event->type == SDL_EVENT_TEXT_INPUT) {
             state->mainMenu.appendLobbyCode(event->text.text);
             return SDL_APP_CONTINUE;
         }
         if (event->type == SDL_EVENT_KEY_DOWN && !event->key.repeat) {
-            if (state->mainMenu.page() ==
-                    basilisk::game::MainMenuPage::JoinLobby &&
+            if ((state->mainMenu.page() ==
+                    basilisk::game::MainMenuPage::JoinLobby ||
+                 state->mainMenu.page() ==
+                    basilisk::game::MainMenuPage::JoinSandboxLobby) &&
                 event->key.key == SDLK_BACKSPACE) {
                 state->mainMenu.eraseLobbyCode();
                 return SDL_APP_CONTINUE;
@@ -704,7 +732,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 event->key.key == SDLK_KP_ENTER) {
                 const auto result = state->mainMenu.activateSelected();
                 if (state->mainMenu.page() ==
-                        basilisk::game::MainMenuPage::JoinLobby)
+                        basilisk::game::MainMenuPage::JoinLobby ||
+                    state->mainMenu.page() ==
+                        basilisk::game::MainMenuPage::JoinSandboxLobby)
                     (void)SDL_StartTextInput(state->window);
                 return handleMainMenuResult(*state, result);
             }
@@ -753,7 +783,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
                 const auto result = state->mainMenu.activateSelected();
                 if (state->mainMenu.page() ==
-                        basilisk::game::MainMenuPage::JoinLobby)
+                        basilisk::game::MainMenuPage::JoinLobby ||
+                    state->mainMenu.page() ==
+                        basilisk::game::MainMenuPage::JoinSandboxLobby)
                     (void)SDL_StartTextInput(state->window);
                 return handleMainMenuResult(*state, result);
             }
@@ -1373,6 +1405,15 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     basilisk::game::network::LobbyFailure>(
                         &response.payload)) {
                 state->mainMenu.lobbyFailed(failure->message);
+            } else if (const auto* sandbox = std::get_if<
+                    basilisk::game::network::SandboxLobbyUpdated>(
+                        &response.payload)) {
+                state->mainMenu.sandboxLobbyUpdated(*sandbox);
+                (void)SDL_StopTextInput(state->window);
+            } else if (std::holds_alternative<
+                    basilisk::game::network::SandboxLobbyClosed>(
+                        response.payload)) {
+                state->mainMenu.sandboxLobbyClosed("Sandbox lobby closed.");
             }
         }
         if (state->view == AppView::MainMenu &&

@@ -15,6 +15,7 @@
 #include "basilisk/client/ClientViewContext.hpp"
 #include "basilisk/client/AccountCosmetics.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
+#include "basilisk/client/SandboxConfiguration.hpp"
 
 namespace basilisk::game::network {
 
@@ -86,9 +87,13 @@ struct JoinLobbyRequest { std::string lobbyCode; };
 struct CancelHostedLobbyRequest { std::string lobbyCode; };
 struct FindMatchRequest {};
 struct CancelFindMatchRequest {};
+struct HostSandboxLobbyRequest { client::SandboxSessionConfig config; };
+struct JoinSandboxLobbyRequest { std::string lobbyCode; };
+struct LeaveSandboxLobbyRequest { std::string lobbyCode; };
 using LobbyRequestPayload = std::variant<
     HostLobbyRequest, JoinLobbyRequest, CancelHostedLobbyRequest,
-    FindMatchRequest, CancelFindMatchRequest>;
+    FindMatchRequest, CancelFindMatchRequest, HostSandboxLobbyRequest,
+    JoinSandboxLobbyRequest, LeaveSandboxLobbyRequest>;
 struct LobbyRequest {
     std::uint32_t protocolVersion{kProtocolVersion};
     LobbyRequestPayload payload;
@@ -104,9 +109,22 @@ struct LobbyCancelled { std::string lobbyCode; };
 struct LobbyFailure { std::string message; };
 struct MatchmakingQueued {};
 struct MatchmakingCancelled {};
+struct SandboxLobbySlotView {
+    std::uint8_t slot{};
+    PlayerId player{};
+    client::SandboxLobbySlotKind kind{client::SandboxLobbySlotKind::Ai};
+    bool occupied{};
+};
+struct SandboxLobbyUpdated {
+    std::string lobbyCode;
+    client::SandboxSessionConfig config;
+    std::vector<SandboxLobbySlotView> slots;
+};
+struct SandboxLobbyClosed { std::string lobbyCode; };
 using LobbyResponsePayload = std::variant<
     LobbyHosted, LobbyMatchAssigned, LobbyCancelled, LobbyFailure,
-    MatchmakingQueued, MatchmakingCancelled>;
+    MatchmakingQueued, MatchmakingCancelled, SandboxLobbyUpdated,
+    SandboxLobbyClosed>;
 struct LobbyResponse {
     std::uint32_t protocolVersion{kProtocolVersion};
     LobbyResponsePayload payload;

@@ -164,4 +164,154 @@ bool LobbyCoordinator::cancelFindMatch(
 
 std::string LobbyCoordinator::generateCode() { return codeGenerator_(); }
 
+namespace {
+SandboxLobbySnapshot sandboxSnapshot(
+    const LobbyCode& code, const LobbyCoordinator::SandboxLobbyState& state) {
+    SandboxLobbySnapshot snapshot{code, state.config, {}};
+    snapshot.slots.reserve(state.config.hunterCount);
+    for (std::size_t index = 0; index < state.config.hunterCount; ++index) {
+        const std::size_t slot = index + 1;
+        const auto kind = index == 0 ? client::SandboxLobbySlotKind::Host :
+            (index < state.config.humanPlayerCount
+                ? client::SandboxLobbySlotKind::EmptyHuman
+                : client::SandboxLobbySlotKind::Ai);
+        snapshot.slots.push_back({static_cast<std::uint8_t>(slot),
+            static_cast<PlayerId>(slot), kind,
+            kind == client::SandboxLobbySlotKind::Ai ||
+                state.humans.contains(slot)});
+    }
+    return snapshot;
+}
+
+std::vector<AccountIdentity> sandboxRecipients(
+    const LobbyCoordinator::SandboxLobbyState& state) {
+    std::vector<AccountIdentity> recipients;
+    recipients.reserve(state.humans.size());
+    for (const auto& [slot, account] : state.humans) {
+        (void)slot;
+        recipients.push_back(account);
+    }
+    return recipients;
+}
+} // namespace
+
+bool LobbyCoordinator::hostSandbox(
+    const AccountIdentity& account,
+    const client::SandboxSessionConfig& config,
+    SandboxLobbyChange& change,
+    std::string& error) {
+    if (account.value.empty()) {
+        error = "An authenticated account is required.";
+        return false;
+    }
+    if (const auto invalid = client::validateOnlineSandboxSessionConfig(config)) {
+        error = std::string{*invalid};
+        return false;
+    }
+    std::lock_guard lock(mutex_);
+    if (sandboxMembership_.contains(account)) {
+        error = "Account is already in a Sandbox lobby.";
+        return false;
+    }
+    for (int attempt = 0; attempt < 128; ++attempt) {
+        LobbyCode code{"SBX-" + generateCode()};
+        if (code.value.size() <= 4 || sandboxWaiting_.contains(code) ||
+            waiting_.contains(code) || consumed_.contains(code)) continue;
+        SandboxLobbyState state{account, config, {{1, account}}};
+        auto [found, inserted] = sandboxWaiting_.emplace(code, std::move(state));
+        if (!inserted) continue;
+        sandboxMembership_.emplace(account, code);
+        change = {sandboxSnapshot(code, found->second), {account}, {}, false};
+        error.clear();
+        return true;
+    }
+    error = "Unable to allocate a unique Sandbox lobby code.";
+    return false;
+}
+
+bool LobbyCoordinator::joinSandbox(
+    const AccountIdentity& account, const LobbyCode& code,
+    SandboxLobbyChange& change, std::string& error) {
+    if (account.value.empty()) {
+        error = "An authenticated account is required.";
+        return false;
+    }
+    std::lock_guard lock(mutex_);
+    if (sandboxMembership_.contains(account)) {
+        error = "Account is already in a Sandbox lobby.";
+        return false;
+    }
+    const auto found = sandboxWaiting_.find(code);
+    if (found == sandboxWaiting_.end()) {
+        error = "Sandbox lobby code is invalid or no longer available.";
+        return false;
+    }
+    auto& state = found->second;
+    std::size_t openSlot = 0;
+    for (std::size_t slot = 2; slot <= state.config.humanPlayerCount; ++slot) {
+        if (!state.humans.contains(slot)) {
+            openSlot = slot;
+            break;
+        }
+    }
+    if (openSlot == 0) {
+        error = "Sandbox lobby is full.";
+        return false;
+    }
+    state.humans.emplace(openSlot, account);
+    sandboxMembership_.emplace(account, code);
+    change = {sandboxSnapshot(code, state), sandboxRecipients(state), {}, false};
+    error.clear();
+    return true;
+}
+
+bool LobbyCoordinator::leaveSandbox(
+    const AccountIdentity& account, const LobbyCode& code,
+    SandboxLobbyChange& change, std::string& error) {
+    std::lock_guard lock(mutex_);
+    const auto member = sandboxMembership_.find(account);
+    const auto found = sandboxWaiting_.find(code);
+    if (member == sandboxMembership_.end() || member->second != code ||
+        found == sandboxWaiting_.end()) {
+        error = "Account is not a member of this Sandbox lobby.";
+        return false;
+    }
+    auto& state = found->second;
+    if (state.host == account) {
+        change.snapshot = sandboxSnapshot(code, state);
+        change.recipients = sandboxRecipients(state);
+        change.removed = change.recipients;
+        change.closed = true;
+        for (const auto& recipient : change.recipients)
+            sandboxMembership_.erase(recipient);
+        sandboxWaiting_.erase(found);
+    } else {
+        for (auto slot = state.humans.begin(); slot != state.humans.end(); ++slot) {
+            if (slot->second != account) continue;
+            state.humans.erase(slot);
+            break;
+        }
+        sandboxMembership_.erase(member);
+        change = {sandboxSnapshot(code, state), sandboxRecipients(state),
+            {account}, false};
+    }
+    error.clear();
+    return true;
+}
+
+void LobbyCoordinator::disconnectSandbox(
+    const AccountIdentity& account, std::vector<SandboxLobbyChange>& changes) {
+    changes.clear();
+    LobbyCode code;
+    {
+        std::lock_guard lock(mutex_);
+        const auto member = sandboxMembership_.find(account);
+        if (member == sandboxMembership_.end()) return;
+        code = member->second;
+    }
+    SandboxLobbyChange change;
+    std::string ignored;
+    if (leaveSandbox(account, code, change, ignored)) changes.push_back(std::move(change));
+}
+
 } // namespace basilisk::game::server
