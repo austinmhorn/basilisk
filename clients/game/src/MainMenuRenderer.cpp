@@ -257,6 +257,11 @@ bool drawCallingCardNameplate(
 std::string_view actionLabel(MainMenuAction action) {
     switch (action) {
         case MainMenuAction::StartGame: return "START GAME";
+        case MainMenuAction::PlayOnline: return "PLAY ONLINE";
+        case MainMenuAction::PlayAi: return "PLAY AI";
+        case MainMenuAction::CycleAiDifficulty: return "DIFFICULTY";
+        case MainMenuAction::CycleAiBehavior: return "BEHAVIOR";
+        case MainMenuAction::StartAiGame: return "BEGIN HUNT";
         case MainMenuAction::Leaderboards: return "LEADERBOARDS";
         case MainMenuAction::Settings: return "SETTINGS";
         case MainMenuAction::EditProfile: return "EDIT";
@@ -279,6 +284,8 @@ std::string_view pageTitle(MainMenuPage page) {
     switch (page) {
         case MainMenuPage::Main: return "ENTER THE CAVERNS";
         case MainMenuPage::StartGame: return "START GAME";
+        case MainMenuPage::PlayOnline: return "PLAY ONLINE";
+        case MainMenuPage::PlayAi: return "PLAY AI";
         case MainMenuPage::Leaderboards: return "TROPHY LEADERBOARD";
         case MainMenuPage::Settings: return "SETTINGS";
         case MainMenuPage::Cosmetics: return "COSMETICS";
@@ -466,7 +473,17 @@ bool renderMainMenu(
         buttonY = shell.y + shell.height - 88.0 * scale;
     } else if (menu.page() == MainMenuPage::StartGame) {
         if (!label(text,
-                "Online play options are coming in a future phase.",
+                "Choose how you enter the caverns.",
+                FontWeight::Regular, static_cast<float>(11.0 * scale),
+                ui::Theme::mutedBright, left, buttonY, error)) return false;
+        buttonY += 44.0 * scale;
+    } else if (menu.page() == MainMenuPage::PlayOnline) {
+        if (!label(text, "Authenticated online hunt", FontWeight::Regular,
+                static_cast<float>(11.0 * scale), ui::Theme::mutedBright,
+                left, buttonY, error)) return false;
+        buttonY += 44.0 * scale;
+    } else if (menu.page() == MainMenuPage::PlayAi) {
+        if (!label(text, "Local offline hunt against BASILISK AI",
                 FontWeight::Regular, static_cast<float>(11.0 * scale),
                 ui::Theme::mutedBright, left, buttonY, error)) return false;
         buttonY += 44.0 * scale;
@@ -635,7 +652,17 @@ bool renderMainMenu(
         pill(renderer, bounds,
             selected ? ui::Theme::surfaceSoft : ui::Theme::surfaceRaised,
             selected ? ui::Theme::gold : ui::Theme::border);
-        if (!label(text, actionLabel(actions[index]), FontWeight::SemiBold,
+        std::string dynamicLabel;
+        if (actions[index] == MainMenuAction::CycleAiDifficulty) {
+            dynamicLabel = "DIFFICULTY  ";
+            dynamicLabel += client::ai::difficultyName(menu.aiDifficulty());
+        } else if (actions[index] == MainMenuAction::CycleAiBehavior) {
+            dynamicLabel = "BEHAVIOR  ";
+            dynamicLabel += client::ai::behaviorName(menu.aiBehavior());
+        }
+        const std::string_view displayLabel = dynamicLabel.empty()
+            ? actionLabel(actions[index]) : std::string_view{dynamicLabel};
+        if (!label(text, displayLabel, FontWeight::SemiBold,
                 static_cast<float>(11.0 * scale),
                 selected ? ui::Theme::gold : ui::Theme::text,
                 bounds.x + 18.0 * scale, bounds.y + 15.0 * scale, error))

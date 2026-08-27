@@ -300,6 +300,7 @@ endif()
 
 add_library(BasiliskGameLocalSession STATIC
     src/LocalGameSessionAdapter.cpp
+    src/LocalAiGameSessionAdapter.cpp
 )
 
 add_library(Basilisk::GameLocalSession ALIAS BasiliskGameLocalSession)
@@ -313,6 +314,7 @@ target_link_libraries(
     PUBLIC
         Basilisk::GameActions
         Basilisk::GameMapLayout
+        Basilisk::ClientAI
     PRIVATE
         Basilisk::Core
 )
@@ -563,6 +565,7 @@ endif()
 if(NOT EMSCRIPTEN)
     add_library(BasiliskGameDebugSupport STATIC
         src/DebugInventoryMenu.cpp
+        src/DebugKillMenu.cpp
         src/DebugMapProvider.cpp
         src/DebugMapRenderer.cpp
     )
@@ -590,6 +593,7 @@ if(NOT EMSCRIPTEN)
 
     add_library(BasiliskGameDebugLocalSession STATIC
         src/LocalGameSessionAdapter.cpp
+        src/LocalAiGameSessionAdapter.cpp
     )
     add_library(
         Basilisk::GameDebugLocalSession
@@ -610,6 +614,7 @@ if(NOT EMSCRIPTEN)
             Basilisk::GameActions
             Basilisk::GameMapLayout
             Basilisk::GameDebugSupport
+            Basilisk::ClientAI
         PRIVATE
             Basilisk::Core
     )

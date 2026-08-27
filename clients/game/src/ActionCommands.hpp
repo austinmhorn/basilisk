@@ -1,6 +1,9 @@
 #pragma once
 
+#include <string>
+
 #include "basilisk/Action.hpp"
+#include "basilisk/Clash.hpp"
 #include "basilisk/ClientSnapshot.hpp"
 
 namespace basilisk::game {
@@ -17,6 +20,10 @@ public:
 
     [[nodiscard]] virtual bool submitAction(const PlayerAction& action) = 0;
     [[nodiscard]] virtual bool lockAction(PlayerId player) = 0;
+    [[nodiscard]] virtual bool submitClashResponse(
+        PlayerId,
+        ClashId,
+        std::string) { return false; }
 };
 
 } // namespace basilisk::game

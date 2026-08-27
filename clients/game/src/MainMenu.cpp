@@ -16,9 +16,20 @@ constexpr std::array mainActions{
     MainMenuAction::EditProfile,
 };
 constexpr std::array startActions{
+    MainMenuAction::PlayOnline,
+    MainMenuAction::PlayAi,
+    MainMenuAction::Back,
+};
+constexpr std::array onlineActions{
     MainMenuAction::FindGame,
     MainMenuAction::HostGame,
     MainMenuAction::JoinGame,
+    MainMenuAction::Back,
+};
+constexpr std::array aiActions{
+    MainMenuAction::CycleAiDifficulty,
+    MainMenuAction::CycleAiBehavior,
+    MainMenuAction::StartAiGame,
     MainMenuAction::Back,
 };
 constexpr std::array leaderboardActions{
@@ -44,6 +55,8 @@ std::span<const MainMenuAction> MainMenuState::actions() const noexcept {
     switch (page_) {
         case MainMenuPage::Main: return mainActions;
         case MainMenuPage::StartGame: return startActions;
+        case MainMenuPage::PlayOnline: return onlineActions;
+        case MainMenuPage::PlayAi: return aiActions;
         case MainMenuPage::Leaderboards: return leaderboardActions;
         case MainMenuPage::Settings: return settingsActions;
         case MainMenuPage::Cosmetics: return cosmeticsActions;
@@ -75,6 +88,9 @@ const client::CallingCardId& MainMenuState::selectedCallingCard() const noexcept
 const client::EmblemId& MainMenuState::selectedEmblem() const noexcept {
     return selectedEmblem_;
 }
+client::ai::AiDifficulty MainMenuState::aiDifficulty() const noexcept { return aiDifficulty_; }
+client::ai::AiBehavior MainMenuState::aiBehavior() const noexcept { return aiBehavior_; }
+void MainMenuState::openOnline() noexcept { setPage(MainMenuPage::PlayOnline); }
 
 void MainMenuState::select(std::size_t index) noexcept {
     if (index < actions().size()) selectedIndex_ = index;
@@ -98,6 +114,21 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
         case MainMenuAction::StartGame:
             setPage(MainMenuPage::StartGame);
             break;
+        case MainMenuAction::PlayOnline:
+            return MainMenuResult::RequestPlayOnline;
+        case MainMenuAction::PlayAi:
+            setPage(MainMenuPage::PlayAi);
+            break;
+        case MainMenuAction::CycleAiDifficulty:
+            aiDifficulty_ = static_cast<client::ai::AiDifficulty>(
+                (static_cast<int>(aiDifficulty_) + 1) % 3);
+            break;
+        case MainMenuAction::CycleAiBehavior:
+            aiBehavior_ = static_cast<client::ai::AiBehavior>(
+                (static_cast<int>(aiBehavior_) + 1) % 7);
+            break;
+        case MainMenuAction::StartAiGame:
+            return MainMenuResult::StartAiGame;
         case MainMenuAction::Leaderboards:
             leaderboardOffset_ = 0;
             setPage(MainMenuPage::Leaderboards);
@@ -118,7 +149,9 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
             setPage(page_ == MainMenuPage::JoinLobby ||
                     page_ == MainMenuPage::MatchReady ||
                     page_ == MainMenuPage::FindMatch
-                ? MainMenuPage::StartGame : MainMenuPage::Main);
+                ? MainMenuPage::PlayOnline :
+                (page_ == MainMenuPage::PlayOnline || page_ == MainMenuPage::PlayAi
+                    ? MainMenuPage::StartGame : MainMenuPage::Main));
             break;
         case MainMenuAction::PreviousPage:
             if (leaderboardOffset_ >= leaderboardPageSize) {
@@ -172,7 +205,9 @@ MainMenuResult MainMenuState::back() noexcept {
         setPage(page_ == MainMenuPage::JoinLobby ||
                 page_ == MainMenuPage::MatchReady ||
                 page_ == MainMenuPage::FindMatch
-            ? MainMenuPage::StartGame : MainMenuPage::Main);
+            ? MainMenuPage::PlayOnline :
+            (page_ == MainMenuPage::PlayOnline || page_ == MainMenuPage::PlayAi
+                ? MainMenuPage::StartGame : MainMenuPage::Main));
     return MainMenuResult::None;
 }
 
@@ -201,7 +236,7 @@ void MainMenuState::lobbyAssigned(std::string code) {
 }
 void MainMenuState::lobbyCancelled() {
     lobbyCode_.clear(); lobbyError_.clear(); lobbyWaiting_ = false;
-    setPage(MainMenuPage::StartGame);
+    setPage(MainMenuPage::PlayOnline);
 }
 void MainMenuState::lobbyFailed(std::string error) {
     lobbyWaiting_ = false;
@@ -212,7 +247,7 @@ void MainMenuState::connectionLost(std::string error) {
 }
 void MainMenuState::matchmakingCancelled() {
     lobbyCode_.clear(); lobbyError_.clear(); lobbyWaiting_ = false;
-    setPage(MainMenuPage::StartGame);
+    setPage(MainMenuPage::PlayOnline);
 }
 
 void MainMenuState::selectCallingCard(client::CallingCardId callingCard) {

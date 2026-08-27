@@ -37,3 +37,13 @@ target_include_directories(BasiliskClientNavigation
 
 target_link_libraries(BasiliskClientNavigation PUBLIC Basilisk::Core)
 target_compile_features(BasiliskClientNavigation PUBLIC cxx_std_20)
+
+add_library(BasiliskClientAI STATIC
+    src/AiKnowledgeState.cpp
+    src/AiDecisionEngine.cpp
+    src/AiTurnScheduler.cpp
+)
+add_library(Basilisk::ClientAI ALIAS BasiliskClientAI)
+target_include_directories(BasiliskClientAI PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(BasiliskClientAI PUBLIC Basilisk::Core Basilisk::ClientNavigation)
+target_compile_features(BasiliskClientAI PUBLIC cxx_std_20)

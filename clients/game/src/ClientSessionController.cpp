@@ -33,6 +33,16 @@ std::int64_t ClientSessionController::trophyTotal() const noexcept {
     return trophyTotal_;
 }
 
+client::MatchMode ClientSessionController::matchMode() const noexcept { return matchMode_; }
+void ClientSessionController::setMatchMode(client::MatchMode mode) noexcept { matchMode_ = mode; }
+void ClientSessionController::setParticipantSubtitle(PlayerId player, std::string subtitle) {
+    participantSubtitles_.insert_or_assign(player, std::move(subtitle));
+}
+std::string_view ClientSessionController::participantSubtitle(PlayerId player) const noexcept {
+    const auto found = participantSubtitles_.find(player);
+    return found == participantSubtitles_.end() ? std::string_view{} : found->second;
+}
+
 void ClientSessionController::setViewContext(
     client::ClientViewContext viewContext) noexcept {
     viewContext_ = viewContext;
@@ -98,6 +108,20 @@ bool ClientSessionController::submitAndLock(const AvailableAction& action) {
     const PlayerAction playerAction = makePlayerAction(action, viewContext_.localPlayer);
     return actionCommands_->submitAction(playerAction) &&
         actionCommands_->lockAction(viewContext_.localPlayer);
+}
+
+const std::optional<ActiveClash>& ClientSessionController::activeClash() const noexcept {
+    return activeClash_;
+}
+
+void ClientSessionController::setActiveClash(std::optional<ActiveClash> clash) {
+    activeClash_ = std::move(clash);
+}
+
+bool ClientSessionController::submitClashResponse(std::string response) {
+    return canSubmitActions() && actionCommands_ != nullptr && activeClash_.has_value() &&
+        actionCommands_->submitClashResponse(
+            viewContext_.localPlayer, activeClash_->id, std::move(response));
 }
 
 bool ClientSessionController::watchRemainingHunter() {

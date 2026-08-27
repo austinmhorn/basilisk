@@ -35,6 +35,16 @@ PlayerAction use(PlayerId player, ItemType item) {
     action.targetItem = item; return action;
 }
 
+PlayerAction shoot(PlayerId player, CaveId cave) {
+    PlayerAction action; action.player = player; action.type = ActionType::Shoot;
+    action.targetCave = cave; return action;
+}
+
+PlayerAction escape(PlayerId player) {
+    PlayerAction action; action.player = player; action.type = ActionType::Contextual;
+    action.contextualAction = ContextualActionType::Escape; return action;
+}
+
 MatchState clashFixture() {
     MatchState state; state.matchSeed = 77; state.rules.mapDiscoveryMode = MapDiscoveryMode::FullMap;
     for (CaveId cave = 1; cave <= 6; ++cave) state.world.addCave(cave);
@@ -274,6 +284,26 @@ void nonConflictingTunnelMovesResolveOnceAndReachSnapshots() {
     assert(player42.currentCave == 4 && player42.map.currentCave == 4);
 }
 
+void lockedPendingMoveDoesNotAdvanceJackalFlee() {
+    auto state = nonConflictingMoveFixture();
+    JackalState jackal{5};
+    jackal.fleeOrigin = CaveId{3};
+    jackal.protectedHunter = PlayerId{17};
+    jackal.fleeRoundsRemaining = 3;
+    state.jackals = {jackal};
+    MatchCoordinator coordinator(state);
+
+    assert(coordinator.submitAction(moveThrough(17, TunnelId{1})));
+    assert(coordinator.lockAction(17));
+
+    // Until every required hunter locks, the Move remains host-session state:
+    // neither its destination nor a Jackal movement opportunity is applied.
+    assert(playerById(state, 17).cave == CaveId{1});
+    assert(state.jackals[0].cave == CaveId{5});
+    assert(state.jackals[0].fleeRoundsRemaining == 3);
+    assert(state.round == 1);
+}
+
 void nonConflictingMoveAndSearchBothResolve() {
     auto state = nonConflictingMoveFixture();
     MatchCoordinator coordinator(state);
@@ -329,6 +359,7 @@ void moveIntoUseItemConsumesExactlyOnceAndBlocksNormalCommands() {
     assert(playerById(state, 42).health == 80);
     assert(!playerById(state, 42).inventory.contains(ItemType::HealingDraught));
     assert(playerById(state, 17).cave == 2);
+    assert(eventCount(coordinator.authoritativeEvents(), GameEventType::ItemUsed) == 1);
 }
 
 void oppositeTraversalAndTimeoutStalemate() {
@@ -351,6 +382,68 @@ void moveIntoSearchResolvesSearchOnlyOnce() {
     assert(coordinator.submitClashResponse(17, clash.id, clash.challengeWord) == ClashSubmissionResult::Resolved);
     assert(playerById(state, 42).inventory.items.size() == inventoryAfterSearch);
     assert(state.round == 2);
+    assert(eventCount(coordinator.authoritativeEvents(), GameEventType::SearchCompleted) == 1);
+
+    assert(coordinator.submitAction(search(17))); assert(coordinator.lockAction(17));
+    assert(coordinator.submitAction(search(42))); assert(coordinator.lockAction(42));
+    assert(state.round == 3);
+    assert(coordinator.activeClash() == nullptr);
+}
+
+void moveIntoShootStartsClashAndNeverLeavesColocation() {
+    auto state = clashFixture(); MatchCoordinator coordinator(state);
+    assert(coordinator.submitAction(move(17, 2))); assert(coordinator.lockAction(17));
+    assert(coordinator.submitAction(shoot(42, 1))); assert(coordinator.lockAction(42));
+    assert(coordinator.activeClash() != nullptr);
+    assert(coordinator.activeClash()->kind == ClashKind::MoveIntoStationary);
+    assert(state.round == 1);
+
+    const auto clash = *coordinator.activeClash();
+    assert(coordinator.submitClashResponse(42, clash.id, clash.challengeWord) ==
+        ClashSubmissionResult::Resolved);
+    assert(state.round == 2);
+    assert(playerById(state, 17).cave != playerById(state, 42).cave);
+    assert(playerById(state, 42).arrows == 2);
+    assert(eventCount(coordinator.authoritativeEvents(), GameEventType::ArrowFired) == 1);
+}
+
+void moveIntoContextualEscapeStartsClashThenEscapesOnce() {
+    auto state = clashFixture();
+    auto& escaping = const_cast<PlayerState&>(playerById(state, 42));
+    escaping.heldSigilFrom = PlayerId{17};
+    state.extraction.active = true;
+    state.extraction.cave = CaveId{2};
+    state.extraction.sigilHolder = PlayerId{42};
+    MatchCoordinator coordinator(state);
+    assert(coordinator.submitAction(move(17, 2))); assert(coordinator.lockAction(17));
+    assert(coordinator.submitAction(escape(42))); assert(coordinator.lockAction(42));
+    assert(coordinator.activeClash() != nullptr);
+    assert(coordinator.activeClash()->kind == ClashKind::MoveIntoStationary);
+
+    const auto clash = *coordinator.activeClash();
+    assert(coordinator.submitClashResponse(42, clash.id, clash.challengeWord) ==
+        ClashSubmissionResult::Resolved);
+    assert(state.result.status == MatchStatus::Completed);
+    assert(state.result.outcome == MatchOutcome::EscapedWithSigil);
+    assert(eventCount(coordinator.authoritativeEvents(), GameEventType::PlayerEscaped) == 1);
+}
+
+void occupantMovingAwayDoesNotCreateFalseOccupancyClash() {
+    auto state = clashFixture(); MatchCoordinator coordinator(state);
+    assert(coordinator.submitAction(move(17, 2))); assert(coordinator.lockAction(17));
+    assert(coordinator.submitAction(move(42, 3))); assert(coordinator.lockAction(42));
+    assert(coordinator.activeClash() == nullptr);
+    assert(state.round == 2);
+    assert(playerById(state, 17).cave == CaveId{2});
+    assert(playerById(state, 42).cave == CaveId{3});
+}
+
+void invalidVacatingMoveStillCreatesOccupancyClash() {
+    auto state = clashFixture(); MatchCoordinator coordinator(state);
+    assert(coordinator.submitAction(move(17, 2))); assert(coordinator.lockAction(17));
+    assert(coordinator.submitAction(move(42, 6))); assert(coordinator.lockAction(42));
+    assert(coordinator.activeClash() != nullptr);
+    assert(coordinator.activeClash()->kind == ClashKind::MoveIntoStationary);
 }
 
 void reconnectDuringClashRestoresSameChallengeAndSearch() {
@@ -451,11 +544,16 @@ int main() {
     deadPlayerDisconnectDoesNotBlockLivingHunter();
     bothDisconnectingCanEndInDraw();
     nonConflictingTunnelMovesResolveOnceAndReachSnapshots();
+    lockedPendingMoveDoesNotAdvanceJackalFlee();
     nonConflictingMoveAndSearchBothResolve();
     ordinaryMovesMatchDirectRoundResolution();
     sameDestinationClashPausesAndFirstCorrectWins();
     oppositeTraversalAndTimeoutStalemate();
     moveIntoSearchResolvesSearchOnlyOnce();
+    moveIntoShootStartsClashAndNeverLeavesColocation();
+    moveIntoContextualEscapeStartsClashThenEscapesOnce();
+    occupantMovingAwayDoesNotCreateFalseOccupancyClash();
+    invalidVacatingMoveStillCreatesOccupancyClash();
     moveIntoUseItemConsumesExactlyOnceAndBlocksNormalCommands();
     reconnectDuringClashRestoresSameChallengeAndSearch();
     disconnectGraceExpiryClearsClashAndDoesNotRepeatUseItem();

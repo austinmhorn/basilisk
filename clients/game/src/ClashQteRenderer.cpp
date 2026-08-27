@@ -3,7 +3,7 @@
 #include "UITheme.hpp"
 namespace basilisk::game {
 bool renderClashQte(SDL_Renderer* renderer, TextRenderer& text,
-    const network::ClashStarted& clash, std::string_view input, int width, int height,
+    const ActiveClash& clash, std::string_view input, int width, int height,
     std::string& error) {
     const double scale = std::max(0.7, std::min(width / 1440.0, height / 900.0));
     SDL_SetRenderDrawColor(renderer, 4, 6, 8, 205);

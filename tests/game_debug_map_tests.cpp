@@ -6,9 +6,12 @@
 
 #include "DebugMapProvider.hpp"
 #include "DebugInventoryMenu.hpp"
+#include "DebugKillMenu.hpp"
 #include "LocalGameSessionAdapter.hpp"
+#include "LocalAiGameSessionAdapter.hpp"
 #include "basilisk/MatchState.hpp"
 #include "basilisk/world/MapGenerator.hpp"
+#include "basilisk/systems/SigilPlacementSystem.hpp"
 
 using namespace basilisk;
 using namespace basilisk::game;
@@ -281,6 +284,238 @@ void debugInventoryMenuCyclesWithoutAffectingBehaviorControl() {
     assert(!menu.active());
 }
 
+void localAiSessionUsesSameLiveDebugState() {
+    auto local = LocalAiGameSessionAdapter::create(
+        MapSeed{1}, MatchSeed{424242}, client::ai::AiDifficulty::Hard,
+        client::ai::AiBehavior::Balanced, client::ai::AiSeed{91});
+    assert(local.session != nullptr);
+    assert(local.driver != nullptr);
+    assert(local.mapProvider != nullptr);
+
+    const MatchState generated = MapGenerator::generate(
+        MapSeed{1}, MatchSeed{424242});
+    assert(local.mapProvider->mapTruth().cavePositions.size() ==
+           generated.world.size());
+    assert(local.mapProvider->gameplayTruth().basiliskCave ==
+           generated.basilisk.cave);
+    const auto authoritativeAi = std::find_if(
+        generated.players.begin(), generated.players.end(),
+        [](const PlayerState& player) { return player.id != PlayerId{1}; });
+    assert(authoritativeAi != generated.players.end());
+    const DebugGameplayTruth initialTruth = local.mapProvider->gameplayTruth();
+    assert(initialTruth.hunters.size() == 1);
+    assert(initialTruth.hunters.front().label == "AI");
+    assert(initialTruth.hunters.front().player == authoritativeAi->id);
+    assert(initialTruth.hunters.front().cave == authoritativeAi->cave);
+    assert(initialTruth.hunters.front().health ==
+           local.session->snapshotFor(authoritativeAi->id)->health);
+    assert(initialTruth.hunters.front().arrows ==
+           local.session->snapshotFor(authoritativeAi->id)->arrows);
+    assert(initialTruth.aiDecisionTrace.size() == 4);
+    assert(initialTruth.aiDecisionTrace[0].starts_with("AI LAST"));
+    assert(initialTruth.aiDecisionTrace[1].starts_with("BASILISK"));
+    assert(initialTruth.aiDecisionTrace[2].starts_with("SIGIL"));
+    assert(initialTruth.aiDecisionTrace[3].starts_with("TOP"));
+    const CaveId initialAiCave = initialTruth.hunters.front().cave;
+
+    const PlayerRoundSnapshot* before = local.session->displayedSnapshot();
+    assert(before != nullptr);
+    const RoundNumber round = before->round;
+    assert(local.mapProvider->grantItem(ItemType::SurveyFragment));
+    const PlayerRoundSnapshot* granted = local.session->displayedSnapshot();
+    assert(granted != nullptr && granted->round == round);
+    assert(std::ranges::find(
+        granted->inventory.items, ItemType::SurveyFragment) !=
+        granted->inventory.items.end());
+
+    assert(local.mapProvider->cycleBasiliskBehavior());
+    assert(local.mapProvider->gameplayTruth().basiliskBehavior ==
+           BasiliskBehavior::Restless);
+
+    const auto search = std::ranges::find_if(
+        granted->availableActions, [](const AvailableAction& action) {
+            return action.type == ActionType::Search;
+        });
+    assert(search != granted->availableActions.end());
+    assert(local.session->submitAndLock(*search));
+    local.driver->advance(901);
+    assert(local.session->displayedSnapshot()->round == round + 1);
+    const DebugGameplayTruth movedTruth = local.mapProvider->gameplayTruth();
+    assert(movedTruth.hunters.size() == 1);
+    assert(movedTruth.hunters.front().cave != initialAiCave);
+}
+
+void debugKillUsesAuthoritativeEliminationAndSigilPlacement() {
+    DebugKillMenuState menu;
+    assert(!menu.active());
+    menu.toggle();
+    assert(menu.active() && menu.selectedTarget() == DebugKillTarget::Host);
+    menu.moveSelection(1);
+    assert(menu.selectedTarget() == DebugKillTarget::Ai);
+    menu.close();
+
+    auto killAi = LocalAiGameSessionAdapter::create(
+        MapSeed{1}, MatchSeed{424242}, client::ai::AiDifficulty::Hard,
+        client::ai::AiBehavior::Balanced, client::ai::AiSeed{91});
+    const PlayerId human = killAi.session->viewContext().localPlayer;
+    const auto aiSlot = std::ranges::find_if(killAi.session->matchMetadata().players,
+        [&](const PublicPlayerSlot& slot) { return slot.player != human; });
+    assert(aiSlot != killAi.session->matchMetadata().players.end());
+    assert(killAi.mapProvider->killControlAvailable());
+    assert(killAi.mapProvider->killPlayer(DebugKillTarget::Ai));
+    const PlayerRoundSnapshot* ai = killAi.session->snapshotFor(aiSlot->player);
+    const PlayerRoundSnapshot* host = killAi.session->snapshotFor(human);
+    assert(ai != nullptr && !ai->alive && ai->health == 0);
+    assert(host != nullptr && host->recoverableRivalSigilAvailable);
+    assert(host->matchStatus == MatchStatus::Active);
+    assert(!killAi.mapProvider->killPlayer(DebugKillTarget::Ai));
+
+    auto killHost = LocalAiGameSessionAdapter::create(
+        MapSeed{2}, MatchSeed{424242}, client::ai::AiDifficulty::Medium,
+        client::ai::AiBehavior::Balanced, client::ai::AiSeed{92});
+    const PlayerId hostId = killHost.session->viewContext().localPlayer;
+    assert(killHost.mapProvider->killPlayer(DebugKillTarget::Host));
+    assert(!killHost.session->snapshotFor(hostId)->alive);
+    assert(killHost.session->viewContext().mode == client::ClientViewMode::Defeated);
+}
+
+void livingAiTruthNeverDisappearsAcrossRounds() {
+    auto local = LocalAiGameSessionAdapter::create(
+        MapSeed{4}, MatchSeed{424242}, client::ai::AiDifficulty::Hard,
+        client::ai::AiBehavior::Opportunist, client::ai::AiSeed{117});
+    assert(local.session != nullptr && local.driver != nullptr &&
+           local.mapProvider != nullptr);
+    const PlayerId human = local.session->viewContext().localPlayer;
+    const auto aiSlot = std::ranges::find_if(
+        local.session->matchMetadata().players,
+        [&](const PublicPlayerSlot& slot) { return slot.player != human; });
+    assert(aiSlot != local.session->matchMetadata().players.end());
+    const PlayerId ai = aiSlot->player;
+
+    int verifiedRounds = 0;
+    for (; verifiedRounds < 8; ++verifiedRounds) {
+        const PlayerRoundSnapshot* aiSnapshot = local.session->snapshotFor(ai);
+        assert(aiSnapshot != nullptr);
+        const DebugGameplayTruth before = local.mapProvider->gameplayTruth();
+        const auto aiMarkers = std::ranges::count_if(before.hunters,
+            [&](const DebugGameplayTruth::Hunter& hunter) {
+                return hunter.player == ai;
+            });
+        if (!aiSnapshot->alive) break;
+        assert(aiMarkers == 1);
+        const auto marker = std::ranges::find_if(before.hunters,
+            [&](const DebugGameplayTruth::Hunter& hunter) {
+                return hunter.player == ai;
+            });
+        assert(marker->cave == aiSnapshot->currentCave);
+
+        const PlayerRoundSnapshot* humanSnapshot = local.session->snapshotFor(human);
+        assert(humanSnapshot != nullptr && humanSnapshot->alive);
+        const RoundNumber priorRound = humanSnapshot->round;
+        const auto action = std::ranges::find_if(humanSnapshot->availableActions,
+            [](const AvailableAction& candidate) {
+                return candidate.type == ActionType::Search;
+            });
+        assert(action != humanSnapshot->availableActions.end());
+        assert(local.session->submitAndLock(*action));
+        local.driver->advance(901);
+        if (local.session->activeClash().has_value()) {
+            assert(local.session->submitClashResponse(
+                local.session->activeClash()->challengeWord));
+        }
+        local.driver->advance(901);
+
+        aiSnapshot = local.session->snapshotFor(ai);
+        assert(aiSnapshot != nullptr);
+        assert(local.session->snapshotFor(human)->round > priorRound);
+        const DebugGameplayTruth after = local.mapProvider->gameplayTruth();
+        if (aiSnapshot->alive) {
+            const auto afterMarkers = std::ranges::count_if(after.hunters,
+                [&](const DebugGameplayTruth::Hunter& hunter) {
+                    return hunter.player == ai;
+                });
+            assert(afterMarkers == 1);
+            const auto afterMarker = std::ranges::find_if(after.hunters,
+                [&](const DebugGameplayTruth::Hunter& hunter) {
+                    return hunter.player == ai;
+                });
+            assert(afterMarker->cave == aiSnapshot->currentCave);
+        }
+    }
+    assert(verifiedRounds >= 4);
+}
+
+void hunterTruthAlwaysReadsCurrentAuthoritativeCave() {
+    MatchState state = MapGenerator::generate(MapSeed{2}, MatchSeed{424242});
+    assert(state.players.size() >= 2);
+    const PlayerId ai = state.players[1].id;
+    const std::array labels{DebugHunterLabel{ai, "BASILISK AI"}};
+    DebugGameplayTruth truth = buildDebugGameplayTruth(state, labels);
+    assert(truth.hunters.size() == 1);
+    assert(truth.hunters.front().cave == state.players[1].cave);
+    const CaveId destination = state.world.caveIds().back();
+    state.players[1].cave = destination;
+    truth = buildDebugGameplayTruth(state, labels);
+    assert(truth.hunters.front().cave == destination);
+}
+
+void sigilTruthTracksMapCarrierAndUnavailableStates() {
+    MatchState state = MapGenerator::generate(MapSeed{3}, MatchSeed{424242});
+    assert(state.players.size() >= 2);
+    const PlayerId owner = state.players[1].id;
+    const PlayerId carrier = state.players[0].id;
+    const CaveId bodyCave = state.players[1].cave;
+    const CaveId ejectedCave = state.world.caveIds().back();
+    state.bodies.push_back(
+        BodyState{owner, bodyCave, true, ejectedCave});
+
+    DebugGameplayTruth truth = buildDebugGameplayTruth(state);
+    assert(truth.sigils.size() == 1);
+    assert(truth.sigils.front().state ==
+           DebugGameplayTruth::SigilState::OnMap);
+    assert(truth.sigils.front().cave == ejectedCave);
+    assert(!truth.sigils.front().carrier.has_value());
+
+    state.bodies.front().sigilAvailable = false;
+    state.players.front().heldSigilFrom = owner;
+    truth = buildDebugGameplayTruth(state);
+    assert(truth.sigils.size() == 1);
+    assert(truth.sigils.front().state ==
+           DebugGameplayTruth::SigilState::Carried);
+    assert(truth.sigils.front().carrier == carrier);
+    assert(truth.sigils.front().cave == state.players.front().cave);
+
+    state.result.status = MatchStatus::Completed;
+    state.result.outcome = MatchOutcome::EscapedWithSigil;
+    state.result.winner = carrier;
+    truth = buildDebugGameplayTruth(state);
+    assert(truth.sigils.empty());
+
+    state.result = MatchResult{};
+    state.players.front().heldSigilFrom.reset();
+    truth = buildDebugGameplayTruth(state);
+    assert(truth.sigils.empty());
+}
+
+void sigilTruthReportsAuthoritativeRelocation() {
+    MatchState state;
+    for (CaveId cave = 1; cave <= 4; ++cave) state.world.addCave(cave);
+    state.world.connect(1, 2);
+    state.world.connect(1, 3);
+    state.world.connect(2, 4);
+    state.basilisk.cave = 1;
+    state.pits.push_back(PitState{2, true});
+    state.players.push_back(PlayerState{PlayerId{1}, CaveId{4}});
+    state.players.push_back(PlayerState{PlayerId{2}, CaveId{1}, 0, 3, false});
+    std::vector<GameEvent> events;
+    placeSigilsForDeath(state, state.players[1], CaveId{1}, events);
+    assert(state.bodies.front().sigilCave == CaveId{4});
+    const DebugGameplayTruth truth = buildDebugGameplayTruth(state);
+    assert(truth.sigils.size() == 1);
+    assert(truth.sigils.front().state == DebugGameplayTruth::SigilState::OnMap);
+    assert(truth.sigils.front().cave == *state.bodies.front().sigilCave);
+}
+
 } // namespace
 
 int main() {
@@ -293,5 +528,11 @@ int main() {
     behaviorControlCyclesLiveStateAndResetsMovementClock();
     debugInventoryUsesCapacityAndPublishesNormalActions();
     debugInventoryMenuCyclesWithoutAffectingBehaviorControl();
+    localAiSessionUsesSameLiveDebugState();
+    debugKillUsesAuthoritativeEliminationAndSigilPlacement();
+    livingAiTruthNeverDisappearsAcrossRounds();
+    hunterTruthAlwaysReadsCurrentAuthoritativeCave();
+    sigilTruthTracksMapCarrierAndUnavailableStates();
+    sigilTruthReportsAuthoritativeRelocation();
     return 0;
 }

@@ -11,6 +11,7 @@
 #include "basilisk/Random.hpp"
 #include "basilisk/systems/ItemSystem.hpp"
 #include "basilisk/systems/SearchSystem.hpp"
+#include "basilisk/systems/SigilPlacementSystem.hpp"
 #include "basilisk/systems/WorldDangerSystem.hpp"
 
 namespace basilisk {
@@ -263,15 +264,6 @@ int movementInterval(BasiliskBehavior behavior) {
     return 0;
 }
 
-void createBodyIfMissing(MatchState& state, const PlayerState& player,
-                         std::vector<GameEvent>& events) {
-    const bool exists = std::any_of(state.bodies.begin(), state.bodies.end(),
-        [&](const BodyState& body) { return body.owner == player.id; });
-    if (exists) return;
-    state.bodies.push_back(BodyState{player.id, player.cave, true, player.cave});
-    events.push_back(GameEvent{GameEventType::BodyCreated, std::nullopt, player.id, player.cave});
-}
-
 CaveId chooseExtractionCave(const MatchState& state, CaveId from) {
     CaveId best = from;
     int bestDistance = -1;
@@ -338,7 +330,7 @@ void resolveBasiliskContactDeaths(MatchState& state, std::vector<GameEvent>& eve
         player.alive = false;
         events.push_back(GameEvent{GameEventType::PlayerKilled, std::nullopt, player.id,
             player.cave, 0, state.basilisk.behavior});
-        createBodyIfMissing(state, player, events);
+        placeSigilsForDeath(state, player, player.cave, events);
     }
 
     resolveMutualDeathDraw(state, events);
@@ -420,7 +412,7 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
             const auto killerIt = lethalAttackerByTarget.find(player.id);
             if (killerIt != lethalAttackerByTarget.end()) killer = killerIt->second;
             events.push_back(GameEvent{GameEventType::PlayerKilled, killer, player.id, player.cave});
-            createBodyIfMissing(state, player, events);
+            placeSigilsForDeath(state, player, player.cave, events);
         }
     }
     if (state.result.status != MatchStatus::Completed) resolveMutualDeathDraw(state, events);
@@ -469,7 +461,8 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
                             hunterIt->alive = false;
                             events.push_back(GameEvent{GameEventType::PlayerKilled, std::nullopt, hunterIt->id,
                                 hunterIt->cave, 0, BasiliskBehavior::Enraged});
-                            createBodyIfMissing(state, *hunterIt, events);
+                            placeSigilsForDeath(
+                                state, *hunterIt, hunterIt->cave, events);
                             resolveMutualDeathDraw(state, events);
                         }
                     } else {

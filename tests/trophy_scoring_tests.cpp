@@ -170,6 +170,22 @@ void authoritativeMatchScoresItsTerminalEventStream() {
         TrophyScoreResult::AlreadyScored);
 }
 
+void nonOnlineMatchesRejectTrophyScoring() {
+    for (const client::MatchMode mode :
+         {client::MatchMode::AI, client::MatchMode::Sandbox}) {
+        auto ledger = std::make_shared<TrophyLedger>();
+        TrophyScoringContext scoring{
+            TrophyMatchId{"not-online"}, accounts, ledger};
+        std::string error;
+        auto host = AuthoritativeInMemoryMatch::create(
+            MapSeed{20260816}, MatchSeed{424242}, profiles(), error,
+            std::move(scoring), nullptr, mode);
+        assert(host == nullptr);
+        assert(error == "Trophy scoring is available only for Online matches.");
+        assert(entriesFor(*ledger).empty());
+    }
+}
+
 } // namespace
 
 int main() {
@@ -180,4 +196,5 @@ int main() {
     drawAndUnfinishedScoreNothing();
     duplicateScoringIsRejectedWithoutDuplicateEntries();
     authoritativeMatchScoresItsTerminalEventStream();
+    nonOnlineMatchesRejectTrophyScoring();
 }

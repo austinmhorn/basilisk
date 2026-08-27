@@ -1,6 +1,7 @@
 #include "basilisk/systems/MatchCoordinator.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cctype>
 #include <set>
 
@@ -9,6 +10,7 @@
 #include "basilisk/Random.hpp"
 #include "basilisk/systems/MapDiscoverySystem.hpp"
 #include "basilisk/systems/RoundController.hpp"
+#include "basilisk/systems/SigilPlacementSystem.hpp"
 
 namespace basilisk {
 namespace {
@@ -17,11 +19,6 @@ PlayerState* findPlayer(MatchState& state, PlayerId id) {
     const auto it = std::find_if(state.players.begin(), state.players.end(),
         [id](const PlayerState& player) { return player.id == id; });
     return it == state.players.end() ? nullptr : &*it;
-}
-
-bool bodyExists(const MatchState& state, PlayerId owner) {
-    return std::any_of(state.bodies.begin(), state.bodies.end(),
-        [owner](const BodyState& body) { return body.owner == owner; });
 }
 
 std::string normalizedResponse(std::string_view value) {
@@ -73,6 +70,22 @@ std::string challengeWord(const MatchState& state, ClashId clash) {
         (static_cast<std::uint64_t>(state.round) << 24U) ^ clash};
     return std::string(words[static_cast<std::size_t>(
         rng.range(0, static_cast<int>(std::size(words)) - 1))]);
+}
+
+ClashKind stationaryClashKind(ActionType type) {
+    if (type == ActionType::Search) return ClashKind::MoveIntoSearch;
+    if (type == ActionType::UseItem) return ClashKind::MoveIntoUseItem;
+    return ClashKind::MoveIntoStationary;
+}
+
+void assertDistinctLivingHunterCaves(const MatchState& state) {
+    if (state.result.status != MatchStatus::Active) return;
+    std::set<CaveId> occupied;
+    for (const PlayerState& player : state.players) {
+        if (!player.alive) continue;
+        assert(occupied.insert(player.cave).second &&
+            "Resolved round left living hunters in the same cave");
+    }
 }
 
 } // namespace
@@ -226,10 +239,7 @@ void MatchCoordinator::eliminatePlayer(
     }
     lastEvents_.push_back(GameEvent{GameEventType::PlayerKilled, std::nullopt, player, statePlayer->cave});
 
-    if (!bodyExists(state_, player)) {
-        state_.bodies.push_back(BodyState{player, statePlayer->cave, true, statePlayer->cave});
-        lastEvents_.push_back(GameEvent{GameEventType::BodyCreated, std::nullopt, player, statePlayer->cave});
-    }
+    placeSigilsForDeath(state_, *statePlayer, statePlayer->cave, lastEvents_);
 }
 
 void MatchCoordinator::updateTerminalResultIfNeeded() {
@@ -330,36 +340,25 @@ bool MatchCoordinator::tryResolveRound() {
     for (std::size_t i = 0; i < clashActions.size(); ++i) {
         const auto& a = clashActions[i];
         const auto* pa = findPlayer(state_, a.player);
-        if (!pa || a.type != ActionType::Move || !a.targetCave) continue;
+        if (!pa) continue;
         for (std::size_t j = i + 1; j < clashActions.size(); ++j) {
             const auto& b = clashActions[j];
             const auto* pb = findPlayer(state_, b.player);
             if (!pb) continue;
-            if (b.type == ActionType::Move && b.targetCave) {
+            const bool aMoves = a.type == ActionType::Move && a.targetCave.has_value();
+            const bool bMoves = b.type == ActionType::Move && b.targetCave.has_value();
+            if (aMoves && bMoves) {
                 if (*a.targetCave == *b.targetCave)
                     conflicts.push_back({ClashKind::MoveToSameCave, a.player, b.player, 0, 0, *a.targetCave});
                 else if (pa->cave == *b.targetCave && pb->cave == *a.targetCave)
                     conflicts.push_back({ClashKind::OppositeTraversal, a.player, b.player, 0, 0, *a.targetCave});
-            } else if ((b.type == ActionType::Search || b.type == ActionType::UseItem) &&
-                       pb->cave == *a.targetCave) {
-                conflicts.push_back({b.type == ActionType::Search ? ClashKind::MoveIntoSearch : ClashKind::MoveIntoUseItem,
-                                     a.player, b.player, a.player, b.player, pb->cave});
+            } else if (aMoves && *a.targetCave == pb->cave) {
+                conflicts.push_back({stationaryClashKind(b.type),
+                    a.player, b.player, a.player, b.player, pb->cave});
+            } else if (bMoves && *b.targetCave == pa->cave) {
+                conflicts.push_back({stationaryClashKind(a.type),
+                    a.player, b.player, b.player, a.player, pa->cave});
             }
-        }
-    }
-    // Also find stationary actions that sort before their mover.
-    for (std::size_t i = 0; i < clashActions.size(); ++i) {
-        const auto& stationary = clashActions[i];
-        const auto* ps = findPlayer(state_, stationary.player);
-        if (!ps || (stationary.type != ActionType::Search && stationary.type != ActionType::UseItem)) continue;
-        for (std::size_t j = 0; j < clashActions.size(); ++j) {
-            const auto& mover = clashActions[j];
-            if (mover.type != ActionType::Move || !mover.targetCave || *mover.targetCave != ps->cave) continue;
-            if (std::none_of(conflicts.begin(), conflicts.end(), [&](const Conflict& c) {
-                    return (c.a == mover.player && c.b == stationary.player) ||
-                           (c.b == mover.player && c.a == stationary.player); }))
-                conflicts.push_back({stationary.type == ActionType::Search ? ClashKind::MoveIntoSearch : ClashKind::MoveIntoUseItem,
-                                     mover.player, stationary.player, mover.player, stationary.player, ps->cave});
         }
     }
 
@@ -389,11 +388,17 @@ bool MatchCoordinator::tryResolveRound() {
             if (conflict.stationary != 0) {
                 auto actionIt = std::find_if(pending.actions.begin(), pending.actions.end(),
                     [&](const PlayerAction& action) { return action.player == conflict.stationary; });
-                RoundController controller;
-                pending.completedEvents = controller.resolveStationaryAction(state_, *actionIt);
-                actionIt->type = ActionType::Contextual;
-                actionIt->contextualAction.reset();
-                lastEvents_.insert(lastEvents_.end(), pending.completedEvents.begin(), pending.completedEvents.end());
+                if (actionIt != pending.actions.end() &&
+                    (actionIt->type == ActionType::Search ||
+                     actionIt->type == ActionType::UseItem)) {
+                    RoundController controller;
+                    pending.completedEvents =
+                        controller.resolveStationaryAction(state_, *actionIt);
+                    actionIt->type = ActionType::Contextual;
+                    actionIt->contextualAction.reset();
+                    lastEvents_.insert(lastEvents_.end(),
+                        pending.completedEvents.begin(), pending.completedEvents.end());
+                }
             }
             pendingClash_ = std::move(pending);
             return true;
@@ -404,6 +409,7 @@ bool MatchCoordinator::tryResolveRound() {
     RoundController controller;
     const auto roundEvents = controller.resolve(state_, actions);
     lastEvents_.insert(lastEvents_.end(), roundEvents.begin(), roundEvents.end());
+    assertDistinctLivingHunterCaves(state_);
 
     for (auto& [playerId, sessionState] : sessions_) {
         (void)playerId;
@@ -448,10 +454,8 @@ void MatchCoordinator::resolveClash(std::optional<PlayerId> winner) {
             if (loserState->health == 0) {
                 loserState->alive = false;
                 lastEvents_.push_back(GameEvent{GameEventType::PlayerKilled, *winner, loser, loserState->cave});
-                if (!bodyExists(state_, loser)) {
-                    state_.bodies.push_back(BodyState{loser, loserState->cave, true, loserState->cave});
-                    lastEvents_.push_back(GameEvent{GameEventType::BodyCreated, std::nullopt, loser, loserState->cave});
-                }
+                placeSigilsForDeath(
+                    state_, *loserState, loserState->cave, lastEvents_);
             } else if (const auto cave = safeClashRelocation(state_, loser, winnerCave, pending.clash.id)) {
                 loserState->cave = *cave;
                 MapDiscoverySystem::discoverCave(*loserState, *cave, lastEvents_);
@@ -471,6 +475,7 @@ void MatchCoordinator::resolveClash(std::optional<PlayerId> winner) {
     RoundController controller;
     const auto events = controller.resolve(state_, pending.actions);
     lastEvents_.insert(lastEvents_.end(), events.begin(), events.end());
+    assertDistinctLivingHunterCaves(state_);
     for (auto& [id, session] : sessions_) {
         (void)id;
         session.pendingAction.reset();

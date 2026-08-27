@@ -7,12 +7,15 @@
 
 #include "basilisk/client/PlayerProfile.hpp"
 #include "basilisk/client/AccountCosmetics.hpp"
+#include "basilisk/client/ai/AiDecisionEngine.hpp"
 
 namespace basilisk::game {
 
 enum class MainMenuPage {
     Main,
     StartGame,
+    PlayOnline,
+    PlayAi,
     Leaderboards,
     Settings,
     Cosmetics,
@@ -24,6 +27,11 @@ enum class MainMenuPage {
 
 enum class MainMenuAction {
     StartGame,
+    PlayOnline,
+    PlayAi,
+    CycleAiDifficulty,
+    CycleAiBehavior,
+    StartAiGame,
     Leaderboards,
     Settings,
     EditProfile,
@@ -50,6 +58,8 @@ enum class MainMenuResult {
     RequestFindMatch,
     RequestCancelFindMatch,
     Logout,
+    RequestPlayOnline,
+    StartAiGame,
 };
 
 class MainMenuState {
@@ -66,6 +76,9 @@ public:
     [[nodiscard]] bool lobbyWaiting() const noexcept;
     [[nodiscard]] const client::CallingCardId& selectedCallingCard() const noexcept;
     [[nodiscard]] const client::EmblemId& selectedEmblem() const noexcept;
+    [[nodiscard]] client::ai::AiDifficulty aiDifficulty() const noexcept;
+    [[nodiscard]] client::ai::AiBehavior aiBehavior() const noexcept;
+    void openOnline() noexcept;
 
     void select(std::size_t index) noexcept;
     void moveSelection(int delta) noexcept;
@@ -96,6 +109,8 @@ private:
     bool lobbyWaiting_{false};
     client::CallingCardId selectedCallingCard_{"arrow-right-black"};
     client::EmblemId selectedEmblem_{"circle-black"};
+    client::ai::AiDifficulty aiDifficulty_{client::ai::AiDifficulty::Medium};
+    client::ai::AiBehavior aiBehavior_{client::ai::AiBehavior::Balanced};
 };
 
 } // namespace basilisk::game

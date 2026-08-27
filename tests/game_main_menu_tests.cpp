@@ -33,6 +33,11 @@ int main() {
 
     assert(menu.activateSelected() == MainMenuResult::None);
     assert(menu.page() == MainMenuPage::StartGame);
+    assert(menu.actions().size() == 3);
+    assert(menu.activate(MainMenuAction::PlayOnline) ==
+           MainMenuResult::RequestPlayOnline);
+    menu.openOnline();
+    assert(menu.page() == MainMenuPage::PlayOnline);
     assert(menu.actions().size() == 4);
     assert(menu.activate(MainMenuAction::FindGame) ==
            MainMenuResult::RequestFindMatch);
@@ -45,7 +50,7 @@ int main() {
     assert(menu.activate(MainMenuAction::CancelFindMatch) ==
            MainMenuResult::RequestCancelFindMatch);
     menu.matchmakingCancelled();
-    assert(menu.page() == MainMenuPage::StartGame);
+    assert(menu.page() == MainMenuPage::PlayOnline);
     assert(menu.activate(MainMenuAction::HostGame) ==
            MainMenuResult::RequestHostLobby);
     assert(menu.page() == MainMenuPage::HostLobby);
@@ -59,7 +64,7 @@ int main() {
     assert(menu.activate(MainMenuAction::CancelLobby) ==
            MainMenuResult::RequestCancelLobby);
     menu.lobbyCancelled();
-    assert(menu.page() == MainMenuPage::StartGame);
+    assert(menu.page() == MainMenuPage::PlayOnline);
     assert(menu.activate(MainMenuAction::JoinGame) == MainMenuResult::None);
     menu.appendLobbyCode("hunt34");
     assert(menu.lobbyCode() == "HUNT34");
@@ -67,6 +72,19 @@ int main() {
            MainMenuResult::RequestJoinLobby);
     menu.lobbyAssigned("HUNT34");
     assert(menu.page() == MainMenuPage::MatchReady);
+    assert(menu.back() == MainMenuResult::None);
+    assert(menu.page() == MainMenuPage::PlayOnline);
+    assert(menu.back() == MainMenuResult::None);
+    assert(menu.page() == MainMenuPage::StartGame);
+    assert(menu.activate(MainMenuAction::PlayAi) == MainMenuResult::None);
+    assert(menu.page() == MainMenuPage::PlayAi);
+    assert(menu.aiDifficulty() == basilisk::client::ai::AiDifficulty::Medium);
+    assert(menu.aiBehavior() == basilisk::client::ai::AiBehavior::Balanced);
+    assert(menu.activate(MainMenuAction::CycleAiDifficulty) == MainMenuResult::None);
+    assert(menu.aiDifficulty() == basilisk::client::ai::AiDifficulty::Hard);
+    assert(menu.activate(MainMenuAction::CycleAiBehavior) == MainMenuResult::None);
+    assert(menu.aiBehavior() == basilisk::client::ai::AiBehavior::Explorer);
+    assert(menu.activate(MainMenuAction::StartAiGame) == MainMenuResult::StartAiGame);
     assert(menu.back() == MainMenuResult::None);
     assert(menu.page() == MainMenuPage::StartGame);
     assert(menu.back() == MainMenuResult::None);

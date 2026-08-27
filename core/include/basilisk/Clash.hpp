@@ -17,7 +17,8 @@ enum class ClashKind {
     MoveToSameCave,
     OppositeTraversal,
     MoveIntoSearch,
-    MoveIntoUseItem
+    MoveIntoUseItem,
+    MoveIntoStationary
 };
 
 struct ActiveClash {

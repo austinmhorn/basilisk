@@ -328,6 +328,7 @@ bool drawPlayerCard(
     SDL_FRect card,
     std::string_view designation,
     std::string_view username,
+    std::string_view subtitle,
     const client::CallingCardId* callingCardId,
     const client::EmblemId* emblemId,
     bool local,
@@ -390,15 +391,17 @@ bool drawPlayerCard(
             card.y + card.h - 2.0F * scale);
     }
 
+    const std::string_view topLine = subtitle.empty() ? designation : username;
+    const std::string_view bottomLine = subtitle.empty() ? username : subtitle;
     if (!context.label(
-            designation,
+            topLine,
             FontWeight::Bold,
             ui::Typography::playerDesignation,
             ui::Theme::muted,
             nameplate.x + 8.0F * scale,
             nameplate.y + 3.0F * scale) ||
         !context.label(
-            username,
+            bottomLine,
             FontWeight::SemiBold,
             ui::Typography::playerName,
             ui::Theme::text,
@@ -462,6 +465,7 @@ bool drawHeaderHud(
                 playerCard,
                 designation,
                 profile == nullptr ? "Player" : profile->username,
+                session.participantSubtitle(onlySlot.player),
                 profile == nullptr ? nullptr : &profile->callingCardId,
                 profile == nullptr ? nullptr : &profile->emblemId,
                 onlySlot.player == session.viewContext().localPlayer,
@@ -499,6 +503,7 @@ bool drawHeaderHud(
                 p1Card,
                 "P1",
                 p1 == nullptr ? "Player One" : p1->username,
+                p1Slot == nullptr ? std::string_view{} : session.participantSubtitle(p1Slot->player),
                 p1 == nullptr ? nullptr : &p1->callingCardId,
                 p1 == nullptr ? nullptr : &p1->emblemId,
                 p1Slot != nullptr &&
@@ -511,6 +516,7 @@ bool drawHeaderHud(
                 p2Card,
                 "P2",
                 p2 == nullptr ? "Player Two" : p2->username,
+                p2Slot == nullptr ? std::string_view{} : session.participantSubtitle(p2Slot->player),
                 p2 == nullptr ? nullptr : &p2->callingCardId,
                 p2 == nullptr ? nullptr : &p2->emblemId,
                 p2Slot != nullptr &&
@@ -1636,6 +1642,8 @@ bool renderScreenShell(
     bool revealDebugMap,
     bool revealDebugGameplay,
     bool debugInventoryMenuOpen,
+    bool debugKillMenuOpen,
+    bool debugKillAvailable,
 #endif
     int outputWidth,
     int outputHeight,
@@ -1800,6 +1808,9 @@ bool renderScreenShell(
             revealDebugMap,
             revealDebugGameplay,
             debugInventoryMenuOpen,
+            debugKillMenuOpen,
+            debugKillAvailable,
+            *debugGameplayTruth,
             debugGameplayTruth->basiliskBehavior,
             error)) {
         SDL_SetRenderClipRect(renderer, nullptr);

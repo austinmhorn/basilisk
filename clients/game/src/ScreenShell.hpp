@@ -109,6 +109,8 @@ struct LifecycleModalGeometry {
     bool revealDebugMap,
     bool revealDebugGameplay,
     bool debugInventoryMenuOpen,
+    bool debugKillMenuOpen,
+    bool debugKillAvailable,
 #endif
     int outputWidth,
     int outputHeight,

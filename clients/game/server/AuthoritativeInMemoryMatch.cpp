@@ -583,7 +583,8 @@ AuthoritativeInMemoryMatch::create(
     std::vector<client::PublicPlayerProfile> profiles,
     std::string& error,
     std::optional<TrophyScoringContext> trophyScoring,
-    std::shared_ptr<PublicTrophyReadModel> leaderboard) {
+    std::shared_ptr<PublicTrophyReadModel> leaderboard,
+    client::MatchMode mode) {
 
     error.clear();
     MatchState match = MapGenerator::generate(mapSeed, matchSeed);
@@ -602,6 +603,10 @@ AuthoritativeInMemoryMatch::create(
     }
     if (profilePlayers != players) {
         error = "One public profile is required for each player.";
+        return nullptr;
+    }
+    if (trophyScoring.has_value() && !client::trophyEligible(mode)) {
+        error = "Trophy scoring is available only for Online matches.";
         return nullptr;
     }
     if (trophyScoring.has_value()) {

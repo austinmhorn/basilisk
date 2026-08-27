@@ -23,6 +23,7 @@
 #include "DemoMap.hpp"
 #include "DemoUi.hpp"
 #include "LocalGameSessionAdapter.hpp"
+#include "LocalAiGameSessionAdapter.hpp"
 #include "MapRenderer.hpp"
 #include "MainMenu.hpp"
 #include "MainMenuRenderer.hpp"
@@ -42,6 +43,7 @@
 
 #if defined(BASILISK_GAME_DEBUG)
 #include "DebugInventoryMenu.hpp"
+#include "DebugKillMenu.hpp"
 #include "DebugMapProvider.hpp"
 #endif
 
@@ -79,10 +81,14 @@ struct AppState {
     std::size_t handledLobbyResponseRevision{0};
     std::size_t handledCosmeticLoadoutResponseRevision{0};
     bool cancelLobbyWhenHosted{false};
+    bool enterOnlineAfterAuthentication{false};
+    std::string serverUrl{"ws://127.0.0.1:8765"};
 
     std::unique_ptr<basilisk::game::ClientSessionController> ownedSession;
     basilisk::game::ClientSessionController* session{nullptr};
     std::unique_ptr<basilisk::game::WebSocketNetworkSession> networkSession;
+    std::unique_ptr<basilisk::game::LocalAiSessionDriver> localAiDriver;
+    Uint64 localAiLastTick{0};
     bool networkFailureLogged{false};
     basilisk::game::PlayerMapLayout mapLayout;
     basilisk::game::MapPresentationState mapPresentation;
@@ -103,6 +109,7 @@ struct AppState {
     basilisk::game::debug::DebugMapRevealState debugMapReveal;
     basilisk::game::debug::DebugMapRevealState debugGameplayReveal;
     basilisk::game::debug::DebugInventoryMenuState debugInventoryMenu;
+    basilisk::game::debug::DebugKillMenuState debugKillMenu;
 #endif
 };
 
@@ -144,6 +151,52 @@ SDL_AppResult handleMainMenuResult(
 
     if (result == basilisk::game::MainMenuResult::Exit)
         return SDL_APP_SUCCESS;
+    if (result == basilisk::game::MainMenuResult::RequestPlayOnline) {
+        if (state.authenticatedProfile.has_value() &&
+            state.networkSession != nullptr) {
+            state.mainMenu.openOnline();
+            return SDL_APP_CONTINUE;
+        }
+        std::string error;
+        state.networkSession =
+            basilisk::game::WebSocketNetworkSession::connectForAuthentication(
+                state.serverUrl, error);
+        if (state.networkSession == nullptr) {
+            SDL_Log("Unable to connect network session: %s", error.c_str());
+            return SDL_APP_CONTINUE;
+        }
+        state.enterOnlineAfterAuthentication = true;
+        state.storedSessionAttempted = false;
+        state.authResponseHandled = false;
+        state.networkFailureLogged = false;
+        state.view = AppView::Authentication;
+        (void)SDL_StartTextInput(state.window);
+        return SDL_APP_CONTINUE;
+    }
+    if (result == basilisk::game::MainMenuResult::StartAiGame) {
+        const Uint64 entropy = SDL_GetPerformanceCounter() ^ SDL_GetTicksNS();
+        auto local = basilisk::game::LocalAiGameSessionAdapter::create(
+            basilisk::MapSeed{entropy}, basilisk::MatchSeed{entropy ^ 0xA17EULL},
+            state.mainMenu.aiDifficulty(), state.mainMenu.aiBehavior(),
+            basilisk::client::ai::AiSeed{entropy ^ 0xB451115CULL});
+        if (local.session == nullptr || local.driver == nullptr) {
+            SDL_Log("Unable to create local AI match");
+            return SDL_APP_CONTINUE;
+        }
+        state.ownedSession = std::move(local.session);
+        state.session = state.ownedSession.get();
+        state.localAiDriver = std::move(local.driver);
+#if defined(BASILISK_GAME_DEBUG)
+        state.debugMapProvider = std::move(local.mapProvider);
+        state.debugMapReveal = basilisk::game::debug::DebugMapRevealState{};
+        state.debugGameplayReveal = basilisk::game::debug::DebugMapRevealState{};
+        state.debugInventoryMenu.close();
+#endif
+        state.localAiLastTick = SDL_GetTicks();
+        state.screenShellEnabled = true;
+        state.view = AppView::Gameplay;
+        return SDL_APP_CONTINUE;
+    }
     if (result == basilisk::game::MainMenuResult::Logout &&
         state.networkSession != nullptr &&
         state.authenticatedSessionToken.has_value()) {
@@ -264,6 +317,21 @@ bool pointerInRenderCoordinates(
 
 SDL_AppResult finishGameplayQuit(AppState& state) {
     state.pauseMenu.close();
+    if (state.localAiDriver != nullptr) {
+        state.localAiDriver.reset();
+#if defined(BASILISK_GAME_DEBUG)
+        state.debugMapProvider.reset();
+        state.debugInventoryMenu.close();
+#endif
+        state.ownedSession =
+            std::make_unique<basilisk::game::ClientSessionController>();
+        state.session = state.ownedSession.get();
+        state.screenShellEnabled = false;
+        state.view = AppView::MainMenu;
+        state.mapActionMenu.dismiss();
+        state.actionSelection = basilisk::game::ActionSelectionState{};
+        return SDL_APP_CONTINUE;
+    }
     if (state.networkSession == nullptr) return SDL_APP_SUCCESS;
     state.networkSession->clearGameplaySession();
     state.session = nullptr;
@@ -337,8 +405,10 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
              std::string_view{argv[index]} == "--local-game"))
             developmentLaunch = true;
     }
-    if (!developmentLaunch && !connectUrl.has_value())
-        connectUrl = endpointConfig.connectUrl;
+    state->serverUrl = connectUrl.value_or(endpointConfig.connectUrl);
+    // Fixed-token development launches connect immediately. Normal launches
+    // remain offline at the Main Menu until Play Online is chosen.
+    if (!connectToken.has_value() && !developmentLaunch) connectUrl.reset();
     if (connectUrl.has_value()) {
         std::string error;
         state->networkSession = connectToken.has_value()
@@ -639,8 +709,8 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         return SDL_APP_CONTINUE;
     }
 
-    if (state != nullptr && state->networkSession != nullptr &&
-        state->networkSession->activeClash().has_value()) {
+    if (state != nullptr && state->session != nullptr &&
+        state->session->activeClash().has_value()) {
         (void)SDL_StartTextInput(state->window);
         if (event->type == SDL_EVENT_TEXT_INPUT) {
             if (state->clashInput.size() + std::char_traits<char>::length(event->text.text) <= 64)
@@ -650,7 +720,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 state->clashInput.pop_back();
             else if ((event->key.key == SDLK_RETURN || event->key.key == SDLK_KP_ENTER) &&
                      !state->clashInput.empty()) {
-                if (state->networkSession->submitClashResponse(state->clashInput))
+                if (state->session->submitClashResponse(state->clashInput))
                     state->clashInput.clear();
             }
         }
@@ -697,7 +767,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
         !event->key.repeat && event->key.key == SDLK_F1) {
         if (state->debugMapProvider == nullptr) {
-            SDL_Log("Debug map reveal is available only in --local-game");
+            SDL_Log("Debug map reveal requires a local debug match");
         } else {
             state->debugMapReveal.toggle();
             SDL_Log(
@@ -709,7 +779,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
         !event->key.repeat && event->key.key == SDLK_F2) {
         if (state->debugMapProvider == nullptr) {
-            SDL_Log("Debug gameplay truth is available only in --local-game");
+            SDL_Log("Debug gameplay truth requires a local debug match");
         } else {
             state->debugGameplayReveal.toggle();
             SDL_Log(
@@ -723,7 +793,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
         !event->key.repeat && event->key.key == SDLK_F3) {
         if (state->debugMapProvider == nullptr) {
-            SDL_Log("Debug Basilisk behavior control is available only in --local-game");
+            SDL_Log("Debug Basilisk behavior control requires a local debug match");
         } else if (!state->debugMapProvider->cycleBasiliskBehavior()) {
             SDL_Log("Unable to cycle debug Basilisk behavior");
         } else {
@@ -734,13 +804,16 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
         !event->key.repeat && event->key.key == SDLK_F4) {
         if (state->debugMapProvider == nullptr) {
-            SDL_Log("Debug inventory is available only in --local-game");
+            SDL_Log("Debug inventory requires a local debug match");
         } else {
+            state->debugKillMenu.close();
             state->debugInventoryMenu.toggle();
         }
         return SDL_APP_CONTINUE;
     }
-    if (state != nullptr && state->debugInventoryMenu.active()) {
+    if (state != nullptr && state->debugInventoryMenu.active() &&
+        !(event->type == SDL_EVENT_KEY_DOWN && !event->key.repeat &&
+          event->key.key == SDLK_F5)) {
         if (event->type == SDL_EVENT_KEY_DOWN && !event->key.repeat) {
             if (event->key.key == SDLK_ESCAPE) {
                 state->debugInventoryMenu.close();
@@ -757,6 +830,39 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     SDL_Log("Debug item grant failed (inventory may be full)");
                 } else {
                     SDL_Log("Debug item granted");
+                }
+            }
+        }
+        return SDL_APP_CONTINUE;
+    }
+    if (state != nullptr && event->type == SDL_EVENT_KEY_DOWN &&
+        !event->key.repeat && event->key.key == SDLK_F5) {
+        if (state->debugMapProvider == nullptr ||
+            !state->debugMapProvider->killControlAvailable()) {
+            SDL_Log("Debug kill control requires a Play AI debug match");
+        } else {
+            state->debugInventoryMenu.close();
+            state->debugKillMenu.toggle();
+        }
+        return SDL_APP_CONTINUE;
+    }
+    if (state != nullptr && state->debugKillMenu.active()) {
+        if (event->type == SDL_EVENT_KEY_DOWN && !event->key.repeat) {
+            if (event->key.key == SDLK_ESCAPE) {
+                state->debugKillMenu.close();
+            } else if (event->key.key == SDLK_UP) {
+                state->debugKillMenu.moveSelection(-1);
+            } else if (event->key.key == SDLK_DOWN) {
+                state->debugKillMenu.moveSelection(1);
+            } else if (event->key.key == SDLK_RETURN ||
+                       event->key.key == SDLK_KP_ENTER) {
+                if (state->debugMapProvider == nullptr ||
+                    !state->debugMapProvider->killPlayer(
+                        state->debugKillMenu.selectedTarget())) {
+                    SDL_Log("Debug kill failed");
+                } else {
+                    state->debugKillMenu.close();
+                    SDL_Log("Debug hunter killed through authoritative elimination");
                 }
             }
         }
@@ -1129,6 +1235,12 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 SDL_AppResult SDL_AppIterate(void* appstate) {
     auto* state = static_cast<AppState*>(appstate);
 
+    if (state->localAiDriver != nullptr) {
+        const Uint64 now = SDL_GetTicks();
+        state->localAiDriver->advance(now - state->localAiLastTick);
+        state->localAiLastTick = now;
+    }
+
     if (state->networkSession != nullptr) {
         state->networkSession->pump();
         state->session = state->networkSession->controller();
@@ -1232,6 +1344,12 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 state->resumeGameplayOnBootstrap = state->restoringSession;
                 state->restoringSession = false;
                 state->authScreen.setWaiting(false);
+                if (state->enterOnlineAfterAuthentication) {
+                    (void)state->mainMenu.activate(
+                        basilisk::game::MainMenuAction::StartGame);
+                    state->mainMenu.openOnline();
+                }
+                state->enterOnlineAfterAuthentication = false;
                 state->view = AppView::MainMenu;
                 (void)SDL_StopTextInput(state->window);
             } else if (const auto* failure = std::get_if<
@@ -1389,6 +1507,8 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     state->debugMapReveal.revealed(),
                     state->debugGameplayReveal.revealed(),
                     state->debugInventoryMenu.active(),
+                    state->debugKillMenu.active(),
+                    state->debugMapProvider->killControlAvailable(),
 #endif
                     outputWidth,
                     outputHeight,
@@ -1467,10 +1587,10 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         }
     }
 
-    if (state->networkSession != nullptr && state->networkSession->activeClash().has_value()) {
+    if (state->session != nullptr && state->session->activeClash().has_value()) {
         std::string clashError;
         if (!basilisk::game::renderClashQte(state->renderer, *state->textRenderer,
-                *state->networkSession->activeClash(), state->clashInput,
+                *state->session->activeClash(), state->clashInput,
                 outputWidth, outputHeight, clashError)) {
             SDL_Log("Clash QTE rendering failed: %s", clashError.c_str());
             return SDL_APP_FAILURE;
@@ -1492,6 +1612,15 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             SDL_Log(
                 "Debug inventory menu rendering failed: %s",
                 inventoryError.c_str());
+            return SDL_APP_FAILURE;
+        }
+    }
+    if (state->debugKillMenu.active()) {
+        std::string killError;
+        if (!basilisk::game::debug::renderDebugKillMenu(
+                state->renderer, *state->textRenderer, state->debugKillMenu,
+                outputWidth, outputHeight, killError)) {
+            SDL_Log("Debug kill menu rendering failed: %s", killError.c_str());
             return SDL_APP_FAILURE;
         }
     }

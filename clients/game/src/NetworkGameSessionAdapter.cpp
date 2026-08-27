@@ -19,6 +19,13 @@ public:
         return send(network::LockActionCommand{player});
     }
 
+    [[nodiscard]] bool submitClashResponse(
+        PlayerId,
+        ClashId clash,
+        std::string response) override {
+        return send(network::SubmitClashResponse{clash, std::move(response)});
+    }
+
 private:
     template <typename Payload>
     [[nodiscard]] bool send(Payload payload) {
@@ -145,6 +152,10 @@ bool NetworkGameSessionAdapter::ingest(network::ClashStarted clash, std::string&
         error = "Invalid clash challenge."; return false;
     }
     activeClash_ = std::move(clash);
+    controller_->setActiveClash(ActiveClash{
+        activeClash_->clash, ClashKind::MoveToSameCave,
+        activeClash_->participants, activeClash_->challengeWord,
+        activeClash_->remainingMs});
     lastClashResult_.reset();
     return true;
 }
@@ -156,6 +167,7 @@ bool NetworkGameSessionAdapter::ingest(network::ClashResolved clash, std::string
         error = "Invalid clash result."; return false;
     }
     activeClash_.reset();
+    controller_->setActiveClash(std::nullopt);
     lastClashResult_ = std::move(clash);
     return true;
 }
@@ -164,8 +176,7 @@ const std::optional<network::ClashStarted>& NetworkGameSessionAdapter::activeCla
 const std::optional<network::ClashResolved>& NetworkGameSessionAdapter::lastClashResult() const noexcept { return lastClashResult_; }
 
 bool NetworkGameSessionAdapter::submitClashResponse(std::string response) {
-    return transport_ && activeClash_ && transport_->send(network::ClientCommand{
-        network::kProtocolVersion, network::SubmitClashResponse{activeClash_->clash, std::move(response)}});
+    return controller_ && controller_->submitClashResponse(std::move(response));
 }
 
 bool NetworkGameSessionAdapter::requestLeaderboard(
