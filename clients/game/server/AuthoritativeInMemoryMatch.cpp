@@ -571,18 +571,27 @@ private:
                 };
                 continue;
             }
-            if (context.mode == client::ClientViewMode::Spectating) continue;
-            context.localPlayer = localPlayer;
-            context.viewedPlayer = localPlayer;
-            context.mode = client::ClientViewMode::Defeated;
-            context.spectatablePlayer.reset();
-            if (match_.result.status != MatchStatus::Active) continue;
             const auto survivor = std::find_if(
                 match_.players.begin(), match_.players.end(),
                 [localPlayer](const PlayerState& player) {
                     return player.id != localPlayer && player.alive;
                 });
-            if (survivor != match_.players.end())
+            if (context.mode == client::ClientViewMode::Spectating) {
+                const PlayerState* viewed = findPlayer(match_, context.viewedPlayer);
+                if (match_.result.status == MatchStatus::Active &&
+                    (viewed == nullptr || !viewed->alive) &&
+                    survivor != match_.players.end()) {
+                    context.viewedPlayer = survivor->id;
+                    context.spectatablePlayer = survivor->id;
+                }
+                continue;
+            }
+            context.localPlayer = localPlayer;
+            context.viewedPlayer = localPlayer;
+            context.mode = client::ClientViewMode::Defeated;
+            context.spectatablePlayer.reset();
+            if (match_.result.status == MatchStatus::Active &&
+                survivor != match_.players.end())
                 context.spectatablePlayer = survivor->id;
         }
     }
