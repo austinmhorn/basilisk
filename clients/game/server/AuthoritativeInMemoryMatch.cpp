@@ -132,6 +132,7 @@ public:
                 std::nullopt,
             });
         }
+        refreshAiSnapshots({});
         driveAi();
     }
 
@@ -295,6 +296,7 @@ private:
         if (!resolvedClash && !startedClash && !publishSnapshot) return;
 
         refreshContexts();
+        refreshAiSnapshots(events);
         if (resolvedClash) {
             publishClashResolved(
                 priorClash->id,
@@ -303,6 +305,15 @@ private:
         }
         if (publishSnapshot) publishAll(events);
         if (startedClash) publishClashStarted(*active);
+    }
+
+    void refreshAiSnapshots(const std::vector<GameEvent>& events) {
+        for (const auto& agent : aiAgents_) {
+            aiSnapshots_.insert_or_assign(
+                agent.config.player,
+                SnapshotSystem::buildForPlayer(
+                    match_, agent.config.player, events));
+        }
     }
 
     void driveAi() {
@@ -380,8 +391,13 @@ private:
                 });
             if (agent == aiAgents_.end()) return;
 
-            PlayerRoundSnapshot snapshot = SnapshotSystem::buildForPlayer(
-                match_, agent->config.player, {});
+            const auto snapshotEntry =
+                aiSnapshots_.find(agent->config.player);
+            if (snapshotEntry == aiSnapshots_.end() ||
+                snapshotEntry->second.round != match_.round) {
+                continue;
+            }
+            const PlayerRoundSnapshot& snapshot = snapshotEntry->second;
             agent->decisionRound = match_.round;
             if (snapshot.availableActions.empty()) continue;
             agent->knowledge.observe(snapshot);
@@ -689,6 +705,7 @@ private:
     bool trophyScoringAttempted_{false};
     std::optional<std::string> trophyScoringError_;
     std::vector<NetworkAiAgent> aiAgents_;
+    std::map<PlayerId, PlayerRoundSnapshot> aiSnapshots_;
     std::uint64_t nowMs_{0};
 };
 
