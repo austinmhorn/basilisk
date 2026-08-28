@@ -1122,8 +1122,6 @@ void authenticatedSandboxSupportsThreeToSixHumanSockets() {
             return launched;
         }, 10000));
 
-        std::vector<CaveId> startingCaves;
-        startingCaves.reserve(humanCount);
         for (std::size_t index = 0; index < humanCount; ++index) {
             const auto* controller = clients[index]->controller();
             assert(controller != nullptr);
@@ -1134,21 +1132,12 @@ void authenticatedSandboxSupportsThreeToSixHumanSockets() {
             const auto* snapshot = controller->displayedSnapshot();
             assert(snapshot != nullptr);
             assert(snapshot->player == static_cast<PlayerId>(index + 1));
-            startingCaves.push_back(snapshot->currentCave);
-        }
-
-        for (std::size_t viewer = 0; viewer < humanCount; ++viewer) {
-            const auto* snapshot =
-                clients[viewer]->controller()->displayedSnapshot();
-            for (std::size_t rival = 0; rival < humanCount; ++rival) {
-                if (viewer == rival) continue;
-                assert(std::none_of(
-                    snapshot->map.caves.begin(),
-                    snapshot->map.caves.end(),
-                    [&](const DiscoveredCaveView& cave) {
-                        return cave.cave == startingCaves[rival];
-                    }));
-            }
+            assert(std::all_of(
+                snapshot->observations.begin(),
+                snapshot->observations.end(),
+                [&](const PlayerObservation& observation) {
+                    return observation.viewer == snapshot->player;
+                }));
         }
 
         const RoundNumber round =
