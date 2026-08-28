@@ -20,7 +20,7 @@
 
 namespace basilisk::game::network {
 
-inline constexpr std::uint32_t kProtocolVersion{7};
+inline constexpr std::uint32_t kProtocolVersion{8};
 
 struct CreateAccountRequest {
     std::string email;
@@ -162,10 +162,12 @@ struct ServerUpdate {
 };
 
 struct SubmitActionCommand {
+    RoundNumber round{};
     PlayerAction action;
 };
 
 struct LockActionCommand {
+    RoundNumber round{};
     PlayerId player{};
 };
 
