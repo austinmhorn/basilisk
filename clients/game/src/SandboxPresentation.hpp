@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -12,7 +13,7 @@ struct SandboxParticipantPresentation {
     PlayerId player{};
     std::string label;
     std::string subtitle;
-    bool alive{false};
+    std::optional<bool> alive;
     bool local{false};
     bool viewed{false};
 };
@@ -35,7 +36,9 @@ sandboxParticipantPresentation(const ClientSessionController& session) {
                 (profile == session.profiles().end() ?
                     "AI " + std::to_string(index + 1) : profile->username),
             std::string{session.participantSubtitle(slot.player)},
-            snapshot != nullptr && snapshot->alive,
+            snapshot == nullptr
+                ? std::nullopt
+                : std::optional<bool>{snapshot->alive},
             slot.player == session.viewContext().localPlayer,
             slot.player == session.viewContext().viewedPlayer,
         });
