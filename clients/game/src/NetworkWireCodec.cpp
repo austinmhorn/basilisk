@@ -1030,8 +1030,10 @@ bool encodeWire(
     const bool written = std::visit([&](const auto& command) {
         using T = std::decay_t<decltype(command)>;
         if constexpr (std::is_same_v<T, SubmitActionCommand>) {
+            writer.u32(command.round);
             return writePlayerAction(writer, command.action);
         } else if constexpr (std::is_same_v<T, LockActionCommand>) {
+            writer.u32(command.round);
             writeId(writer, command.player);
             return true;
         } else if constexpr (std::is_same_v<T, WatchRemainingHunterCommand>) {
@@ -1418,13 +1420,15 @@ bool decodeClientCommand(
     switch (type) {
         case WireMessageType::SubmitAction: {
             SubmitActionCommand command;
-            if (!readPlayerAction(reader, command.action)) return false;
+            if (!reader.u32(command.round) ||
+                !readPlayerAction(reader, command.action)) return false;
             decoded.payload = std::move(command);
             break;
         }
         case WireMessageType::LockAction: {
             LockActionCommand command;
-            if (!readId(reader, command.player)) return false;
+            if (!reader.u32(command.round) ||
+                !readId(reader, command.player)) return false;
             decoded.payload = command;
             break;
         }
