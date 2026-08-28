@@ -16,6 +16,7 @@
 #include "PointerInput.hpp"
 #include "PauseMenu.hpp"
 #include "SnapshotPresentation.hpp"
+#include "SandboxPresentation.hpp"
 #include "basilisk/systems/RoundController.hpp"
 #include "basilisk/systems/SnapshotSystem.hpp"
 
@@ -588,6 +589,41 @@ void controllerOwnsMetadataAndSelectsNewestLocalSnapshot() {
     assert(session.profiles().size() == 2);
 }
 
+void sandboxParticipantStatusDoesNotTreatMissingRemoteSnapshotAsDead() {
+    PublicMatchMetadata metadata;
+    metadata.players = {
+        {PlayerId{1}, PlayerSlot::P1},
+        {PlayerId{2}, PlayerSlot::P2},
+        {PlayerId{3}, PlayerSlot::P3},
+    };
+    std::vector<client::PublicPlayerProfile> profiles{
+        {PlayerId{1}, "Host", {"arrow-right-black"}, {"circle-black"}},
+        {PlayerId{2}, "Remote", {"arrow-right-black"}, {"circle-black"}},
+        {PlayerId{3}, "AI", {"arrow-right-black"}, {"circle-black"}},
+    };
+    ClientSessionController session(
+        std::move(metadata), std::move(profiles), playingView(), nullptr, nullptr);
+    session.setMatchMode(client::MatchMode::Sandbox);
+
+    PlayerRoundSnapshot local;
+    local.player = PlayerId{1};
+    local.alive = true;
+    assert(session.ingestSnapshot(local));
+
+    auto participants = sandboxParticipantPresentation(session);
+    assert(participants.size() == 3);
+    assert(participants[0].alive == std::optional<bool>{true});
+    assert(!participants[1].alive.has_value());
+    assert(!participants[2].alive.has_value());
+
+    PlayerRoundSnapshot remote;
+    remote.player = PlayerId{2};
+    remote.alive = false;
+    assert(session.ingestSnapshot(remote));
+    participants = sandboxParticipantPresentation(session);
+    assert(participants[1].alive == std::optional<bool>{false});
+}
+
 void controllerHandlesMissingSpectatorSnapshotSafely() {
     ClientSessionController session({}, {}, spectatorView(), nullptr, nullptr);
     PlayerRoundSnapshot local;
@@ -1097,6 +1133,7 @@ int main() {
     sandboxLifecycleCopyIsParticipantNeutral();
     spectatorTerminalResultUsesPublicWinnerProfile();
     controllerOwnsMetadataAndSelectsNewestLocalSnapshot();
+    sandboxParticipantStatusDoesNotTreatMissingRemoteSnapshotAsDead();
     controllerHandlesMissingSpectatorSnapshotSafely();
     controllerOwnsWatchTransition();
     controllerForwardsCommandsWithAuthorityGating();
