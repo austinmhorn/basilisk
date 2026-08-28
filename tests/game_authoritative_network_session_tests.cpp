@@ -339,6 +339,53 @@ void authenticatedServerReturnsOnlyPublicLeaderboardFields() {
     }
 }
 
+void slowOnlineSandboxHumanExpiresWithoutBlockingRound() {
+    auto config = client::defaultSandboxSessionConfig(3);
+    config.humanPlayerCount = 3;
+    config.caveCount = 30;
+    config.jackalCount = 0;
+    config.mapSeed = MapSeed{3303};
+
+    std::vector<client::PublicPlayerProfile> sandboxProfiles;
+    for (std::uint32_t slot = 1; slot <= 3; ++slot) {
+        sandboxProfiles.push_back({
+            PlayerId{slot},
+            "Hunter " + std::to_string(slot),
+            {"arrow-right-black"},
+            {"circle-black"},
+        });
+    }
+
+    std::string error;
+    auto host = AuthoritativeInMemoryMatch::createSandbox(
+        config, sandboxProfiles, {}, error);
+    assert(host != nullptr && error.empty());
+    ConnectedClient p1 = connectClient(*host, PlayerId{1});
+    ConnectedClient p2 = connectClient(*host, PlayerId{2});
+    ConnectedClient p3 = connectClient(*host, PlayerId{3});
+
+    const RoundNumber round = host->authoritativeRound();
+    assert(p1.session->controller().submitAndLock(
+        actionOfType(*p1.session->controller().displayedSnapshot(),
+            ActionType::Search)));
+    assert(p2.session->controller().submitAndLock(
+        actionOfType(*p2.session->controller().displayedSnapshot(),
+            ActionType::Search)));
+
+    host->advanceTime(300000);
+    p1.ingestUpdates();
+    p2.ingestUpdates();
+    p3.ingestUpdates();
+
+    assert(host->authoritativeRound() == round + 1);
+    assert(host->resolvedRoundCount() == 1);
+    assert(p1.session->controller().displayedSnapshot()->round == round + 1);
+    assert(p2.session->controller().displayedSnapshot()->round == round + 1);
+    assert(p3.session->controller().viewContext().mode ==
+           client::ClientViewMode::Defeated);
+    assert(!p3.session->controller().displayedSnapshot()->alive);
+}
+
 void onlineSandboxSpectatorAdvancesWhenWatchedHunterDies() {
     auto config = client::defaultSandboxSessionConfig(3);
     config.humanPlayerCount = 3;
@@ -445,6 +492,7 @@ int main() {
     spoofedMalformedAndForgedCommandsAreRejected();
     explicitQuitEliminatesImmediatelyAndSurvivorContinues();
     authenticatedServerReturnsOnlyPublicLeaderboardFields();
+    slowOnlineSandboxHumanExpiresWithoutBlockingRound();
     onlineSandboxSpectatorAdvancesWhenWatchedHunterDies();
     sandboxLaunchPreservesSlotsAndRunsServerAi();
     return 0;
