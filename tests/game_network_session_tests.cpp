@@ -73,7 +73,7 @@ concept HasLedgerRows = requires(T value) { value.ledgerRows; };
 template <typename T>
 concept HasTrophyMatchId = requires(T value) { value.trophyMatchId; };
 
-static_assert(kProtocolVersion == 7);
+static_assert(kProtocolVersion == 9);
 static_assert(std::variant_size_v<ClientCommandPayload> == 6);
 static_assert(!HasWorld<ServerBootstrap>);
 static_assert(!HasAuthoritativeState<ServerBootstrap>);
@@ -318,6 +318,31 @@ void allServerFieldsRoundTripExactly() {
     assert(decoded.profiles[1].emblemId.value == "ward");
     assert(decoded.viewContext.mode == client::ClientViewMode::Playing);
 
+    auto sandboxConfig = client::defaultSandboxSessionConfig(4);
+    sandboxConfig.humanPlayerCount = 3;
+    const LobbyResponse lobbySource{kProtocolVersion, SandboxLobbyUpdated{
+        "SBX-NAMES1", sandboxConfig,
+        {
+            {1, PlayerId{1}, client::SandboxLobbySlotKind::Host,
+                true, true, "Austin"},
+            {2, PlayerId{2}, client::SandboxLobbySlotKind::EmptyHuman,
+                true, false, "Savannah"},
+            {3, PlayerId{3}, client::SandboxLobbySlotKind::EmptyHuman,
+                false, false, ""},
+            {4, PlayerId{4}, client::SandboxLobbySlotKind::Ai,
+                true, true, ""},
+        }, PlayerId{1}}};
+    assertStableRoundTrip(lobbySource, decodeLobbyResponse);
+    WireBytes lobbyBytes;
+    assert(encodeWire(lobbySource, lobbyBytes, error));
+    LobbyResponse decodedLobby;
+    assert(decodeLobbyResponse(lobbyBytes, decodedLobby, error));
+    const auto& lobby = std::get<SandboxLobbyUpdated>(decodedLobby.payload);
+    assert(lobby.slots[0].publicName == "Austin");
+    assert(lobby.slots[1].publicName == "Savannah");
+    assert(lobby.slots[2].publicName.empty());
+    assert(lobby.slots[3].publicName.empty());
+
     const PlayerRoundSnapshot& snapshot = decoded.initialSnapshot;
     assert(snapshot.player == PlayerId{1});
     assert(snapshot.round == RoundNumber{27});
@@ -410,8 +435,8 @@ void everyClientCommandRoundTrips() {
     action.contextualAction = ContextualActionType::Escape;
     action.targetTunnel = TunnelId{9};
     const std::vector<ClientCommand> commands{
-        ClientCommand{kProtocolVersion, SubmitActionCommand{action}},
-        ClientCommand{kProtocolVersion, LockActionCommand{PlayerId{7}}},
+        ClientCommand{kProtocolVersion, SubmitActionCommand{RoundNumber{23}, action}},
+        ClientCommand{kProtocolVersion, LockActionCommand{RoundNumber{23}, PlayerId{7}}},
         ClientCommand{kProtocolVersion,
             WatchRemainingHunterCommand{PlayerId{7}, PlayerId{11}}},
         ClientCommand{kProtocolVersion, QuitCommand{PlayerId{7}}},
@@ -426,7 +451,9 @@ void everyClientCommandRoundTrips() {
     assert(encodeWire(commands.front(), bytes, error));
     ClientCommand decoded;
     assert(decodeClientCommand(bytes, decoded, error));
-    const auto& submitted = std::get<SubmitActionCommand>(decoded.payload).action;
+    const auto& submittedCommand = std::get<SubmitActionCommand>(decoded.payload);
+    assert(submittedCommand.round == RoundNumber{23});
+    const auto& submitted = submittedCommand.action;
     assert(submitted.player == action.player);
     assert(submitted.type == action.type);
     assert(submitted.targetCave == action.targetCave);
@@ -494,17 +521,18 @@ void cosmeticLoadoutMessagesRoundTrip() {
 }
 
 void goldenFixtureIsStable() {
-    const ClientCommand quit{
+    const ClientCommand lock{
         kProtocolVersion,
-        QuitCommand{PlayerId{42}},
+        LockActionCommand{RoundNumber{0x01020304}, PlayerId{42}},
     };
     WireBytes bytes;
     std::string error;
-    assert(encodeWire(quit, bytes, error));
+    assert(encodeWire(lock, bytes, error));
     const WireBytes expected{
         0x42, 0x53, 0x4b, 0x31,
-        0x13,
-        0x00, 0x00, 0x00, 0x07,
+        0x11,
+        0x00, 0x00, 0x00, 0x09,
+        0x01, 0x02, 0x03, 0x04,
         0x00, 0x00, 0x00, 0x2a,
     };
     assert(bytes == expected);
@@ -590,13 +618,14 @@ void malformedWireIsRejected() {
     action.player = PlayerId{1};
     WireBytes submitted;
     assert(encodeWire(
-        ClientCommand{kProtocolVersion, SubmitActionCommand{action}},
+        ClientCommand{kProtocolVersion,
+            SubmitActionCommand{RoundNumber{1}, action}},
         submitted,
         error));
-    submitted[13] = 0xff;
+    submitted[17] = 0xff;
     assert(!decodeClientCommand(submitted, command, error));
-    submitted[13] = static_cast<std::uint8_t>(ActionType::Search);
-    submitted[14] = 0x02;
+    submitted[17] = static_cast<std::uint8_t>(ActionType::Search);
+    submitted[18] = 0x02;
     assert(!decodeClientCommand(submitted, command, error));
 
     WireBytes bootstrapBytes;
@@ -744,12 +773,14 @@ void outboundCommandsReachTransportExactly() {
     const auto* submitted = std::get_if<SubmitActionCommand>(
         &transport->commands[0].payload);
     assert(submitted != nullptr);
+    assert(submitted->round == RoundNumber{1});
     assert(submitted->action.player == PlayerId{1});
     assert(submitted->action.type == ActionType::Move);
     assert(submitted->action.targetCave == CaveId{12});
     const auto* locked =
         std::get_if<LockActionCommand>(&transport->commands[1].payload);
-    assert(locked != nullptr && locked->player == PlayerId{1});
+    assert(locked != nullptr && locked->round == RoundNumber{1} &&
+        locked->player == PlayerId{1});
 
     std::string error;
     assert(adapter->ingest(
@@ -830,6 +861,16 @@ void inboundUpdatesReachController() {
            client::ClientViewMode::Playing);
     assert(adapter->controller().trophyTotal() == -3);
     assert(transport->commands.empty());
+
+    const AvailableAction search{ActionType::Search};
+    assert(adapter->controller().submitAndLock(search));
+    assert(transport->commands.size() == 2);
+    const auto& submitted = std::get<SubmitActionCommand>(
+        transport->commands[0].payload);
+    const auto& locked = std::get<LockActionCommand>(
+        transport->commands[1].payload);
+    assert(submitted.round == RoundNumber{3});
+    assert(locked.round == RoundNumber{3});
 }
 
 void protocolMismatchIsRejectedCleanly() {
@@ -855,6 +896,12 @@ void protocolMismatchIsRejectedCleanly() {
     assert(!adapter->ingest(std::move(update), error));
     assert(!error.empty());
     assert(adapter->controller().displayedSnapshot()->round == before);
+    assert(adapter->controller().submitAndLock(
+        AvailableAction{ActionType::Search}));
+    assert(std::get<SubmitActionCommand>(transport->commands[0].payload).round ==
+        before);
+    assert(std::get<LockActionCommand>(transport->commands[1].payload).round ==
+        before);
 }
 
 } // namespace

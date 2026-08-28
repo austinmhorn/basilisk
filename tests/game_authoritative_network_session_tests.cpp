@@ -209,13 +209,14 @@ void spoofedMalformedAndForgedCommandsAreRejected() {
     PlayerAction spoofed;
     spoofed.player = PlayerId{2};
     spoofed.type = ActionType::Search;
-    ClientCommand command{kProtocolVersion, SubmitActionCommand{spoofed}};
+    ClientCommand command{kProtocolVersion,
+        SubmitActionCommand{RoundNumber{1}, spoofed}};
     WireBytes bytes;
     assert(encodeWire(command, bytes, error));
     assert(!p1.endpoint->sendBytes(bytes, error));
     assert(!error.empty());
 
-    command.payload = LockActionCommand{PlayerId{2}};
+    command.payload = LockActionCommand{RoundNumber{1}, PlayerId{2}};
     assert(encodeWire(command, bytes, error));
     assert(!p1.endpoint->sendBytes(bytes, error));
 
@@ -223,7 +224,7 @@ void spoofedMalformedAndForgedCommandsAreRejected() {
     forged.player = PlayerId{1};
     forged.type = ActionType::Move;
     forged.targetCave = CaveId{9999};
-    command.payload = SubmitActionCommand{forged};
+    command.payload = SubmitActionCommand{RoundNumber{1}, forged};
     assert(encodeWire(command, bytes, error));
     assert(!p1.endpoint->sendBytes(bytes, error));
 
@@ -238,6 +239,73 @@ void spoofedMalformedAndForgedCommandsAreRejected() {
     assert(host->authoritativeRound() == RoundNumber{1});
     assert(host->resolvedRoundCount() == 0);
     assert(!p1.endpoint->takeNextServerFrame().has_value());
+}
+
+void actionCommandsAreBoundToTheAuthoritativeRound() {
+    std::string error;
+    auto host = AuthoritativeInMemoryMatch::create(
+        MapSeed{20260816}, MatchSeed{424242}, profiles(), error);
+    assert(host != nullptr);
+    ConnectedClient p1 = connectClient(*host, PlayerId{1});
+    ConnectedClient p2 = connectClient(*host, PlayerId{2});
+    const PlayerRoundSnapshot before =
+        *p1.session->controller().displayedSnapshot();
+    const PlayerAction p1Search = makePlayerAction(
+        actionOfType(before, ActionType::Search), PlayerId{1});
+
+    const auto send = [&](ConnectedClient& client, ClientCommandPayload payload) {
+        WireBytes bytes;
+        std::string commandError;
+        assert(encodeWire(ClientCommand{kProtocolVersion, std::move(payload)},
+            bytes, commandError));
+        return client.endpoint->sendBytes(bytes, commandError);
+    };
+
+    assert(!send(p1, SubmitActionCommand{RoundNumber{0}, p1Search}));
+    assert(!send(p1, SubmitActionCommand{RoundNumber{2}, p1Search}));
+    assert(!send(p1, LockActionCommand{RoundNumber{0}, PlayerId{1}}));
+    assert(!send(p1, LockActionCommand{RoundNumber{2}, PlayerId{1}}));
+    assert(host->authoritativeRound() == RoundNumber{1});
+    assert(host->resolvedRoundCount() == 0);
+
+    // No rejected command staged or locked an action: a current-round lock
+    // without a current-round submit still fails.
+    assert(!send(p1, LockActionCommand{RoundNumber{1}, PlayerId{1}}));
+    assert(send(p1, SubmitActionCommand{RoundNumber{1}, p1Search}));
+    assert(send(p1, LockActionCommand{RoundNumber{1}, PlayerId{1}}));
+    assert(host->authoritativeRound() == RoundNumber{1});
+
+    const PlayerRoundSnapshot p2Before =
+        *p2.session->controller().displayedSnapshot();
+    const PlayerAction p2Search = makePlayerAction(
+        actionOfType(p2Before, ActionType::Search), PlayerId{2});
+    assert(send(p2, SubmitActionCommand{RoundNumber{1}, p2Search}));
+    assert(send(p2, LockActionCommand{RoundNumber{1}, PlayerId{2}}));
+    assert(host->authoritativeRound() == RoundNumber{2});
+    assert(host->resolvedRoundCount() == 1);
+    p1.ingestUpdates();
+    p2.ingestUpdates();
+    const PlayerRoundSnapshot after =
+        *p1.session->controller().displayedSnapshot();
+
+    // A delayed round-one action whose shape remains legal cannot stage an
+    // action in round two, nor can a future round command do so.
+    assert(!send(p1, SubmitActionCommand{RoundNumber{1}, p1Search}));
+    assert(!send(p1, LockActionCommand{RoundNumber{1}, PlayerId{1}}));
+    assert(!send(p1, SubmitActionCommand{RoundNumber{3}, p1Search}));
+    assert(!send(p1, LockActionCommand{RoundNumber{3}, PlayerId{1}}));
+    assert(host->authoritativeRound() == RoundNumber{2});
+    assert(host->resolvedRoundCount() == 1);
+    assert(p1.session->controller().displayedSnapshot()->round == after.round);
+    assert(p1.session->controller().displayedSnapshot()->currentCave ==
+        after.currentCave);
+    assert(p1.session->controller().displayedSnapshot()->health == after.health);
+    assert(!send(p1, LockActionCommand{RoundNumber{2}, PlayerId{1}}));
+
+    // Player identity remains an independent guard when the round is current.
+    PlayerAction spoofed = p1Search;
+    spoofed.player = PlayerId{2};
+    assert(!send(p1, SubmitActionCommand{RoundNumber{2}, spoofed}));
 }
 
 void explicitQuitEliminatesImmediatelyAndSurvivorContinues() {
@@ -543,6 +611,7 @@ int main() {
     twoClientsAdvanceOneAuthoritativeRound();
     noOpTimeTickPreservesResolvedRoundObservations();
     spoofedMalformedAndForgedCommandsAreRejected();
+    actionCommandsAreBoundToTheAuthoritativeRound();
     explicitQuitEliminatesImmediatelyAndSurvivorContinues();
     authenticatedServerReturnsOnlyPublicLeaderboardFields();
     onlineSandboxTerminalStateReachesEveryHuman();

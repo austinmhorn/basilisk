@@ -378,6 +378,37 @@ std::optional<client::EmblemId> hitTestEmblemGallery(
     return std::nullopt;
 }
 
+PresentationRect mainMenuFooterButtonBounds(
+    PresentationRect shell,
+    double scale,
+    double width,
+    bool rightAligned) noexcept {
+    const double scaledWidth = width * scale;
+    return {
+        rightAligned
+            ? shell.x + shell.width - scaledWidth - 34.0 * scale
+            : shell.x + 48.0 * scale,
+        shell.y + shell.height - 64.0 * scale,
+        scaledWidth,
+        38.0 * scale,
+    };
+}
+
+std::string sandboxLobbySlotTitle(
+    std::size_t slot,
+    client::SandboxLobbySlotKind kind,
+    bool occupied,
+    std::string_view publicName) {
+    const std::string prefix = std::to_string(slot) + ".  ";
+    if (kind == client::SandboxLobbySlotKind::Host)
+        return prefix + (publicName.empty() ? "HOST" : std::string{publicName});
+    if (kind == client::SandboxLobbySlotKind::EmptyHuman)
+        return prefix + (occupied
+            ? (publicName.empty() ? "HUMAN PLAYER" : std::string{publicName})
+            : "WAITING FOR PLAYER");
+    return prefix + "BASILISK AI " + std::to_string(slot);
+}
+
 bool renderMainMenu(
     SDL_Renderer* renderer,
     TextRenderer& text,
@@ -541,6 +572,13 @@ bool renderMainMenu(
                 left, shell.y + shell.height - 24.0 * scale, error)) return false;
     } else if (menu.page() == MainMenuPage::SandboxLobby) {
         const auto fallbackSlots = client::sandboxLobbySlots(menu.sandboxConfig());
+        if (!label(text, "LOBBY CODE", FontWeight::SemiBold,
+                static_cast<float>(9.0 * scale), ui::Theme::muted,
+                left, buttonY, error) ||
+            !label(text, menu.lobbyCode(), FontWeight::SemiBold,
+                static_cast<float>(18.0 * scale), ui::Theme::gold,
+                left, buttonY + 24.0 * scale, error)) return false;
+        buttonY += 66.0 * scale;
         if (!label(text, "PARTICIPANTS", FontWeight::SemiBold,
                 static_cast<float>(10.0 * scale), ui::Theme::muted,
                 left, buttonY, error)) return false;
@@ -560,19 +598,17 @@ bool renderMainMenu(
             const PresentationRect row{left, buttonY, 640.0 * scale, 42.0 * scale};
             roundedPanel(renderer, row, 8.0 * scale, ui::Theme::surfaceRaised,
                 ui::Theme::borderSoft);
-            std::string slotName;
+            const std::string slotName = sandboxLobbySlotTitle(
+                slotNumber, kind, occupied,
+                authoritative.empty() ? std::string_view{} :
+                    std::string_view{authoritative[index].publicName});
             std::string detail;
             if (kind == client::SandboxLobbySlotKind::Host) {
-                slotName = "1.  HOST";
-                detail = occupied ? "CONNECTED" : "DISCONNECTED";
+                detail = occupied ? "HOST" : "DISCONNECTED";
             } else if (kind == client::SandboxLobbySlotKind::EmptyHuman) {
-                slotName = std::to_string(slotNumber) + ".  " +
-                    (occupied ? "HUMAN PLAYER" : "EMPTY HUMAN SLOT");
                 detail = occupied ? (ready ? "READY" : "NOT READY")
-                    : "WAITING FOR PLAYER";
+                    : "OPEN SLOT";
             } else {
-                slotName = std::to_string(slotNumber) + ".  BASILISK AI " +
-                    std::to_string(slotNumber);
                 detail = std::string{client::ai::difficultyName(
                     menu.sandboxDifficulty())} + " · " +
                     client::ai::behaviorName(menu.sandboxBehavior());
@@ -757,12 +793,16 @@ bool renderMainMenu(
         menu.page() == MainMenuPage::AiStandard ||
         menu.page() == MainMenuPage::Leaderboards ||
         menu.page() == MainMenuPage::Settings ||
-        menu.page() == MainMenuPage::Sandbox;
+        menu.page() == MainMenuPage::Sandbox ||
+        menu.page() == MainMenuPage::SandboxLobby;
     const bool joinSandboxFooter = menu.page() == MainMenuPage::JoinSandboxLobby;
     for (std::size_t index = 0; index < actions.size(); ++index) {
         if (actions[index] == MainMenuAction::EditProfile) continue;
         if ((footerBack || joinSandboxFooter) &&
             actions[index] == MainMenuAction::Back) continue;
+        if (menu.page() == MainMenuPage::SandboxLobby &&
+            (actions[index] == MainMenuAction::StartSandboxMatch ||
+             actions[index] == MainMenuAction::ToggleSandboxReady)) continue;
         if (menu.page() == MainMenuPage::Leaderboards &&
             (actions[index] == MainMenuAction::PreviousPage ||
              actions[index] == MainMenuAction::NextPage)) continue;
@@ -958,8 +998,24 @@ bool renderMainMenu(
     };
 
     if ((footerBack || joinSandboxFooter) && !drawFooterButton(MainMenuAction::Back,
-            {left, shell.y + shell.height - 64.0 * scale,
-                100.0 * scale, 38.0 * scale}, "BACK")) return false;
+            mainMenuFooterButtonBounds(shell, scale, 100.0, false),
+            "BACK")) return false;
+
+    if (menu.page() == MainMenuPage::SandboxLobby &&
+        (std::find(actions.begin(), actions.end(),
+             MainMenuAction::StartSandboxMatch) != actions.end() ||
+         std::find(actions.begin(), actions.end(),
+             MainMenuAction::ToggleSandboxReady) != actions.end())) {
+        const bool host = std::find(actions.begin(), actions.end(),
+            MainMenuAction::StartSandboxMatch) != actions.end();
+        const auto action = host ? MainMenuAction::StartSandboxMatch :
+            MainMenuAction::ToggleSandboxReady;
+        const std::string_view title = host ? "START MATCH" :
+            (menu.sandboxLocalReady() ? "NOT READY" : "READY");
+        if (!drawFooterButton(action,
+                mainMenuFooterButtonBounds(shell, scale, 170.0, true), title,
+                !host || menu.sandboxLaunchEligible())) return false;
+    }
 
     if (menu.page() == MainMenuPage::Leaderboards) {
         constexpr double arrowWidth = 46.0;

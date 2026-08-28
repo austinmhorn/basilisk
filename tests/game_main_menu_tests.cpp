@@ -125,6 +125,7 @@ int main() {
     menu.sandboxLobbyUpdated({"SBX-TEST12", onlineLobbyConfig,
         authoritativeSlots, basilisk::PlayerId{1}});
     assert(menu.page() == MainMenuPage::SandboxLobby);
+    assert(menu.lobbyCode() == "SBX-TEST12");
     const auto onlineSlots = basilisk::client::sandboxLobbySlots(menu.sandboxConfig());
     assert(onlineSlots.size() == 6);
     assert(onlineSlots[0].kind == basilisk::client::SandboxLobbySlotKind::Host);

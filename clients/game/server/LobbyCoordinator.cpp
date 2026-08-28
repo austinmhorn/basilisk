@@ -182,7 +182,9 @@ SandboxLobbySnapshot sandboxSnapshot(
             kind == client::SandboxLobbySlotKind::Host ||
                 kind == client::SandboxLobbySlotKind::Ai ||
                 (state.humans.contains(slot) &&
-                 state.ready.contains(state.humans.at(slot)))});
+                 state.ready.contains(state.humans.at(slot))),
+            state.humans.contains(slot)
+                ? state.publicNames.at(state.humans.at(slot)) : std::string{}});
     }
     return snapshot;
 }
@@ -209,10 +211,11 @@ std::vector<AccountIdentity> sandboxRecipients(
 
 bool LobbyCoordinator::hostSandbox(
     const AccountIdentity& account,
+    std::string publicName,
     const client::SandboxSessionConfig& config,
     SandboxLobbyChange& change,
     std::string& error) {
-    if (account.value.empty()) {
+    if (account.value.empty() || publicName.empty()) {
         error = "An authenticated account is required.";
         return false;
     }
@@ -229,7 +232,8 @@ bool LobbyCoordinator::hostSandbox(
         LobbyCode code{"SBX-" + generateCode()};
         if (code.value.size() <= 4 || sandboxWaiting_.contains(code) ||
             waiting_.contains(code) || consumed_.contains(code)) continue;
-        SandboxLobbyState state{account, config, {{1, account}}};
+        SandboxLobbyState state{
+            account, config, {{1, account}}, {{account, publicName}}};
         auto [found, inserted] = sandboxWaiting_.emplace(code, std::move(state));
         if (!inserted) continue;
         sandboxMembership_.emplace(account, code);
@@ -243,9 +247,10 @@ bool LobbyCoordinator::hostSandbox(
 }
 
 bool LobbyCoordinator::joinSandbox(
-    const AccountIdentity& account, const LobbyCode& code,
+    const AccountIdentity& account, std::string publicName,
+    const LobbyCode& code,
     SandboxLobbyChange& change, std::string& error) {
-    if (account.value.empty()) {
+    if (account.value.empty() || publicName.empty()) {
         error = "An authenticated account is required.";
         return false;
     }
@@ -272,6 +277,7 @@ bool LobbyCoordinator::joinSandbox(
         return false;
     }
     state.humans.emplace(openSlot, account);
+    state.publicNames.emplace(account, std::move(publicName));
     sandboxMembership_.emplace(account, code);
     change = {sandboxSnapshot(code, state), sandboxRecipients(state), {}, false,
         sandboxMemberPlayers(state)};
@@ -302,6 +308,7 @@ bool LobbyCoordinator::leaveSandbox(
         sandboxWaiting_.erase(found);
     } else {
         state.ready.erase(account);
+        state.publicNames.erase(account);
         for (auto slot = state.humans.begin(); slot != state.humans.end(); ++slot) {
             if (slot->second != account) continue;
             state.humans.erase(slot);

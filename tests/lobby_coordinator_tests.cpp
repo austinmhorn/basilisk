@@ -43,7 +43,7 @@ int main() {
     std::vector<LobbyProtocolDelivery> deliveries;
     assert(network::encodeWire(network::LobbyRequest{
         network::kProtocolVersion, network::HostLobbyRequest{}}, request, error));
-    assert(protocol.process(host, request, deliveries, error));
+    assert(protocol.process(host, "HostName", request, deliveries, error));
     assert(deliveries.size() == 1 && deliveries.front().recipient == host);
     network::LobbyResponse response;
     assert(network::decodeLobbyResponse(deliveries.front().bytes, response, error));
@@ -97,7 +97,7 @@ int main() {
     assert(network::encodeWire(network::LobbyRequest{
         network::kProtocolVersion,
         network::HostSandboxLobbyRequest{sandboxConfig}}, request, error));
-    assert(protocol.process(host, request, deliveries, error));
+    assert(protocol.process(host, "HostName", request, deliveries, error));
     assert(deliveries.size() == 1);
     assert(network::decodeLobbyResponse(deliveries[0].bytes, response, error));
     const auto hostedSandbox =
@@ -105,6 +105,7 @@ int main() {
     assert(hostedSandbox.lobbyCode == "SBX-NET123");
     assert(hostedSandbox.slots.size() == 4);
     assert(hostedSandbox.slots[0].occupied);
+    assert(hostedSandbox.slots[0].publicName == "HostName");
     assert(hostedSandbox.localPlayer == basilisk::PlayerId{1});
     assert(!hostedSandbox.slots[1].occupied);
     assert(hostedSandbox.slots[3].kind ==
@@ -114,24 +115,31 @@ int main() {
     assert(network::encodeWire(network::LobbyRequest{
         network::kProtocolVersion,
         network::JoinLobbyRequest{hostedSandbox.lobbyCode}}, request, error));
-    assert(protocol.process(third, request, deliveries, error));
+    assert(protocol.process(third, "ThirdName", request, deliveries, error));
     assert(network::decodeLobbyResponse(deliveries[0].bytes, response, error));
     assert(std::holds_alternative<network::LobbyFailure>(response.payload));
     assert(network::encodeWire(network::LobbyRequest{
         network::kProtocolVersion,
         network::JoinSandboxLobbyRequest{"NET123"}}, request, error));
-    assert(protocol.process(third, request, deliveries, error));
+    assert(protocol.process(third, "ThirdName", request, deliveries, error));
     assert(network::decodeLobbyResponse(deliveries[0].bytes, response, error));
     assert(std::holds_alternative<network::LobbyFailure>(response.payload));
 
     assert(network::encodeWire(network::LobbyRequest{
         network::kProtocolVersion,
         network::JoinSandboxLobbyRequest{hostedSandbox.lobbyCode}}, request, error));
-    assert(protocol.process(third, request, deliveries, error));
+    assert(protocol.process(third, "ThirdName", request, deliveries, error));
     assert(deliveries.size() == 2);
-    assert(protocol.process(fourth, request, deliveries, error));
+    assert(protocol.process(fourth, "FourthName", request, deliveries, error));
     assert(deliveries.size() == 3);
-    assert(protocol.process(fifth, request, deliveries, error));
+    assert(network::decodeLobbyResponse(deliveries[0].bytes, response, error));
+    const auto populatedSandbox =
+        std::get<network::SandboxLobbyUpdated>(response.payload);
+    assert(populatedSandbox.slots[0].publicName == "HostName");
+    assert(populatedSandbox.slots[1].publicName == "ThirdName");
+    assert(populatedSandbox.slots[2].publicName == "FourthName");
+    assert(populatedSandbox.slots[3].publicName.empty());
+    assert(protocol.process(fifth, "FifthName", request, deliveries, error));
     assert(deliveries.size() == 1);
     assert(network::decodeLobbyResponse(deliveries[0].bytes, response, error));
     assert(std::holds_alternative<network::LobbyFailure>(response.payload));
@@ -141,8 +149,10 @@ int main() {
     assert(disconnectDeliveries.size() == 2);
     assert(network::decodeLobbyResponse(
         disconnectDeliveries[0].bytes, response, error));
-    assert(!std::get<network::SandboxLobbyUpdated>(response.payload)
-        .slots[1].occupied);
+    const auto departedSandbox =
+        std::get<network::SandboxLobbyUpdated>(response.payload);
+    assert(!departedSandbox.slots[1].occupied);
+    assert(departedSandbox.slots[1].publicName.empty());
     protocol.disconnect(host, disconnectDeliveries);
     assert(!disconnectDeliveries.empty());
     assert(network::decodeLobbyResponse(
@@ -155,21 +165,24 @@ int main() {
     auto readyConfig = basilisk::client::defaultSandboxSessionConfig(6);
     readyConfig.humanPlayerCount = 3;
     SandboxLobbyChange change;
-    assert(readyLobbies.hostSandbox(host, readyConfig, change, error));
+    assert(readyLobbies.hostSandbox(
+        host, "HostName", readyConfig, change, error));
     const LobbyCode readyCode = change.snapshot.lobby;
     assert(change.snapshot.slots[0].ready);
     assert(!readyLobbies.setSandboxReady(host, readyCode, true, change, error));
     SandboxMatchAssignment sandboxAssignment;
     assert(!readyLobbies.startSandbox(
         host, readyCode, sandboxAssignment, error));
-    assert(readyLobbies.joinSandbox(guest, readyCode, change, error));
+    assert(readyLobbies.joinSandbox(
+        guest, "GuestName", readyCode, change, error));
     assert(!change.snapshot.slots[1].ready);
     assert(!readyLobbies.startSandbox(
         host, readyCode, sandboxAssignment, error));
     assert(readyLobbies.setSandboxReady(guest, readyCode, true, change, error));
     assert(change.snapshot.slots[1].ready);
     assert(change.recipients.size() == 2);
-    assert(readyLobbies.joinSandbox(third, readyCode, change, error));
+    assert(readyLobbies.joinSandbox(
+        third, "ThirdName", readyCode, change, error));
     assert(!readyLobbies.startSandbox(
         host, readyCode, sandboxAssignment, error));
     assert(readyLobbies.setSandboxReady(third, readyCode, true, change, error));
@@ -187,7 +200,8 @@ int main() {
         std::vector<basilisk::PlayerId>({4, 5, 6}));
     assert(!readyLobbies.startSandbox(
         host, readyCode, sandboxAssignment, error));
-    assert(!readyLobbies.joinSandbox(fourth, readyCode, change, error));
+    assert(!readyLobbies.joinSandbox(
+        fourth, "FourthName", readyCode, change, error));
 
     std::size_t launchCode = 0;
     LobbyCoordinator launchSizes{[&] {
@@ -196,9 +210,11 @@ int main() {
     for (std::size_t hunters = 2; hunters <= 6; ++hunters) {
         auto sized = basilisk::client::defaultSandboxSessionConfig(hunters);
         sized.humanPlayerCount = 2;
-        assert(launchSizes.hostSandbox(host, sized, change, error));
+        assert(launchSizes.hostSandbox(
+            host, "HostName", sized, change, error));
         const LobbyCode sizedCode = change.snapshot.lobby;
-        assert(launchSizes.joinSandbox(guest, sizedCode, change, error));
+        assert(launchSizes.joinSandbox(
+            guest, "GuestName", sizedCode, change, error));
         assert(launchSizes.setSandboxReady(
             guest, sizedCode, true, change, error));
         assert(launchSizes.startSandbox(

@@ -135,7 +135,7 @@ std::unique_ptr<IncompatibleServer> startIncompatibleServer() {
     assert(endpoint != nullptr);
     auto frame = endpoint->takeNextServerFrame();
     assert(frame.has_value() && frame->size() > 8);
-    (*frame)[8] = 8; // V7's big-endian version header becomes unsupported V8.
+    (*frame)[8] = 10; // V9's big-endian version header becomes unsupported V10.
 
     for (int attempt = 0; attempt < 10; ++attempt) {
         const auto port = static_cast<std::uint16_t>(ix::getFreePort());
@@ -1103,10 +1103,14 @@ void authenticatedSandboxSupportsThreeToSixHumanSockets() {
                 return false;
             for (std::size_t index = 1; index < humanCount; ++index) {
                 if (!update->slots[index].occupied ||
-                    !update->slots[index].ready)
+                    !update->slots[index].ready ||
+                    update->slots[index].publicName !=
+                        "sandbox-multi-" + std::to_string(humanCount) + "-" +
+                            std::to_string(index + 1))
                     return false;
             }
-            return true;
+            return update->slots.front().publicName ==
+                "sandbox-multi-" + std::to_string(humanCount) + "-1";
         }));
 
         assert(clients.front()->requestLobby({

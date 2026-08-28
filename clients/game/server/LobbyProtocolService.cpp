@@ -8,6 +8,7 @@ namespace basilisk::game::server {
 
 bool LobbyProtocolService::process(
     const AccountIdentity& account,
+    std::string_view publicName,
     std::span<const std::uint8_t> requestBytes,
     std::vector<LobbyProtocolDelivery>& deliveries,
     std::string& error) {
@@ -99,14 +100,15 @@ bool LobbyProtocolService::process(
                 network::MatchmakingCancelled{}});
         } else if constexpr (std::is_same_v<T, network::HostSandboxLobbyRequest>) {
             SandboxLobbyChange change;
-            if (!coordinator_.hostSandbox(account, payload.config, change, error))
+            if (!coordinator_.hostSandbox(
+                    account, std::string{publicName}, payload.config, change, error))
                 return deliver(account, {network::kProtocolVersion,
                     network::LobbyFailure{error}});
             return deliverSandboxChange(change);
         } else if constexpr (std::is_same_v<T, network::JoinSandboxLobbyRequest>) {
             SandboxLobbyChange change;
-            if (!coordinator_.joinSandbox(
-                    account, LobbyCode{payload.lobbyCode}, change, error))
+            if (!coordinator_.joinSandbox(account, std::string{publicName},
+                    LobbyCode{payload.lobbyCode}, change, error))
                 return deliver(account, {network::kProtocolVersion,
                     network::LobbyFailure{error}});
             return deliverSandboxChange(change);

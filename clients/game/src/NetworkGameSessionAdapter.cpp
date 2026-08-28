@@ -8,15 +8,17 @@ namespace {
 class NetworkActionCommandSink final : public ActionCommandSink {
 public:
     explicit NetworkActionCommandSink(
-        std::shared_ptr<network::ClientTransport> transport)
-        : transport_(std::move(transport)) {}
+        std::shared_ptr<network::ClientTransport> transport,
+        std::shared_ptr<RoundNumber> commandRound)
+        : transport_(std::move(transport)),
+          commandRound_(std::move(commandRound)) {}
 
     [[nodiscard]] bool submitAction(const PlayerAction& action) override {
-        return send(network::SubmitActionCommand{action});
+        return send(network::SubmitActionCommand{*commandRound_, action});
     }
 
     [[nodiscard]] bool lockAction(PlayerId player) override {
-        return send(network::LockActionCommand{player});
+        return send(network::LockActionCommand{*commandRound_, player});
     }
 
     [[nodiscard]] bool submitClashResponse(
@@ -36,6 +38,7 @@ private:
     }
 
     std::shared_ptr<network::ClientTransport> transport_;
+    std::shared_ptr<RoundNumber> commandRound_;
 };
 
 class NetworkSessionCommandSink final : public ClientSessionCommandSink {
@@ -74,8 +77,10 @@ private:
 
 NetworkGameSessionAdapter::NetworkGameSessionAdapter(
     std::unique_ptr<ClientSessionController> controller,
-    std::shared_ptr<network::ClientTransport> transport)
-    : controller_(std::move(controller)), transport_(std::move(transport)) {}
+    std::shared_ptr<network::ClientTransport> transport,
+    std::shared_ptr<RoundNumber> commandRound)
+    : controller_(std::move(controller)), transport_(std::move(transport)),
+      commandRound_(std::move(commandRound)) {}
 
 std::unique_ptr<NetworkGameSessionAdapter>
 NetworkGameSessionAdapter::create(
@@ -93,8 +98,10 @@ NetworkGameSessionAdapter::create(
         return nullptr;
     }
 
+    auto commandRound = std::make_shared<RoundNumber>(
+        bootstrap.initialSnapshot.round);
     auto actionCommands =
-        std::make_unique<NetworkActionCommandSink>(transport);
+        std::make_unique<NetworkActionCommandSink>(transport, commandRound);
     auto sessionCommands =
         std::make_unique<NetworkSessionCommandSink>(transport);
     auto controller = std::make_unique<ClientSessionController>(
@@ -113,7 +120,8 @@ NetworkGameSessionAdapter::create(
     }
     return std::unique_ptr<NetworkGameSessionAdapter>(
         new NetworkGameSessionAdapter(
-            std::move(controller), std::move(transport)));
+            std::move(controller), std::move(transport),
+            std::move(commandRound)));
 }
 
 ClientSessionController& NetworkGameSessionAdapter::controller() noexcept {
@@ -134,6 +142,7 @@ bool NetworkGameSessionAdapter::ingest(
         error = "Unsupported Basilisk network protocol version.";
         return false;
     }
+    const RoundNumber acceptedRound = update.snapshot.round;
     if (!controller_->ingestSnapshot(
             std::move(update.snapshot),
             std::move(update.mapGeometry))) {
@@ -144,6 +153,7 @@ bool NetworkGameSessionAdapter::ingest(
         controller_->setViewContext(*update.viewContext);
     }
     controller_->setTrophyTotal(update.trophyTotal);
+    *commandRound_ = acceptedRound;
     return true;
 }
 

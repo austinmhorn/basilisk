@@ -1283,6 +1283,7 @@ bool encodeWire(const LobbyResponse& message, WireBytes& bytes, std::string& err
                 writer.u8(static_cast<std::uint8_t>(slot.kind));
                 writer.boolean(slot.occupied);
                 writer.boolean(slot.ready);
+                if (!writer.string(slot.publicName)) return false;
             }
             writer.u32(response.localPlayer);
             return true;
@@ -1724,11 +1725,15 @@ bool decodeLobbyResponse(std::span<const std::uint8_t> bytes,
             std::uint8_t kind{};
             if (!reader.u8(slot.slot) || !reader.u32(player) ||
                 !reader.u8(kind) || !reader.boolean(slot.occupied) ||
-                !reader.boolean(slot.ready) ||
+                !reader.boolean(slot.ready) || !reader.string(slot.publicName) ||
                 slot.slot != index + 1 || player != slot.slot || kind > 2)
                 return reader.fail("Invalid Sandbox lobby slot.");
             slot.player = player;
             slot.kind = static_cast<client::SandboxLobbySlotKind>(kind);
+            const bool human = slot.kind != client::SandboxLobbySlotKind::Ai;
+            if ((human && slot.occupied) != !slot.publicName.empty() ||
+                (!human && !slot.publicName.empty()))
+                return reader.fail("Invalid Sandbox lobby public name.");
             response.slots.push_back(slot);
         }
         std::uint32_t localPlayer{};

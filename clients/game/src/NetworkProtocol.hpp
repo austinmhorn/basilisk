@@ -20,7 +20,7 @@
 
 namespace basilisk::game::network {
 
-inline constexpr std::uint32_t kProtocolVersion{8};
+inline constexpr std::uint32_t kProtocolVersion{9};
 
 struct CreateAccountRequest {
     std::string email;
@@ -120,6 +120,7 @@ struct SandboxLobbySlotView {
     client::SandboxLobbySlotKind kind{client::SandboxLobbySlotKind::Ai};
     bool occupied{};
     bool ready{};
+    std::string publicName;
 };
 struct SandboxLobbyUpdated {
     std::string lobbyCode;

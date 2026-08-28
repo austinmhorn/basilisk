@@ -429,6 +429,11 @@ private:
         const network::SubmitActionCommand& command,
         std::string& error) {
 
+        if (command.round != match_.round) {
+            error = "Action command does not match the authoritative round.";
+            return false;
+        }
+
         if (command.action.player != authenticatedPlayer) {
             error = "Authenticated player does not match submitted action.";
             return false;
@@ -457,6 +462,11 @@ private:
         PlayerId authenticatedPlayer,
         const network::LockActionCommand& command,
         std::string& error) {
+
+        if (command.round != match_.round) {
+            error = "Action command does not match the authoritative round.";
+            return false;
+        }
 
         if (command.player != authenticatedPlayer) {
             error = "Authenticated player does not match action lock.";

@@ -54,6 +54,7 @@ public:
         AccountIdentity host;
         client::SandboxSessionConfig config;
         std::map<std::size_t, AccountIdentity> humans;
+        std::map<AccountIdentity, std::string> publicNames;
         std::set<AccountIdentity> ready;
         bool launching{};
     };
@@ -79,10 +80,12 @@ public:
         const AccountIdentity& account, std::string& error);
     [[nodiscard]] bool hostSandbox(
         const AccountIdentity& account,
+        std::string publicName,
         const client::SandboxSessionConfig& config,
         SandboxLobbyChange& change, std::string& error);
     [[nodiscard]] bool joinSandbox(
-        const AccountIdentity& account, const LobbyCode& code,
+        const AccountIdentity& account, std::string publicName,
+        const LobbyCode& code,
         SandboxLobbyChange& change, std::string& error);
     [[nodiscard]] bool leaveSandbox(
         const AccountIdentity& account, const LobbyCode& code,

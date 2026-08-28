@@ -54,6 +54,39 @@ int main() {
     assert(basilisk::game::hitTestMainMenu(menuGeometry, {620.0, 620.0}) ==
         basilisk::game::MainMenuAction::NextPage);
 
+    const basilisk::game::PresentationRect menuShell{340.0, 110.0, 760.0, 680.0};
+    const auto sandboxBack = basilisk::game::mainMenuFooterButtonBounds(
+        menuShell, 1.0, 100.0, false);
+    const auto sandboxStart = basilisk::game::mainMenuFooterButtonBounds(
+        menuShell, 1.0, 170.0, true);
+    assert(sandboxBack.x == 388.0 && sandboxBack.y == 726.0);
+    assert(sandboxStart.x == 896.0 && sandboxStart.y == 726.0);
+    menuGeometry.buttons = {
+        {basilisk::game::MainMenuAction::Back, sandboxBack},
+        {basilisk::game::MainMenuAction::StartSandboxMatch, sandboxStart},
+    };
+    assert(basilisk::game::hitTestMainMenu(menuGeometry, {950.0, 745.0}) ==
+        basilisk::game::MainMenuAction::StartSandboxMatch);
+    assert(basilisk::game::sandboxLobbySlotTitle(2,
+        basilisk::client::SandboxLobbySlotKind::EmptyHuman, false) ==
+        "2.  WAITING FOR PLAYER");
+    assert(basilisk::game::sandboxLobbySlotTitle(1,
+        basilisk::client::SandboxLobbySlotKind::Host, true, "Austin") ==
+        "1.  Austin");
+    assert(basilisk::game::sandboxLobbySlotTitle(3,
+        basilisk::client::SandboxLobbySlotKind::EmptyHuman, true, "Melanie") ==
+        "3.  Melanie");
+    assert(basilisk::game::sandboxLobbySlotTitle(5,
+        basilisk::client::SandboxLobbySlotKind::Ai, true, "") ==
+        "5.  BASILISK AI 5");
+
+    menuGeometry.buttons = {
+        {basilisk::game::MainMenuAction::Back, sandboxBack},
+        {basilisk::game::MainMenuAction::ToggleSandboxReady, sandboxStart},
+    };
+    assert(basilisk::game::hitTestMainMenu(menuGeometry, {950.0, 745.0}) ==
+        basilisk::game::MainMenuAction::ToggleSandboxReady);
+
     const auto emptyQuiver = basilisk::game::hudArrowSectionLayout(0);
     assert(emptyQuiver.slotCount == 0);
     assert(emptyQuiver.contentWidth == 0.0F);

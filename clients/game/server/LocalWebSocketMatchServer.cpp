@@ -407,11 +407,23 @@ private:
              type == network::WireMessageType::HostSandboxLobby ||
              type == network::WireMessageType::JoinSandboxLobby ||
              type == network::WireMessageType::LeaveSandboxLobby ||
-             type == network::WireMessageType::SetSandboxReady ||
+            type == network::WireMessageType::SetSandboxReady ||
              type == network::WireMessageType::StartSandboxMatch)) {
+            std::string publicName;
+            if (type == network::WireMessageType::HostSandboxLobby ||
+                type == network::WireMessageType::JoinSandboxLobby) {
+                PublicAccountProfile profile;
+                if (!authentication_->publicProfile(
+                        *found->second.account, profile, error)) {
+                    reject(socket, found->second, 1008, error);
+                    return;
+                }
+                publicName = profile.username.value;
+            }
             std::vector<LobbyProtocolDelivery> deliveries;
             if (!lobbyProtocol_.process(
-                    *found->second.account, bytes, deliveries, error)) {
+                    *found->second.account, publicName,
+                    bytes, deliveries, error)) {
                 reject(socket, found->second, 1008, error);
                 return;
             }
@@ -540,7 +552,11 @@ private:
             return;
         }
         std::vector<LobbyProtocolDelivery> deliveries;
-        if (!lobbyProtocol_.process(account, bytes, deliveries, error)) {
+        const auto authenticated = authenticatedPreMatch_.find(&socket);
+        const std::string_view publicName = authenticated == authenticatedPreMatch_.end()
+            ? std::string_view{} : authenticated->second.profile.username.value;
+        if (!lobbyProtocol_.process(
+                account, publicName, bytes, deliveries, error)) {
             socket.close(1008, error);
             return;
         }

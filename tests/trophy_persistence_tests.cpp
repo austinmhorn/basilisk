@@ -568,10 +568,10 @@ void realAuthoritativeWinnerPersistsAwardsForDurableAccounts() {
                 available, player->id);
             assert(client->endpoint->send(network::ClientCommand{
                 network::kProtocolVersion,
-                network::SubmitActionCommand{action}}));
+                network::SubmitActionCommand{mirror.round, action}}));
             assert(client->endpoint->send(network::ClientCommand{
                 network::kProtocolVersion,
-                network::LockActionCommand{player->id}}));
+                network::LockActionCommand{mirror.round, player->id}}));
             assert(mirrorCoordinator.submitAction(action));
             assert(mirrorCoordinator.lockAction(player->id));
         }
