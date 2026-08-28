@@ -853,10 +853,16 @@ private:
                 pendingAuthentication_.erase(&socket);
                 return;
             }
+            if (!sendResponse(response)) {
+                endpoint->disconnect();
+                participant->second.connected = false;
+                participant->second.graceRemainingMs =
+                    assigned.match->disconnectGraceMs();
+                return;
+            }
             participant->second.connected = true;
             participant->second.graceRemainingMs =
                 assigned.match->disconnectGraceMs();
-            if (!sendResponse(response)) return;
             pendingAuthentication_.erase(&socket);
             clients_.emplace(&socket, Client{
                 participant->second.player,

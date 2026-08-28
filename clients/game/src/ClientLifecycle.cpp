@@ -1,5 +1,7 @@
 #include "ClientLifecycle.hpp"
 
+#include "ClientSessionController.hpp"
+
 #include <algorithm>
 #include <string_view>
 
@@ -110,6 +112,18 @@ bool beginSpectating(client::ClientViewContext& viewContext) {
     viewContext.viewedPlayer = *viewContext.spectatablePlayer;
     viewContext.mode = client::ClientViewMode::Spectating;
     return true;
+}
+
+bool hasAuthoritativeGameplaySession(
+    const ClientSessionController* session) noexcept {
+    return session != nullptr && session->displayedSnapshot() != nullptr;
+}
+
+bool shouldAttemptStartupSessionRestore(
+    bool developmentLaunch,
+    bool fixedTokenLaunch,
+    bool hasStoredSessionToken) noexcept {
+    return !developmentLaunch && !fixedTokenLaunch && hasStoredSessionToken;
 }
 
 } // namespace basilisk::game

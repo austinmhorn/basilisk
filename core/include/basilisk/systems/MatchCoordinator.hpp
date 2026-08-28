@@ -39,7 +39,7 @@ public:
     [[nodiscard]] const ActiveClash* activeClash() const noexcept;
 
     void disconnect(PlayerId player);
-    void reconnect(PlayerId player);
+    [[nodiscard]] bool reconnect(PlayerId player);
     // An intentional departure eliminates the hunter immediately. Unlike a
     // transport disconnect, it does not start reconnect grace.
     void forfeit(PlayerId player);

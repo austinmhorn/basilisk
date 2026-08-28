@@ -1144,6 +1144,79 @@ void authenticatedSandboxSupportsThreeToSixHumanSockets() {
                 }));
         }
 
+        // Exercise launched-match reservation/reclaim for a non-P1/P2 slot at
+        // both representative ends of the requested online Sandbox range.
+        if (humanCount == 3 || humanCount == 6) {
+            const std::size_t reconnectIndex = humanCount - 1;
+            const PlayerId expectedPlayer =
+                static_cast<PlayerId>(reconnectIndex + 1);
+            const RoundNumber expectedRound = clients[reconnectIndex]
+                ->controller()->displayedSnapshot()->round;
+            clients[reconnectIndex].reset();
+            assert(waitUntil([&] {
+                return server->connectedClientCount() == humanCount - 1;
+            }));
+
+            if (humanCount == 3) {
+                AccountIdentity intruderAccount;
+                AuthSessionToken intruderToken;
+                assert(auth->createAccount(
+                    EmailAddress{"sandbox-reconnect-intruder@example.test"},
+                    "correct horse battery staple",
+                    PublicAccountProfile{Username{"sandbox-reconnect-intruder"}},
+                    intruderAccount,
+                    error) == CreateAccountResult::Created);
+                assert(auth->authenticate(
+                    EmailAddress{"sandbox-reconnect-intruder@example.test"},
+                    "correct horse battery staple", intruderToken, error));
+                auto intruder = WebSocketNetworkSession::connectForAuthentication(
+                    url(*server), error);
+                assert(intruder != nullptr);
+                assert(waitUntil([&] {
+                    intruder->pump();
+                    return intruder->state() == NetworkConnectionState::Connected;
+                }));
+                assert(intruder->authenticate({network::kProtocolVersion,
+                    network::AuthenticateSessionRequest{intruderToken.value}}));
+                assert(waitUntil([&] {
+                    intruder->pump();
+                    return intruder->authenticationResponse().has_value();
+                }));
+                assert(intruder->controller() == nullptr);
+                intruder.reset();
+            }
+
+            // Model a real application start: the only input is the persisted
+            // account session. No lobby/menu request is sent by the fresh
+            // client before authentication and automatic bootstrap reclaim.
+            assert(shouldAttemptStartupSessionRestore(false, false, true));
+            auto reclaimed = WebSocketNetworkSession::connectForAuthentication(
+                url(*server), error);
+            assert(reclaimed != nullptr);
+            assert(waitUntil([&] {
+                reclaimed->pump();
+                return reclaimed->state() == NetworkConnectionState::Connected;
+            }));
+            assert(reclaimed->authenticate({network::kProtocolVersion,
+                network::AuthenticateSessionRequest{
+                    tokens[reconnectIndex].value}}));
+            assert(waitUntil([&] {
+                reclaimed->pump();
+                for (auto& client : clients) {
+                    if (client != nullptr) client->pump();
+                }
+                return reclaimed->controller() != nullptr;
+            }));
+            assert(reclaimed->controller()->viewContext().localPlayer ==
+                expectedPlayer);
+            assert(hasAuthoritativeGameplaySession(reclaimed->controller()));
+            assert(reclaimed->controller()->displayedSnapshot()->player ==
+                expectedPlayer);
+            assert(reclaimed->controller()->displayedSnapshot()->round ==
+                expectedRound);
+            clients[reconnectIndex] = std::move(reclaimed);
+        }
+
         const RoundNumber round =
             clients.front()->controller()->displayedSnapshot()->round;
         for (auto& client : clients) {
@@ -1163,6 +1236,68 @@ void authenticatedSandboxSupportsThreeToSixHumanSockets() {
             }
             return true;
         }, 10000));
+
+        if (humanCount == 3) {
+            // A fresh process authenticating after an explicit quit must not
+            // receive another gameplay bootstrap.
+            assert(clients[2]->controller()->quit());
+            clients[2]->clearGameplaySession();
+            assert(waitUntil([&] {
+                for (auto& client : clients) {
+                    if (client != nullptr) client->pump();
+                }
+                const auto* hostSnapshot =
+                    clients[0]->controller()->displayedSnapshot();
+                return clients[2]->controller() == nullptr &&
+                    std::ranges::any_of(
+                        hostSnapshot->observations,
+                        [](const PlayerObservation& observation) {
+                            return observation.type == ObservationType::RivalDied;
+                        });
+            }));
+            clients[2].reset();
+            assert(waitUntil([&] {
+                return server->connectedClientCount() == humanCount - 1;
+            }));
+            auto afterQuit = WebSocketNetworkSession::connectForAuthentication(
+                url(*server), error);
+            assert(afterQuit != nullptr);
+            assert(waitUntil([&] {
+                afterQuit->pump();
+                return afterQuit->state() == NetworkConnectionState::Connected;
+            }));
+            assert(afterQuit->authenticate({network::kProtocolVersion,
+                network::AuthenticateSessionRequest{tokens[2].value}}));
+            assert(waitUntil([&] {
+                afterQuit->pump();
+                return afterQuit->authenticationResponse().has_value();
+            }));
+            afterQuit->pump();
+            assert(afterQuit->controller() == nullptr);
+        } else if (humanCount == 6) {
+            // Expiring the server reservation likewise leaves a fresh client
+            // authenticated in pre-match state without an auto-resume.
+            clients[5].reset();
+            assert(waitUntil([&] {
+                return server->connectedClientCount() == humanCount - 1;
+            }));
+            server->advanceTime(60000);
+            auto afterExpiry = WebSocketNetworkSession::connectForAuthentication(
+                url(*server), error);
+            assert(afterExpiry != nullptr);
+            assert(waitUntil([&] {
+                afterExpiry->pump();
+                return afterExpiry->state() == NetworkConnectionState::Connected;
+            }));
+            assert(afterExpiry->authenticate({network::kProtocolVersion,
+                network::AuthenticateSessionRequest{tokens[5].value}}));
+            assert(waitUntil([&] {
+                afterExpiry->pump();
+                return afterExpiry->authenticationResponse().has_value();
+            }));
+            afterExpiry->pump();
+            assert(afterExpiry->controller() == nullptr);
+        }
     }
 }
 
@@ -1375,6 +1510,7 @@ void authenticatedPlayerReclaimsAssignedMatchWithinGrace() {
     host.reset();
     assert(waitUntil([&] { return server->connectedClientCount() == 1; }));
 
+    assert(shouldAttemptStartupSessionRestore(false, false, true));
     auto reclaimed = WebSocketNetworkSession::connectForAuthentication(
         url(*server), error);
     assert(reclaimed != nullptr);

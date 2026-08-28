@@ -171,27 +171,28 @@ ClashSubmissionResult MatchCoordinator::submitClashResponse(
 
 void MatchCoordinator::disconnect(PlayerId player) {
     lastEvents_.clear();
-    if (!isLivingPlayer(player)) return;
-
     const auto it = sessions_.find(player);
     if (it == sessions_.end() || !it->second.connected) return;
 
     it->second.connected = false;
     it->second.disconnectGraceRemainingMs = state_.rules.disconnectGraceMs;
-    lastEvents_.push_back(GameEvent{GameEventType::PlayerDisconnected, player});
+    if (isLivingPlayer(player))
+        lastEvents_.push_back(GameEvent{GameEventType::PlayerDisconnected, player});
 }
 
-void MatchCoordinator::reconnect(PlayerId player) {
+bool MatchCoordinator::reconnect(PlayerId player) {
     lastEvents_.clear();
-    if (!isLivingPlayer(player)) return;
-
     const auto it = sessions_.find(player);
-    if (it == sessions_.end() || it->second.connected) return;
+    if (it == sessions_.end() || it->second.connected ||
+        it->second.disconnectGraceRemainingMs == 0) return false;
 
     it->second.connected = true;
     it->second.disconnectGraceRemainingMs = state_.rules.disconnectGraceMs;
-    lastEvents_.push_back(GameEvent{GameEventType::PlayerReconnected, player});
-    (void)tryResolveRound();
+    if (isLivingPlayer(player)) {
+        lastEvents_.push_back(GameEvent{GameEventType::PlayerReconnected, player});
+        (void)tryResolveRound();
+    }
+    return true;
 }
 
 void MatchCoordinator::forfeit(PlayerId player) {
@@ -200,7 +201,10 @@ void MatchCoordinator::forfeit(PlayerId player) {
         return;
 
     const auto sessionIt = sessions_.find(player);
-    if (sessionIt != sessions_.end()) sessionIt->second.connected = false;
+    if (sessionIt != sessions_.end()) {
+        sessionIt->second.connected = false;
+        sessionIt->second.disconnectGraceRemainingMs = 0;
+    }
     eliminatePlayer(player);
     updateTerminalResultIfNeeded();
     if (state_.result.status != MatchStatus::Active) pendingClash_.reset();
@@ -271,7 +275,17 @@ void MatchCoordinator::updateTerminalResultIfNeeded() {
 
 void MatchCoordinator::advanceTime(std::uint64_t elapsedMs) {
     lastEvents_.clear();
-    if (state_.result.status != MatchStatus::Active || elapsedMs == 0) return;
+    if (elapsedMs == 0) return;
+    if (state_.result.status != MatchStatus::Active) {
+        for (auto& [player, session] : sessions_) {
+            (void)player;
+            if (session.connected) continue;
+            session.disconnectGraceRemainingMs =
+                elapsedMs >= session.disconnectGraceRemainingMs
+                    ? 0 : session.disconnectGraceRemainingMs - elapsedMs;
+        }
+        return;
+    }
 
     std::vector<PlayerId> disconnectExpired;
     std::vector<PlayerId> reserveExpired;
@@ -280,18 +294,18 @@ void MatchCoordinator::advanceTime(std::uint64_t elapsedMs) {
     // simultaneous timeout event ordering is reproducible across platforms.
     for (const auto& player : state_.players) {
         const PlayerId playerId = player.id;
-        if (!player.alive) continue;
         auto& sessionState = sessions_.at(playerId);
 
         if (!sessionState.connected) {
             if (elapsedMs >= sessionState.disconnectGraceRemainingMs) {
                 sessionState.disconnectGraceRemainingMs = 0;
-                disconnectExpired.push_back(playerId);
+                if (player.alive) disconnectExpired.push_back(playerId);
             } else {
                 sessionState.disconnectGraceRemainingMs -= elapsedMs;
             }
             continue;
         }
+        if (!player.alive) continue;
 
         if (!pendingClash_ && !sessionState.actionLocked && anotherLivingPlayerIsLocked(playerId)) {
             if (elapsedMs >= sessionState.reserveRemainingMs) {

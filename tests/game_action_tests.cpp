@@ -439,6 +439,30 @@ void playingLifecycleHasAuthorityAndNoModal() {
     assert(view.canSubmitActions());
 }
 
+void authoritativeGameplayBootstrapControlsResumeEligibility() {
+    assert(!hasAuthoritativeGameplaySession(nullptr));
+
+    ClientSessionController session;
+    assert(!hasAuthoritativeGameplaySession(&session));
+
+    client::ClientViewContext view;
+    view.localPlayer = PlayerId{3};
+    view.viewedPlayer = PlayerId{3};
+    session.setViewContext(view);
+    PlayerRoundSnapshot snapshot;
+    snapshot.player = PlayerId{3};
+    snapshot.round = RoundNumber{7};
+    assert(session.ingestSnapshot(std::move(snapshot)));
+    assert(hasAuthoritativeGameplaySession(&session));
+}
+
+void storedSessionStartsAutomaticRestoreOnlyForNormalLaunches() {
+    assert(shouldAttemptStartupSessionRestore(false, false, true));
+    assert(!shouldAttemptStartupSessionRestore(false, false, false));
+    assert(!shouldAttemptStartupSessionRestore(true, false, true));
+    assert(!shouldAttemptStartupSessionRestore(false, true, true));
+}
+
 void rivalReconnectStatusFollowsPlayerSafeObservations() {
     PlayerRoundSnapshot snapshot;
     snapshot.observations = {
@@ -1127,6 +1151,8 @@ int main() {
     emptyAndPopulatedRoundReportsUsePlayerObservations();
     roundReportLayoutIncludesEveryWrappedMessage();
     playingLifecycleHasAuthorityAndNoModal();
+    authoritativeGameplayBootstrapControlsResumeEligibility();
+    storedSessionStartsAutomaticRestoreOnlyForNormalLaunches();
     rivalReconnectStatusFollowsPlayerSafeObservations();
     firstDeathCanTransitionToViewOnlySpectating();
     finalDeathOffersQuitOnly();

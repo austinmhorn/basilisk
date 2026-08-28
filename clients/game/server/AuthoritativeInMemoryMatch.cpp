@@ -208,8 +208,18 @@ public:
 
     [[nodiscard]] bool receive(
         PlayerId authenticatedPlayer,
+        const InMemoryMatchEndpoint* sender,
         std::span<const std::uint8_t> bytes,
         std::string& error) {
+
+        const auto attached = endpoints_.find(authenticatedPlayer);
+        const auto endpoint = attached == endpoints_.end()
+            ? std::shared_ptr<InMemoryMatchEndpoint>{}
+            : attached->second.lock();
+        if (endpoint == nullptr || endpoint.get() != sender) {
+            error = "Match endpoint no longer owns this player session.";
+            return false;
+        }
 
         network::ClientCommand command;
         if (!network::decodeClientCommand(bytes, command, error)) return false;
@@ -239,8 +249,7 @@ public:
         }
         const RoundNumber priorRound = match_.round;
         const auto priorClash = activeClashCopy();
-        coordinator_.reconnect(player);
-        if (coordinator_.authoritativeEvents().empty()) {
+        if (!coordinator_.reconnect(player)) {
             error = "Player reconnect grace has expired.";
             return false;
         }
@@ -260,8 +269,13 @@ public:
         driveAi();
     }
 
-    void disconnect(PlayerId player) {
-        endpoints_.erase(player);
+    void disconnect(PlayerId player, const InMemoryMatchEndpoint* sender) {
+        const auto attached = endpoints_.find(player);
+        const auto endpoint = attached == endpoints_.end()
+            ? std::shared_ptr<InMemoryMatchEndpoint>{}
+            : attached->second.lock();
+        if (endpoint == nullptr || endpoint.get() != sender) return;
+        endpoints_.erase(attached);
         const RoundNumber priorRound = match_.round;
         const auto priorClash = activeClashCopy();
         coordinator_.disconnect(player);
@@ -736,7 +750,7 @@ bool InMemoryMatchEndpoint::sendBytes(
     std::span<const std::uint8_t> bytes,
     std::string& error) {
     return state_ != nullptr &&
-           state_->receive(authenticatedPlayer_, bytes, error);
+           state_->receive(authenticatedPlayer_, this, bytes, error);
 }
 
 PlayerId InMemoryMatchEndpoint::authenticatedPlayer() const noexcept {
@@ -752,7 +766,7 @@ InMemoryMatchEndpoint::takeNextServerFrame() {
 }
 
 void InMemoryMatchEndpoint::disconnect() {
-    if (state_ != nullptr) state_->disconnect(authenticatedPlayer_);
+    if (state_ != nullptr) state_->disconnect(authenticatedPlayer_, this);
 }
 
 void InMemoryMatchEndpoint::enqueue(network::WireBytes frame) {

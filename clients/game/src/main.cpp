@@ -72,7 +72,7 @@ struct AppState {
     bool authResponseHandled{false};
     bool storedSessionAttempted{false};
     bool restoringSession{false};
-    bool resumeGameplayOnBootstrap{false};
+    bool startupSessionRestore{false};
     std::optional<basilisk::game::PublicAccountProfile> authenticatedProfile;
     std::optional<std::string> authenticatedSessionToken;
     std::optional<basilisk::client::AccountCosmeticLoadout>
@@ -158,6 +158,33 @@ void returnFromAuthenticationToStartGame(AppState& state) {
     (void)SDL_StopTextInput(state.window);
 }
 
+void finishStartupSessionRestoreAtMainMenu(AppState& state) {
+    state.startupSessionRestore = false;
+    state.view = AppView::MainMenu;
+    (void)SDL_StopTextInput(state.window);
+}
+
+bool beginOnlineAuthentication(
+    AppState& state,
+    bool enterOnlineAfterAuthentication,
+    bool startupSessionRestore = false) {
+    std::string error;
+    state.networkSession =
+        basilisk::game::WebSocketNetworkSession::connectForAuthentication(
+            state.serverUrl, error);
+    if (state.networkSession == nullptr) {
+        SDL_Log("Unable to connect network session: %s", error.c_str());
+        return false;
+    }
+    state.enterOnlineAfterAuthentication = enterOnlineAfterAuthentication;
+    state.startupSessionRestore = startupSessionRestore;
+    state.storedSessionAttempted = false;
+    state.authResponseHandled = false;
+    state.networkFailureLogged = false;
+    state.view = AppView::Authentication;
+    return true;
+}
+
 SDL_AppResult handleMainMenuResult(
     AppState& state,
     basilisk::game::MainMenuResult result) {
@@ -170,19 +197,9 @@ SDL_AppResult handleMainMenuResult(
             state.mainMenu.openOnline();
             return SDL_APP_CONTINUE;
         }
-        std::string error;
-        state.networkSession =
-            basilisk::game::WebSocketNetworkSession::connectForAuthentication(
-                state.serverUrl, error);
-        if (state.networkSession == nullptr) {
-            SDL_Log("Unable to connect network session: %s", error.c_str());
+        if (!beginOnlineAuthentication(state, true)) {
             return SDL_APP_CONTINUE;
         }
-        state.enterOnlineAfterAuthentication = true;
-        state.storedSessionAttempted = false;
-        state.authResponseHandled = false;
-        state.networkFailureLogged = false;
-        state.view = AppView::Authentication;
         (void)SDL_StartTextInput(state.window);
         return SDL_APP_CONTINUE;
     }
@@ -259,7 +276,6 @@ SDL_AppResult handleMainMenuResult(
         state.authResponseHandled = false;
         state.storedSessionAttempted = true;
         state.restoringSession = false;
-        state.resumeGameplayOnBootstrap = false;
         state.view = AppView::Authentication;
         (void)SDL_StartTextInput(state.window);
         return SDL_APP_CONTINUE;
@@ -488,8 +504,9 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
             developmentLaunch = true;
     }
     state->serverUrl = connectUrl.value_or(endpointConfig.connectUrl);
-    // Fixed-token development launches connect immediately. Normal launches
-    // remain offline at the Main Menu until Play Online is chosen.
+    // Fixed-token development launches connect immediately. Stored account
+    // sessions are restored below after SDL initialization; otherwise normal
+    // launches remain offline at the Main Menu until Play Online is chosen.
     if (!connectToken.has_value() && !developmentLaunch) connectUrl.reset();
     if (connectUrl.has_value()) {
         std::string error;
@@ -619,6 +636,12 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
             "Basilisk", 1440, 900, windowFlags, &state->window, &state->renderer)) {
         SDL_Log("SDL_CreateWindowAndRenderer failed: %s", SDL_GetError());
         return SDL_APP_FAILURE;
+    }
+    if (basilisk::game::shouldAttemptStartupSessionRestore(
+            developmentLaunch,
+            connectToken.has_value(),
+            basilisk::game::SessionTokenStorage::load().has_value())) {
+        (void)beginOnlineAuthentication(*state, false, true);
     }
     if (state->view == AppView::Authentication)
         (void)SDL_StartTextInput(state->window);
@@ -1439,28 +1462,9 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             }
         }
         if (state->view == AppView::MainMenu &&
-            state->mainMenu.page() == basilisk::game::MainMenuPage::MatchReady &&
-            state->session != nullptr &&
-            state->session->displayedSnapshot() != nullptr) {
+            basilisk::game::hasAuthoritativeGameplaySession(state->session)) {
             state->view = AppView::Gameplay;
             state->screenShellEnabled = true;
-            state->resumeGameplayOnBootstrap = false;
-        }
-        if (state->view == AppView::MainMenu &&
-            state->mainMenu.page() == basilisk::game::MainMenuPage::SandboxLobby &&
-            state->session != nullptr &&
-            state->session->displayedSnapshot() != nullptr) {
-            state->view = AppView::Gameplay;
-            state->screenShellEnabled = true;
-            state->resumeGameplayOnBootstrap = false;
-        }
-        if (state->view == AppView::MainMenu &&
-            state->resumeGameplayOnBootstrap &&
-            state->session != nullptr &&
-            state->session->displayedSnapshot() != nullptr) {
-            state->view = AppView::Gameplay;
-            state->screenShellEnabled = true;
-            state->resumeGameplayOnBootstrap = false;
         }
         if (state->view == AppView::Authentication &&
             !state->storedSessionAttempted &&
@@ -1504,7 +1508,6 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 if (!basilisk::game::SessionTokenStorage::save(
                         success->sessionToken, storageError))
                     SDL_Log("Unable to save session: %s", storageError.c_str());
-                state->resumeGameplayOnBootstrap = state->restoringSession;
                 state->restoringSession = false;
                 state->authScreen.setWaiting(false);
                 if (state->enterOnlineAfterAuthentication) {
@@ -1513,6 +1516,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     state->mainMenu.openOnline();
                 }
                 state->enterOnlineAfterAuthentication = false;
+                state->startupSessionRestore = false;
                 state->view = AppView::MainMenu;
                 (void)SDL_StopTextInput(state->window);
             } else if (const auto* failure = std::get_if<
@@ -1523,10 +1527,12 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     (void)basilisk::game::SessionTokenStorage::clear(ignored);
                     state->authenticatedSessionToken.reset();
                     state->restoringSession = false;
-                    state->resumeGameplayOnBootstrap = false;
                     state->authScreen.setError(failure->message);
                 } else {
                     state->authScreen.setError(failure->message);
+                }
+                if (state->startupSessionRestore) {
+                    finishStartupSessionRestoreAtMainMenu(*state);
                 }
             } else if (std::holds_alternative<
                            basilisk::game::network::LogoutSuccess>(
@@ -1562,9 +1568,17 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                  basilisk::game::NetworkConnectionState::Disconnected)) {
             SDL_Log("Network session ended: %s",
                 state->networkSession->error().c_str());
-            if (state->view == AppView::Authentication)
-                state->authScreen.setError(state->networkSession->error());
-            if (state->view == AppView::MainMenu) {
+            const bool startupRestoreFailed =
+                state->view == AppView::Authentication &&
+                state->startupSessionRestore;
+            if (state->view == AppView::Authentication) {
+                if (state->startupSessionRestore) {
+                    finishStartupSessionRestoreAtMainMenu(*state);
+                } else {
+                    state->authScreen.setError(state->networkSession->error());
+                }
+            }
+            if (state->view == AppView::MainMenu && !startupRestoreFailed) {
                 std::string error = state->networkSession->error();
                 if (error.empty()) error = "Connection to the server was lost.";
                 state->mainMenu.connectionLost(std::move(error));

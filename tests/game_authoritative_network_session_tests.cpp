@@ -69,6 +69,24 @@ ConnectedClient connectClient(
     return {std::move(endpoint), std::move(session)};
 }
 
+ConnectedClient reconnectClient(
+    AuthoritativeInMemoryMatch& host,
+    PlayerId player) {
+
+    std::string error;
+    auto endpoint = host.reconnect(player, error);
+    assert(endpoint != nullptr && error.empty());
+    const auto frame = endpoint->takeNextServerFrame();
+    assert(frame.has_value());
+    ServerBootstrap bootstrap;
+    assert(decodeServerBootstrap(*frame, bootstrap, error));
+    assert(bootstrap.viewContext.localPlayer == player);
+    auto session = NetworkGameSessionAdapter::create(
+        std::move(bootstrap), endpoint, error);
+    assert(session != nullptr && error.empty());
+    return {std::move(endpoint), std::move(session)};
+}
+
 const AvailableAction& actionOfType(
     const PlayerRoundSnapshot& snapshot,
     ActionType type) {
@@ -348,6 +366,72 @@ void explicitQuitEliminatesImmediatelyAndSurvivorContinues() {
            priorRound + 1);
 }
 
+void reconnectPreservesRoundStateAndRejectsStaleEndpoints() {
+    std::string error;
+    auto host = AuthoritativeInMemoryMatch::create(
+        MapSeed{20260816}, MatchSeed{424242}, profiles(), error);
+    assert(host != nullptr);
+    ConnectedClient p1 = connectClient(*host, PlayerId{1});
+    ConnectedClient p2 = connectClient(*host, PlayerId{2});
+
+    const auto send = [](ConnectedClient& client, ClientCommandPayload payload) {
+        return client.endpoint->send(
+            ClientCommand{kProtocolVersion, std::move(payload)});
+    };
+    const PlayerAction p1Search = makePlayerAction(
+        actionOfType(*p1.session->controller().displayedSnapshot(),
+            ActionType::Search), PlayerId{1});
+    assert(send(p1, SubmitActionCommand{RoundNumber{1}, p1Search}));
+    auto staleEndpoint = p1.endpoint;
+    p1.endpoint->disconnect();
+    ConnectedClient reclaimed = reconnectClient(*host, PlayerId{1});
+    assert(reclaimed.session->controller().viewContext().localPlayer == PlayerId{1});
+    assert(reclaimed.session->controller().displayedSnapshot()->round ==
+        RoundNumber{1});
+    assert(!staleEndpoint->send(ClientCommand{kProtocolVersion,
+        LockActionCommand{RoundNumber{1}, PlayerId{1}}}));
+    staleEndpoint->disconnect();
+    assert(send(reclaimed,
+        LockActionCommand{RoundNumber{1}, PlayerId{1}}));
+
+    const PlayerAction p2Search = makePlayerAction(
+        actionOfType(*p2.session->controller().displayedSnapshot(),
+            ActionType::Search), PlayerId{2});
+    assert(send(p2, SubmitActionCommand{RoundNumber{1}, p2Search}));
+    assert(send(p2, LockActionCommand{RoundNumber{1}, PlayerId{2}}));
+    assert(host->authoritativeRound() == RoundNumber{2});
+
+    // A locked player may disconnect while the other hunter completes the
+    // round; the reclaimed bootstrap starts at the new authoritative round.
+    reclaimed.ingestUpdates();
+    p2.ingestUpdates();
+    const PlayerAction nextP1Search = makePlayerAction(
+        actionOfType(*reclaimed.session->controller().displayedSnapshot(),
+            ActionType::Search), PlayerId{1});
+    assert(send(reclaimed,
+        SubmitActionCommand{RoundNumber{2}, nextP1Search}));
+    assert(send(reclaimed,
+        LockActionCommand{RoundNumber{2}, PlayerId{1}}));
+    reclaimed.endpoint->disconnect();
+    const PlayerAction nextP2Search = makePlayerAction(
+        actionOfType(*p2.session->controller().displayedSnapshot(),
+            ActionType::Search), PlayerId{2});
+    assert(send(p2, SubmitActionCommand{RoundNumber{2}, nextP2Search}));
+    assert(send(p2, LockActionCommand{RoundNumber{2}, PlayerId{2}}));
+    assert(host->authoritativeRound() == RoundNumber{3});
+    ConnectedClient advanced = reconnectClient(*host, PlayerId{1});
+    assert(advanced.session->controller().displayedSnapshot()->round ==
+        RoundNumber{3});
+
+    // Explicit Quit remains a forfeit and is not converted into reconnect
+    // grace by the endpoint lifecycle.
+    assert(advanced.session->controller().quit());
+    advanced.ingestUpdates();
+    assert(!advanced.session->controller().displayedSnapshot()->alive);
+    advanced.endpoint->disconnect();
+    assert(host->reconnect(PlayerId{1}, error) == nullptr);
+}
+
 void authenticatedServerReturnsOnlyPublicLeaderboardFields() {
     const auto persistence = makeInMemoryTrophyPersistence();
     const auto ledger = std::make_shared<TrophyLedger>(persistence);
@@ -613,6 +697,7 @@ int main() {
     spoofedMalformedAndForgedCommandsAreRejected();
     actionCommandsAreBoundToTheAuthoritativeRound();
     explicitQuitEliminatesImmediatelyAndSurvivorContinues();
+    reconnectPreservesRoundStateAndRejectsStaleEndpoints();
     authenticatedServerReturnsOnlyPublicLeaderboardFields();
     onlineSandboxTerminalStateReachesEveryHuman();
     slowOnlineSandboxHumanExpiresWithoutBlockingRound();

@@ -168,7 +168,7 @@ void reconnectWithinGracePreservesHunterAndActionState() {
     assert(playerById(state, 2).alive);
     assert(coordinator.hostSession(2)->pendingAction.has_value());
 
-    coordinator.reconnect(2);
+    assert(coordinator.reconnect(2));
     assert(hasEvent(coordinator.authoritativeEvents(), GameEventType::PlayerReconnected));
     assert(coordinator.hostSession(2)->connected);
     assert(coordinator.hostSession(2)->disconnectGraceRemainingMs == 30000);
@@ -183,12 +183,14 @@ void explicitForfeitEliminatesImmediatelyAndDoesNotUseGrace() {
     assert(!playerById(state, PlayerId{2}).alive);
     assert(playerById(state, PlayerId{1}).alive);
     assert(!coordinator.hostSession(PlayerId{2})->connected);
+    assert(coordinator.hostSession(PlayerId{2})->disconnectGraceRemainingMs == 0);
     assert(!hasEvent(
         coordinator.authoritativeEvents(), GameEventType::PlayerDisconnected));
     assert(!hasEvent(coordinator.authoritativeEvents(),
         GameEventType::PlayerDisconnectTimedOut));
     assert(hasEvent(coordinator.authoritativeEvents(), GameEventType::PlayerKilled));
     assert(hasEvent(coordinator.authoritativeEvents(), GameEventType::BodyCreated));
+    assert(!coordinator.reconnect(PlayerId{2}));
 
     const RoundNumber priorRound = state.round;
     assert(coordinator.submitAction(search(PlayerId{1})));
@@ -489,7 +491,7 @@ void reconnectDuringClashRestoresSameChallengeAndSearch() {
     assert(coordinator.activeClash()->id == original.id);
     assert(coordinator.activeClash()->challengeWord == original.challengeWord);
     assert(coordinator.activeClash()->remainingMs == original.remainingMs - 100);
-    coordinator.reconnect(17);
+    assert(coordinator.reconnect(17));
     assert(coordinator.hostSession(17)->connected);
     assert(coordinator.activeClash() != nullptr);
     assert(coordinator.activeClash()->id == original.id);
@@ -641,6 +643,54 @@ void connectedOppositeAndDestinationConflictsFormOneComponent() {
         ClashSubmissionResult::Resolved);
     assert(state.round == 2);
     assert(playerById(state, 103).cave == 1);
+}
+
+void multiPartyClashReconnectKeepsIdentityAndDoesNotResurrectResolvedClash() {
+    auto state = multiHunterFixture(3);
+    state.rules.disconnectGraceMs = 500;
+    MatchCoordinator coordinator(state);
+    submitAndLockAll(coordinator,
+        {move(101, 20), move(102, 20), move(103, 20)});
+    const ActiveClash original = *coordinator.activeClash();
+    assert((original.participants ==
+        std::vector<PlayerId>{101, 102, 103}));
+
+    coordinator.disconnect(PlayerId{103});
+    coordinator.advanceTime(100);
+    assert(coordinator.activeClash() != nullptr);
+    assert(coordinator.activeClash()->id == original.id);
+    assert(coordinator.reconnect(PlayerId{103}));
+    assert(coordinator.hostSession(PlayerId{103})->connected);
+    assert(coordinator.activeClash()->id == original.id);
+
+    assert(coordinator.submitClashResponse(
+        PlayerId{103}, original.id, original.challengeWord) ==
+        ClashSubmissionResult::Resolved);
+    assert(state.round == RoundNumber{2});
+    assert(coordinator.activeClash() == nullptr);
+    assert(coordinator.submitClashResponse(
+        PlayerId{101}, original.id, original.challengeWord) ==
+        ClashSubmissionResult::Rejected);
+}
+
+void defeatedAndTerminalSessionsCanReconnectWhileExternallyReserved() {
+    auto state = multiHunterFixture(2);
+    state.players.front().alive = false;
+    state.players.front().health = 0;
+    state.rules.disconnectGraceMs = 500;
+    MatchCoordinator coordinator(state);
+    coordinator.disconnect(PlayerId{101});
+    assert(coordinator.reconnect(PlayerId{101}));
+    coordinator.disconnect(PlayerId{101});
+    state.result.status = MatchStatus::Completed;
+    state.result.outcome = MatchOutcome::Draw;
+    assert(state.result.status == MatchStatus::Completed);
+    assert(coordinator.reconnect(PlayerId{101}));
+    assert(!coordinator.reconnect(PlayerId{101}));
+
+    coordinator.disconnect(PlayerId{101});
+    coordinator.advanceTime(500);
+    assert(!coordinator.reconnect(PlayerId{101}));
 }
 
 void disjointConflictComponentsQueueDeterministically() {
@@ -846,6 +896,8 @@ int main() {
     fiveHuntersCanShareOneConflictComponent();
     fourAndSixHuntersCanShareOneConflictComponent();
     connectedOppositeAndDestinationConflictsFormOneComponent();
+    multiPartyClashReconnectKeepsIdentityAndDoesNotResurrectResolvedClash();
+    defeatedAndTerminalSessionsCanReconnectWhileExternallyReserved();
     disjointConflictComponentsQueueDeterministically();
     clashTimeoutAdvancesToNextQueuedComponent();
     multiPartyStalemateCancelsMovesAndPreservesSearchOnce();
