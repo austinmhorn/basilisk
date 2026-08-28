@@ -339,6 +339,59 @@ void authenticatedServerReturnsOnlyPublicLeaderboardFields() {
     }
 }
 
+void onlineSandboxTerminalStateReachesEveryHuman() {
+    auto config = client::defaultSandboxSessionConfig(3);
+    config.humanPlayerCount = 3;
+    config.caveCount = 30;
+    config.jackalCount = 0;
+    config.mapSeed = MapSeed{3030};
+
+    std::vector<client::PublicPlayerProfile> sandboxProfiles;
+    for (std::uint32_t slot = 1; slot <= 3; ++slot) {
+        sandboxProfiles.push_back({
+            PlayerId{slot},
+            "Hunter " + std::to_string(slot),
+            {"arrow-right-black"},
+            {"circle-black"},
+        });
+    }
+
+    std::string error;
+    auto host = AuthoritativeInMemoryMatch::createSandbox(
+        config, sandboxProfiles, {}, error);
+    assert(host != nullptr && error.empty());
+    ConnectedClient p1 = connectClient(*host, PlayerId{1});
+    ConnectedClient p2 = connectClient(*host, PlayerId{2});
+    ConnectedClient p3 = connectClient(*host, PlayerId{3});
+
+    assert(p1.session->controller().quit());
+    p1.ingestUpdates();
+    p2.ingestUpdates();
+    p3.ingestUpdates();
+    assert(p1.session->controller().displayedSnapshot()->matchStatus ==
+           MatchStatus::Active);
+
+    assert(p2.session->controller().quit());
+    p1.ingestUpdates();
+    p2.ingestUpdates();
+    p3.ingestUpdates();
+    assert(p3.session->controller().displayedSnapshot()->matchStatus ==
+           MatchStatus::Active);
+
+    assert(p3.session->controller().quit());
+    p1.ingestUpdates();
+    p2.ingestUpdates();
+    p3.ingestUpdates();
+
+    for (const ConnectedClient* client : {&p1, &p2, &p3}) {
+        const auto* snapshot = client->session->controller().displayedSnapshot();
+        assert(snapshot != nullptr);
+        assert(snapshot->matchStatus == MatchStatus::Completed);
+        assert(snapshot->matchOutcome == MatchOutcome::Draw);
+        assert(!snapshot->winner.has_value());
+    }
+}
+
 void slowOnlineSandboxHumanExpiresWithoutBlockingRound() {
     auto config = client::defaultSandboxSessionConfig(3);
     config.humanPlayerCount = 3;
@@ -492,6 +545,7 @@ int main() {
     spoofedMalformedAndForgedCommandsAreRejected();
     explicitQuitEliminatesImmediatelyAndSurvivorContinues();
     authenticatedServerReturnsOnlyPublicLeaderboardFields();
+    onlineSandboxTerminalStateReachesEveryHuman();
     slowOnlineSandboxHumanExpiresWithoutBlockingRound();
     onlineSandboxSpectatorAdvancesWhenWatchedHunterDies();
     sandboxLaunchPreservesSlotsAndRunsServerAi();
