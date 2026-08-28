@@ -459,17 +459,22 @@ bool drawHeaderHud(
             const SDL_FRect chip{chipX, top, chipWidth, playerCardHeight * scale};
             const SDL_Color border = participant.viewed
                 ? ui::Theme::gold
-                : participant.alive ? ui::Theme::border : ui::Theme::red;
+                : !participant.alive.has_value() ? ui::Theme::border
+                : *participant.alive ? ui::Theme::border : ui::Theme::red;
             drawPanel(context.renderer, chip, 7.0F * scale,
                 participant.viewed ? SDL_Color{39, 34, 23, SDL_ALPHA_OPAQUE}
                                    : ui::Theme::surface,
                 border, scale);
-            const std::string status = participant.alive ? "ALIVE" : "DEAD";
+            const std::string status = !participant.alive.has_value()
+                ? "IN MATCH" : *participant.alive ? "ALIVE" : "DEAD";
+            const SDL_Color statusColor =
+                participant.alive.has_value() && !*participant.alive
+                    ? ui::Theme::red : ui::Theme::muted;
             if (!context.label(participant.label, FontWeight::Bold,
                     8.0F, participant.viewed ? ui::Theme::gold : ui::Theme::text,
                     chip.x + 7.0F * scale, chip.y + 5.0F * scale) ||
                 !context.label(status, FontWeight::SemiBold, 7.0F,
-                    participant.alive ? ui::Theme::muted : ui::Theme::red,
+                    statusColor,
                     chip.x + 7.0F * scale, chip.y + 18.0F * scale) ||
                 !context.label(participant.subtitle, FontWeight::Regular, 5.5F,
                     ui::Theme::muted, chip.x + 7.0F * scale,
