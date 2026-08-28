@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <optional>
 #include <set>
 
 #include "LocalSandboxSessionAdapter.hpp"
@@ -127,12 +128,14 @@ int main() {
         const auto strip = sandboxParticipantPresentation(*local.session);
         assert(strip.size() == hunterCount);
         assert(strip.front().label == "HOST");
-        assert(strip.front().local && strip.front().viewed && strip.front().alive);
+        assert(strip.front().local && strip.front().viewed &&
+            strip.front().alive == std::optional<bool>{true});
         for (std::size_t index = 1; index < strip.size(); ++index) {
             assert(strip[index].label == "BASILISK AI " + std::to_string(index + 1));
             assert(!strip[index].subtitle.empty());
             assert(strip[index].subtitle.find("Random") == std::string::npos);
-            assert(!strip[index].local && strip[index].alive);
+            assert(!strip[index].local &&
+                strip[index].alive == std::optional<bool>{true});
         }
         const PlayerId human = local.session->viewContext().localPlayer;
         const PlayerRoundSnapshot before = *local.session->snapshotFor(human);

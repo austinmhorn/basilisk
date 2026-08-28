@@ -584,7 +584,8 @@ void sandboxDebugMenusTargetEveryParticipantAndSpectatingCycles() {
     assert(!sandbox.session->snapshotFor(host)->alive);
     const auto stripAfterDeath = sandboxParticipantPresentation(*sandbox.session);
     assert(stripAfterDeath.size() == participants.size());
-    assert(!stripAfterDeath.front().alive && stripAfterDeath.front().local);
+    assert(stripAfterDeath.front().alive.has_value() &&
+        !*stripAfterDeath.front().alive && stripAfterDeath.front().local);
     assert(sandbox.session->viewContext().mode == client::ClientViewMode::Defeated);
     assert(sandbox.session->watchRemainingHunter());
     std::set<PlayerId> watched;
