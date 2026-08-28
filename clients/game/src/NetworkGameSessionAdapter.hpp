@@ -41,10 +41,12 @@ public:
 private:
     explicit NetworkGameSessionAdapter(
         std::unique_ptr<ClientSessionController> controller,
-        std::shared_ptr<network::ClientTransport> transport);
+        std::shared_ptr<network::ClientTransport> transport,
+        std::shared_ptr<RoundNumber> commandRound);
 
     std::unique_ptr<ClientSessionController> controller_;
     std::shared_ptr<network::ClientTransport> transport_;
+    std::shared_ptr<RoundNumber> commandRound_;
     std::optional<network::LeaderboardPageResponse> leaderboardPage_;
     std::optional<network::ClashStarted> activeClash_;
     std::optional<network::ClashResolved> lastClashResult_;
