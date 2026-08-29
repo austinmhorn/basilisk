@@ -468,7 +468,75 @@ jobs:
             --write-out '%{http_code}' https://game.xiivestudio.com/)"
           test "${status}" = 426
 
-  release:
+
+  publish-desktop-current:
+    name: Publish current desktop build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - package-macos
+      - package-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download macOS package
+        uses: actions/download-artifact@v4
+        with:
+          pattern: BasiliskGame-macOS-*
+          path: desktop-input/macos
+          merge-multiple: true
+
+      - name: Download Windows package
+        uses: actions/download-artifact@v4
+        with:
+          pattern: BasiliskGame-Windows-*
+          path: desktop-input/windows
+          merge-multiple: true
+
+      - name: Assemble stable desktop assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p desktop-release
+
+          mapfile -t macos_packages < <(
+            find desktop-input/macos -type f -name 'Basilisk-*-macOS-*.dmg' -print
+          )
+          mapfile -t windows_packages < <(
+            find desktop-input/windows -type f -name 'Basilisk-*-Windows-*.zip' -print
+          )
+
+          if (( ${#macos_packages[@]} != 1 )); then
+            echo "::error::Expected one validated macOS DMG, found ${#macos_packages[@]}."
+            exit 1
+          fi
+          if (( ${#windows_packages[@]} != 1 )); then
+            echo "::error::Expected one validated Windows ZIP, found ${#windows_packages[@]}."
+            exit 1
+          fi
+
+          cp "${macos_packages[0]}" desktop-release/Basilisk-macOS.dmg
+          cp "${windows_packages[0]}" desktop-release/Basilisk-Windows.zip
+
+          test -s desktop-release/Basilisk-macOS.dmg
+          test -s desktop-release/Basilisk-Windows.zip
+
+      - name: Publish current-build release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if gh release view current-build >/dev/null 2>&1; then
+            gh release upload current-build               desktop-release/Basilisk-macOS.dmg               desktop-release/Basilisk-Windows.zip               --clobber
+            gh release edit current-build               --title "Basilisk Current Build"               --notes "Automated desktop packages from the latest successful main build. Source: ${GITHUB_SHA}"               --prerelease
+          else
+            gh release create current-build               --target "${GITHUB_SHA}"               --title "Basilisk Current Build"               --notes "Automated desktop packages from the latest successful main build. Source: ${GITHUB_SHA}"               --prerelease               desktop-release/Basilisk-macOS.dmg               desktop-release/Basilisk-Windows.zip
+          fi
+
+release:
     name: Publish tagged release
     if: startsWith(github.ref, 'refs/tags/v')
     needs:
