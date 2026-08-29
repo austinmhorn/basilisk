@@ -281,7 +281,7 @@ SDL_AppResult handleMainMenuResult(
         return SDL_APP_CONTINUE;
     }
     if (result == basilisk::game::MainMenuResult::RequestLeaderboard &&
-        state.networkSession != nullptr && state.session != nullptr) {
+        state.networkSession != nullptr) {
         if (!state.networkSession->requestLeaderboard(
                 state.mainMenu.leaderboardOffset(),
                 basilisk::game::MainMenuState::leaderboardPageSize)) {

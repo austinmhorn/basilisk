@@ -3,6 +3,7 @@
 #include <chrono>
 #include <concepts>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <numeric>
 #include <queue>
@@ -299,6 +300,120 @@ void publicLeaderboardCombinesProfilesWithLedgerTotals() {
     assert(readModel.leaderboardPage(0, 2, page, error));
     assert((page == std::vector<PublicTrophyLeaderboardEntry>{
         expected[0], expected[1]}));
+}
+
+void publicLeaderboardReadsFreshPersistedTotalsWithoutCaching() {
+    TemporaryDatabase database;
+    auto persistence = open(database);
+    std::string error;
+    const AccountIdentity alpha{"private-alpha-fresh"};
+    const AccountIdentity bravo{"private-bravo-fresh"};
+    assert(persistence->storeProfile(
+        alpha, PublicAccountProfile{Username{"alpha-fresh"}}, error) ==
+        PublicProfileStoreResult::Stored);
+    assert(persistence->storeProfile(
+        bravo, PublicAccountProfile{Username{"bravo-fresh"}}, error) ==
+        PublicProfileStoreResult::Stored);
+
+    auto ledger = std::make_shared<TrophyLedger>(persistence);
+    PublicTrophyReadModel readModel{ledger, persistence};
+    std::vector<PublicTrophyLeaderboardEntry> page;
+    assert(readModel.leaderboardPage(0, 10, page, error));
+    assert(page.empty());
+
+    const MatchResult alphaWin{
+        MatchStatus::Completed, MatchOutcome::BasiliskKilled, PlayerId{1}};
+    const std::map<PlayerId, AccountIdentity> firstAccounts{
+        {PlayerId{1}, alpha}, {PlayerId{2}, bravo}};
+    assert(ledger->scoreMatch(
+        TrophyMatchId{"fresh-alpha-win"}, firstAccounts, alphaWin, {}) ==
+        TrophyScoreResult::Scored);
+    assert(readModel.leaderboardPage(0, 10, page, error));
+    assert((page == std::vector<PublicTrophyLeaderboardEntry>{
+        {1, Username{"alpha-fresh"}, 2},
+        {2, Username{"bravo-fresh"}, -1},
+    }));
+
+    const MatchResult bravoWin{
+        MatchStatus::Completed, MatchOutcome::EscapedWithSigil, PlayerId{2}};
+    assert(ledger->scoreMatch(
+        TrophyMatchId{"fresh-bravo-win"}, firstAccounts, bravoWin, {}) ==
+        TrophyScoreResult::Scored);
+    assert(readModel.leaderboardPage(0, 10, page, error));
+    assert((page == std::vector<PublicTrophyLeaderboardEntry>{
+        {1, Username{"bravo-fresh"}, 2},
+        {2, Username{"alpha-fresh"}, 1},
+    }));
+
+    // Duplicate terminal processing leaves both persisted totals and ordering
+    // unchanged.
+    assert(ledger->scoreMatch(
+        TrophyMatchId{"fresh-bravo-win"}, firstAccounts, bravoWin, {}) ==
+        TrophyScoreResult::AlreadyScored);
+    std::vector<PublicTrophyLeaderboardEntry> duplicatePage;
+    assert(readModel.leaderboardPage(0, 10, duplicatePage, error));
+    assert(duplicatePage == page);
+
+    // Internal callers handle out-of-range pagination safely; the wire codec
+    // separately rejects a zero page size.
+    assert(readModel.leaderboardPage(
+        std::numeric_limits<std::size_t>::max(), 10, duplicatePage, error));
+    assert(duplicatePage.empty());
+    assert(readModel.leaderboardPage(0, 0, duplicatePage, error));
+    assert(duplicatePage.empty());
+
+    persistence.reset();
+    auto reopenedPersistence = open(database);
+    auto reopenedLedger = std::make_shared<TrophyLedger>(reopenedPersistence);
+    PublicTrophyReadModel reopened{
+        reopenedLedger, reopenedPersistence};
+    assert(reopened.leaderboardPage(0, 10, duplicatePage, error));
+    assert(duplicatePage == page);
+}
+
+void sandboxCompletionDoesNotAffectPersistedLeaderboard() {
+    TemporaryDatabase database;
+    auto persistence = open(database);
+    std::string error;
+    for (const auto& [player, account] : accounts) {
+        assert(persistence->storeProfile(
+            account,
+            PublicAccountProfile{Username{
+                player == PlayerId{1} ? "sandbox-alpha" : "sandbox-bravo"}},
+            error) == PublicProfileStoreResult::Stored);
+    }
+    const std::vector seeded{
+        entry("eligible-before-sandbox", accounts.at(PlayerId{1}).value,
+              TrophyReason::Win, 2),
+        entry("eligible-before-sandbox", accounts.at(PlayerId{2}).value,
+              TrophyReason::Loss, -1),
+    };
+    assert(persistence->appendMatch(
+        TrophyMatchId{"eligible-before-sandbox"}, seeded, error) ==
+        TrophyAppendResult::Appended);
+    auto ledger = std::make_shared<TrophyLedger>(persistence);
+    PublicTrophyReadModel readModel{ledger, persistence};
+    std::vector<PublicTrophyLeaderboardEntry> before;
+    assert(readModel.leaderboardPage(0, 10, before, error));
+
+    auto config = client::defaultSandboxSessionConfig(2);
+    config.humanPlayerCount = 2;
+    config.mapSeed = MapSeed{20260816};
+    config.matchSeed = MatchSeed{424242};
+    auto sandbox = AuthoritativeInMemoryMatch::createSandbox(
+        config, profiles(), {}, error);
+    assert(sandbox != nullptr && error.empty());
+    auto p1 = sandbox->connect(PlayerId{1}, error);
+    auto p2 = sandbox->connect(PlayerId{2}, error);
+    assert(p1 != nullptr && p2 != nullptr);
+    assert(p1->send(network::ClientCommand{
+        network::kProtocolVersion, network::QuitCommand{PlayerId{1}}}));
+    assert(p2->send(network::ClientCommand{
+        network::kProtocolVersion, network::QuitCommand{PlayerId{2}}}));
+
+    std::vector<PublicTrophyLeaderboardEntry> after;
+    assert(readModel.leaderboardPage(0, 10, after, error));
+    assert(after == before);
 }
 
 void unfinishedAuthoritativeMatchDoesNotClaimItsId() {
@@ -706,6 +821,8 @@ int main() {
     leaderboardUsesTotalsAndDeterministicTies();
     publicProfilesPersistAndEnforceStableUniqueUsernames();
     publicLeaderboardCombinesProfilesWithLedgerTotals();
+    publicLeaderboardReadsFreshPersistedTotalsWithoutCaching();
+    sandboxCompletionDoesNotAffectPersistedLeaderboard();
     unfinishedAuthoritativeMatchDoesNotClaimItsId();
     authoritativeZeroEntryDrawIsClaimedOnce();
     persistenceFailureDoesNotCorruptTerminalGameplayState();
