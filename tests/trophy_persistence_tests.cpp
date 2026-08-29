@@ -1,13 +1,16 @@
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <concepts>
 #include <filesystem>
+#include <functional>
 #include <limits>
 #include <map>
 #include <numeric>
 #include <queue>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "ActionCommands.hpp"
@@ -371,6 +374,94 @@ void publicLeaderboardReadsFreshPersistedTotalsWithoutCaching() {
     assert(duplicatePage == page);
 }
 
+void concurrentCompletionsRemainIsolatedAndIdempotent() {
+    TemporaryDatabase database;
+    auto persistence = open(database);
+    std::string error;
+    const AccountIdentity alpha{"concurrent-alpha"};
+    const AccountIdentity bravo{"concurrent-bravo"};
+    const AccountIdentity charlie{"concurrent-charlie"};
+    const AccountIdentity delta{"concurrent-delta"};
+    for (const auto& [account, username] : std::vector{
+             std::pair{alpha, Username{"alpha-concurrent"}},
+             std::pair{bravo, Username{"bravo-concurrent"}},
+             std::pair{charlie, Username{"charlie-concurrent"}},
+             std::pair{delta, Username{"delta-concurrent"}},
+         }) {
+        assert(persistence->storeProfile(
+            account, PublicAccountProfile{username}, error) ==
+            PublicProfileStoreResult::Stored);
+    }
+
+    auto ledger = std::make_shared<TrophyLedger>(persistence);
+    const std::map<PlayerId, AccountIdentity> firstAccounts{
+        {PlayerId{1}, alpha}, {PlayerId{2}, bravo}};
+    const std::map<PlayerId, AccountIdentity> secondAccounts{
+        {PlayerId{1}, charlie}, {PlayerId{2}, delta}};
+    const MatchResult firstResult{
+        MatchStatus::Completed, MatchOutcome::BasiliskKilled, PlayerId{1}};
+    const MatchResult secondResult{
+        MatchStatus::Completed, MatchOutcome::EscapedWithSigil, PlayerId{2}};
+    std::atomic<bool> begin{false};
+    TrophyScoreResult firstScore = TrophyScoreResult::PersistenceError;
+    TrophyScoreResult secondScore = TrophyScoreResult::PersistenceError;
+    std::thread first([&] {
+        while (!begin.load(std::memory_order_acquire)) std::this_thread::yield();
+        firstScore = ledger->scoreMatch(
+            TrophyMatchId{"concurrent-first"}, firstAccounts, firstResult, {});
+    });
+    std::thread second([&] {
+        while (!begin.load(std::memory_order_acquire)) std::this_thread::yield();
+        secondScore = ledger->scoreMatch(
+            TrophyMatchId{"concurrent-second"}, secondAccounts, secondResult, {});
+    });
+    begin.store(true, std::memory_order_release);
+    first.join();
+    second.join();
+    assert(firstScore == TrophyScoreResult::Scored);
+    assert(secondScore == TrophyScoreResult::Scored);
+
+    // Two racing terminal handlers for the same match still claim it once.
+    std::atomic<bool> replayBegin{false};
+    TrophyScoreResult replayOne = TrophyScoreResult::PersistenceError;
+    TrophyScoreResult replayTwo = TrophyScoreResult::PersistenceError;
+    const auto replay = [&](TrophyScoreResult& result) {
+        while (!replayBegin.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        result = ledger->scoreMatch(
+            TrophyMatchId{"concurrent-replay"}, firstAccounts, firstResult, {});
+    };
+    std::thread replayFirst(replay, std::ref(replayOne));
+    std::thread replaySecond(replay, std::ref(replayTwo));
+    replayBegin.store(true, std::memory_order_release);
+    replayFirst.join();
+    replaySecond.join();
+    assert((replayOne == TrophyScoreResult::Scored &&
+            replayTwo == TrophyScoreResult::AlreadyScored) ||
+           (replayTwo == TrophyScoreResult::Scored &&
+            replayOne == TrophyScoreResult::AlreadyScored));
+
+    PublicTrophyReadModel readModel{ledger, persistence};
+    std::vector<PublicTrophyLeaderboardEntry> page;
+    assert(readModel.leaderboardPage(0, 10, page, error));
+    const std::vector<PublicTrophyLeaderboardEntry> expected{
+        {1, Username{"alpha-concurrent"}, 4},
+        {2, Username{"delta-concurrent"}, 3},
+        {3, Username{"charlie-concurrent"}, -1},
+        {4, Username{"bravo-concurrent"}, -2},
+    };
+    assert(page == expected);
+
+    persistence.reset();
+    ledger.reset();
+    auto reopenedPersistence = open(database);
+    auto reopenedLedger = std::make_shared<TrophyLedger>(reopenedPersistence);
+    PublicTrophyReadModel reopened{reopenedLedger, reopenedPersistence};
+    std::vector<PublicTrophyLeaderboardEntry> reopenedPage;
+    assert(reopened.leaderboardPage(0, 10, reopenedPage, error));
+    assert(reopenedPage == expected);
+}
+
 void sandboxCompletionDoesNotAffectPersistedLeaderboard() {
     TemporaryDatabase database;
     auto persistence = open(database);
@@ -720,10 +811,18 @@ AvailableAction huntingAction(
 
 void realAuthoritativeWinnerPersistsAwardsForDurableAccounts() {
     TemporaryDatabase database;
-    auto ledger = std::make_shared<TrophyLedger>(open(database));
+    auto persistence = open(database);
+    std::string error;
+    assert(persistence->storeProfile(
+        accounts.at(PlayerId{1}), PublicAccountProfile{Username{"mara"}},
+        error) == PublicProfileStoreResult::Stored);
+    assert(persistence->storeProfile(
+        accounts.at(PlayerId{2}), PublicAccountProfile{Username{"elias"}},
+        error) == PublicProfileStoreResult::Stored);
+    auto ledger = std::make_shared<TrophyLedger>(persistence);
+    PublicTrophyReadModel readModel{ledger, persistence};
     constexpr MapSeed mapSeed{20260816};
     constexpr MatchSeed matchSeed{424242};
-    std::string error;
     auto host = AuthoritativeInMemoryMatch::create(
         mapSeed, matchSeed, profiles(), error,
         TrophyScoringContext{
@@ -785,6 +884,13 @@ void realAuthoritativeWinnerPersistsAwardsForDurableAccounts() {
     assert(winnerClient.trophyTotal == total(*open(database), winner.value));
     assert(loserClient.trophyTotal == -1);
 
+    std::vector<PublicTrophyLeaderboardEntry> terminalLeaderboard;
+    assert(readModel.leaderboardPage(0, 10, terminalLeaderboard, error));
+    assert(terminalLeaderboard.size() == 2);
+    assert(terminalLeaderboard.front().trophyTotal ==
+           winnerClient.trophyTotal);
+    assert(terminalLeaderboard.back().trophyTotal == -1);
+
     const std::int64_t winnerTotal = winnerClient.trophyTotal;
     const std::int64_t loserTotal = loserClient.trophyTotal;
     winnerClient.endpoint->disconnect();
@@ -822,6 +928,7 @@ int main() {
     publicProfilesPersistAndEnforceStableUniqueUsernames();
     publicLeaderboardCombinesProfilesWithLedgerTotals();
     publicLeaderboardReadsFreshPersistedTotalsWithoutCaching();
+    concurrentCompletionsRemainIsolatedAndIdempotent();
     sandboxCompletionDoesNotAffectPersistedLeaderboard();
     unfinishedAuthoritativeMatchDoesNotClaimItsId();
     authoritativeZeroEntryDrawIsClaimedOnce();
