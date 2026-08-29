@@ -140,6 +140,7 @@ jobs:
         run: >-
           cmake -S . -B build-package
           -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
           -DBASILISK_BUILD_GAME=ON
           -DBASILISK_BUILD_CLI=OFF
           -DBASILISK_BUILD_SIM=OFF
@@ -162,7 +163,9 @@ jobs:
           trap 'hdiutil detach "${mount_point}"' EXIT
 
           app="${mount_point}/BasiliskGame.app"
-          test -x "${app}/Contents/MacOS/BasiliskGame"
+          binary="${app}/Contents/MacOS/BasiliskGame"
+          test -x "${binary}"
+          xcrun vtool -show-build "${binary}" | grep -Eq 'minos[[:space:]]+14\.0'
           test -s "${app}/Contents/Resources/BasiliskGame.icns"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "${app}/Contents/Info.plist")" = "BasiliskGame.icns"
           test -d "${app}/Contents/Resources/assets/fonts"
