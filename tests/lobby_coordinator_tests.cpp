@@ -235,4 +235,48 @@ int main() {
     assert(network::decodeLobbyRequest(request, decodedRequest, error));
     assert(std::get<network::StartSandboxMatchRequest>(decodedRequest.payload)
         .lobbyCode == "SBX-READY1");
+
+    // Rapid authoritative roster/ready churn preserves stable occupied slots,
+    // clears departed identity/readiness, and never grants host authority to a
+    // guest.
+    LobbyCoordinator churnLobbies{[] { return std::string{"CHURN1"}; }};
+    auto churnConfig = basilisk::client::defaultSandboxSessionConfig(6);
+    churnConfig.humanPlayerCount = 4;
+    assert(churnLobbies.hostSandbox(
+        host, "HostName", churnConfig, change, error));
+    const LobbyCode churnCode = change.snapshot.lobby;
+    assert(churnLobbies.joinSandbox(
+        guest, "GuestName", churnCode, change, error));
+    assert(churnLobbies.joinSandbox(
+        third, "ThirdName", churnCode, change, error));
+    assert(churnLobbies.joinSandbox(
+        fourth, "FourthName", churnCode, change, error));
+    assert(change.snapshot.slots[1].publicName == "GuestName");
+    assert(change.snapshot.slots[2].publicName == "ThirdName");
+    assert(change.snapshot.slots[3].publicName == "FourthName");
+    assert(churnLobbies.setSandboxReady(
+        guest, churnCode, true, change, error));
+    assert(churnLobbies.setSandboxReady(
+        guest, churnCode, false, change, error));
+    assert(churnLobbies.setSandboxReady(
+        guest, churnCode, true, change, error));
+    assert(!churnLobbies.startSandbox(
+        guest, churnCode, sandboxAssignment, error));
+    assert(!churnLobbies.startSandbox(
+        host, churnCode, sandboxAssignment, error));
+
+    assert(churnLobbies.leaveSandbox(
+        third, churnCode, change, error));
+    assert(!change.snapshot.slots[2].occupied);
+    assert(change.snapshot.slots[2].publicName.empty());
+    assert(churnLobbies.joinSandbox(
+        fifth, "FifthName", churnCode, change, error));
+    assert(change.snapshot.slots[2].occupied);
+    assert(change.snapshot.slots[2].publicName == "FifthName");
+    assert(!change.snapshot.slots[2].ready);
+    std::vector<SandboxLobbyChange> churnDisconnects;
+    churnLobbies.disconnectSandbox(host, churnDisconnects);
+    assert(churnDisconnects.size() == 1);
+    assert(churnDisconnects.front().closed);
+    assert(churnDisconnects.front().removed.size() == 4);
 }

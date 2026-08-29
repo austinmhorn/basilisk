@@ -1275,6 +1275,41 @@ void authenticatedSandboxSupportsThreeToSixHumanSockets() {
             afterQuit->pump();
             assert(afterQuit->controller() == nullptr);
         } else if (humanCount == 6) {
+            // Repeated six-player transport churn must keep one authoritative
+            // owner for P6 without changing the current round or rebuilding
+            // the match. Each replacement is a completely fresh client.
+            for (int reconnectAttempt = 0; reconnectAttempt < 3;
+                 ++reconnectAttempt) {
+                const RoundNumber expectedRound = clients[5]
+                    ->controller()->displayedSnapshot()->round;
+                clients[5].reset();
+                assert(waitUntil([&] {
+                    return server->connectedClientCount() == humanCount - 1;
+                }));
+                auto replacement =
+                    WebSocketNetworkSession::connectForAuthentication(
+                        url(*server), error);
+                assert(replacement != nullptr);
+                assert(waitUntil([&] {
+                    replacement->pump();
+                    return replacement->state() ==
+                        NetworkConnectionState::Connected;
+                }));
+                assert(replacement->authenticate({network::kProtocolVersion,
+                    network::AuthenticateSessionRequest{tokens[5].value}}));
+                assert(waitUntil([&] {
+                    replacement->pump();
+                    for (std::size_t index = 0; index < 5; ++index)
+                        clients[index]->pump();
+                    return replacement->controller() != nullptr;
+                }));
+                assert(replacement->controller()->viewContext().localPlayer ==
+                    PlayerId{6});
+                assert(replacement->controller()->displayedSnapshot()->round ==
+                    expectedRound);
+                clients[5] = std::move(replacement);
+            }
+
             // Expiring the server reservation likewise leaves a fresh client
             // authenticated in pre-match state without an auto-resume.
             clients[5].reset();

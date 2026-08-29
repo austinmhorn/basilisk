@@ -689,6 +689,86 @@ void sandboxLaunchPreservesSlotsAndRunsServerAi() {
     assert(p1.session->controller().displayedSnapshot()->round == RoundNumber{2});
 }
 
+void mixedOnlineSandboxRoundsRemainExactAndPlayerSafe() {
+    for (std::size_t hunterCount = 2; hunterCount <= 6; ++hunterCount) {
+        auto config = client::defaultSandboxSessionConfig(hunterCount);
+        config.humanPlayerCount = 2;
+        config.caveCount = std::max<std::size_t>(30, hunterCount * 10);
+        config.jackalCount = 0;
+        config.mapSeed = MapSeed{8100 + hunterCount};
+        config.matchSeed = MatchSeed{9100 + hunterCount};
+
+        std::vector<client::PublicPlayerProfile> sandboxProfiles;
+        std::vector<client::ai::AiConfig> aiPlayers;
+        for (std::size_t slot = 1; slot <= hunterCount; ++slot) {
+            sandboxProfiles.push_back({static_cast<PlayerId>(slot),
+                "Hunter " + std::to_string(slot), {"arrow-right-black"},
+                {"circle-black"}});
+            if (slot > config.humanPlayerCount) {
+                aiPlayers.push_back({client::ai::AiDifficulty::Medium,
+                    client::ai::AiBehavior::Balanced,
+                    static_cast<PlayerId>(slot),
+                    client::ai::AiSeed{10000 + slot}});
+            }
+        }
+
+        std::string error;
+        auto host = AuthoritativeInMemoryMatch::createSandbox(
+            config, sandboxProfiles, aiPlayers, error);
+        assert(host != nullptr && error.empty());
+        ConnectedClient first = connectClient(*host, PlayerId{1});
+        ConnectedClient second = connectClient(*host, PlayerId{2});
+        const PlayerRoundSnapshot firstBefore =
+            *first.session->controller().displayedSnapshot();
+        const PlayerRoundSnapshot secondBefore =
+            *second.session->controller().displayedSnapshot();
+        assert(firstBefore.player == PlayerId{1});
+        assert(secondBefore.player == PlayerId{2});
+        assert(firstBefore.currentCave != secondBefore.currentCave);
+        assert(!containsCave(firstBefore.map, secondBefore.currentCave));
+        assert(!containsCave(secondBefore.map, firstBefore.currentCave));
+        for (const auto& observation : firstBefore.observations)
+            assert(observation.viewer == PlayerId{1});
+        for (const auto& observation : secondBefore.observations)
+            assert(observation.viewer == PlayerId{2});
+
+        const PlayerAction firstSearch = makePlayerAction(
+            actionOfType(firstBefore, ActionType::Search), PlayerId{1});
+        const PlayerAction secondSearch = makePlayerAction(
+            actionOfType(secondBefore, ActionType::Search), PlayerId{2});
+        assert(first.endpoint->send(ClientCommand{kProtocolVersion,
+            SubmitActionCommand{firstBefore.round, firstSearch}}));
+        assert(second.endpoint->send(ClientCommand{kProtocolVersion,
+            SubmitActionCommand{secondBefore.round, secondSearch}}));
+        assert(second.endpoint->send(ClientCommand{kProtocolVersion,
+            LockActionCommand{secondBefore.round, PlayerId{2}}}));
+        assert(first.endpoint->send(ClientCommand{kProtocolVersion,
+            LockActionCommand{firstBefore.round, PlayerId{1}}}));
+        assert(host->authoritativeRound() == firstBefore.round + 1);
+        assert(host->resolvedRoundCount() == 1);
+
+        first.ingestUpdates();
+        second.ingestUpdates();
+        const auto* firstAfter =
+            first.session->controller().displayedSnapshot();
+        const auto* secondAfter =
+            second.session->controller().displayedSnapshot();
+        assert(firstAfter->round == firstBefore.round + 1);
+        assert(secondAfter->round == secondBefore.round + 1);
+        for (const auto& observation : firstAfter->observations)
+            assert(observation.viewer == PlayerId{1});
+        for (const auto& observation : secondAfter->observations)
+            assert(observation.viewer == PlayerId{2});
+
+        assert(!first.endpoint->send(ClientCommand{kProtocolVersion,
+            SubmitActionCommand{firstBefore.round, firstSearch}}));
+        assert(!first.endpoint->send(ClientCommand{kProtocolVersion,
+            LockActionCommand{firstBefore.round, PlayerId{1}}}));
+        assert(host->authoritativeRound() == firstBefore.round + 1);
+        assert(host->resolvedRoundCount() == 1);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -703,5 +783,6 @@ int main() {
     slowOnlineSandboxHumanExpiresWithoutBlockingRound();
     onlineSandboxSpectatorAdvancesWhenWatchedHunterDies();
     sandboxLaunchPreservesSlotsAndRunsServerAi();
+    mixedOnlineSandboxRoundsRemainExactAndPlayerSafe();
     return 0;
 }

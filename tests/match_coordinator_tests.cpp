@@ -742,6 +742,41 @@ void clashTimeoutAdvancesToNextQueuedComponent() {
         assert(occupied.insert(player.cave).second);
 }
 
+void clashResponseAndTimeoutBoundaryCannotResolveTwice() {
+    {
+        auto state = multiHunterFixture(3);
+        MatchCoordinator coordinator(state);
+        submitAndLockAll(coordinator,
+            {move(101, 20), move(102, 20), move(103, 20)});
+        const ActiveClash clash = *coordinator.activeClash();
+        assert(coordinator.submitClashResponse(
+            101, clash.id, clash.challengeWord) ==
+            ClashSubmissionResult::Resolved);
+        assert(state.round == 2);
+        coordinator.advanceTime(clash.remainingMs);
+        assert(state.round == 2);
+        assert(coordinator.activeClash() == nullptr);
+        assert(coordinator.submitClashResponse(
+            102, clash.id, clash.challengeWord) ==
+            ClashSubmissionResult::Rejected);
+    }
+    {
+        auto state = multiHunterFixture(3);
+        MatchCoordinator coordinator(state);
+        submitAndLockAll(coordinator,
+            {move(101, 20), move(102, 20), move(103, 20)});
+        const ActiveClash clash = *coordinator.activeClash();
+        coordinator.advanceTime(clash.remainingMs);
+        assert(state.round == 2);
+        assert(coordinator.activeClash() == nullptr);
+        assert(coordinator.submitClashResponse(
+            101, clash.id, clash.challengeWord) ==
+            ClashSubmissionResult::Rejected);
+        coordinator.advanceTime(clash.remainingMs);
+        assert(state.round == 2);
+    }
+}
+
 void multiPartyStalemateCancelsMovesAndPreservesSearchOnce() {
     auto state = multiHunterFixture(3); MatchCoordinator coordinator(state);
     submitAndLockAll(coordinator, {move(101, 2), search(102), move(103, 2)});
@@ -808,6 +843,66 @@ void forfeitAndDisconnectExpiryCannotDeadlockMultiHunterReadiness() {
     disconnectCoordinator.advanceTime(10);
     assert(!playerById(disconnected, 106).alive);
     assert(disconnected.round == 2);
+}
+
+void multipleReserveExpiriesResolveOneRoundExactlyOnce() {
+    auto state = multiHunterFixture(6);
+    state.rules.disconnectGraceMs = 25;
+    MatchCoordinator coordinator(state);
+    for (PlayerId player = 101; player <= 104; ++player) {
+        assert(coordinator.submitAction(search(player)));
+        assert(coordinator.lockAction(player));
+    }
+    coordinator.disconnect(105);
+    coordinator.disconnect(106);
+    coordinator.advanceTime(24);
+    assert(state.round == 1);
+    assert(playerById(state, 105).alive);
+    assert(playerById(state, 106).alive);
+    coordinator.advanceTime(1);
+    assert(state.round == 2);
+    assert(!playerById(state, 105).alive);
+    assert(!playerById(state, 106).alive);
+    coordinator.advanceTime(100);
+    assert(state.round == 2);
+    assert(coordinator.activeClash() == nullptr);
+}
+
+void reconnectChurnPreservesSubmitAndLockStagesNearExpiry() {
+    auto state = multiHunterFixture(6);
+    state.rules.disconnectGraceMs = 25;
+    MatchCoordinator coordinator(state);
+    for (PlayerId player = 101; player <= 103; ++player) {
+        assert(coordinator.submitAction(search(player)));
+        assert(coordinator.lockAction(player));
+    }
+
+    coordinator.disconnect(104); // Before submit.
+    assert(coordinator.submitAction(search(105)));
+    coordinator.disconnect(105); // After submit, before lock.
+    assert(coordinator.submitAction(search(106)));
+    assert(coordinator.lockAction(106));
+    coordinator.disconnect(106); // Immediately after lock.
+    coordinator.advanceTime(24);
+    assert(state.round == 1);
+
+    assert(coordinator.reconnect(104));
+    assert(coordinator.reconnect(105));
+    assert(coordinator.reconnect(106));
+    assert(coordinator.submitAction(search(104)));
+    assert(coordinator.lockAction(104));
+    assert(coordinator.lockAction(105));
+    assert(state.round == 2);
+    assert(coordinator.activeClash() == nullptr);
+
+    coordinator.disconnect(106);
+    assert(coordinator.reconnect(106));
+    const HostSessionState* restored = coordinator.hostSession(106);
+    assert(restored != nullptr && restored->connected);
+    assert(!restored->pendingAction.has_value());
+    assert(!restored->actionLocked);
+    coordinator.advanceTime(100);
+    assert(state.round == 2);
 }
 
 void participantDeathCannotStrandQueuedConflictRound() {
@@ -900,10 +995,13 @@ int main() {
     defeatedAndTerminalSessionsCanReconnectWhileExternallyReserved();
     disjointConflictComponentsQueueDeterministically();
     clashTimeoutAdvancesToNextQueuedComponent();
+    clashResponseAndTimeoutBoundaryCannotResolveTwice();
     multiPartyStalemateCancelsMovesAndPreservesSearchOnce();
     movementChainAndCycleWithUniqueDestinationsRemainLegal();
     multiHunterSubmissionOrderDoesNotChangeResolution();
     forfeitAndDisconnectExpiryCannotDeadlockMultiHunterReadiness();
+    multipleReserveExpiriesResolveOneRoundExactlyOnce();
+    reconnectChurnPreservesSubmitAndLockStagesNearExpiry();
     participantDeathCannotStrandQueuedConflictRound();
     multipleBodiesCoexistAndLoneSurvivorContinues();
     multiHunterSnapshotsRemainPlayerSpecific();
