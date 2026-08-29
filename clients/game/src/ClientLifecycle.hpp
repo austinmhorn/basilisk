@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -25,6 +26,21 @@ struct LifecycleModalPresentation {
     std::string detail;
     bool offersWatch{false};
 };
+
+struct TrophyAwardPresentation {
+    std::int64_t delta{};
+    std::int64_t total{};
+
+    bool operator==(const TrophyAwardPresentation&) const = default;
+};
+
+[[nodiscard]] std::optional<TrophyAwardPresentation>
+terminalTrophyAward(
+    client::MatchMode mode,
+    MatchStatus status,
+    std::optional<std::int64_t> startingTotal,
+    std::int64_t currentTotal,
+    bool alreadyPresented) noexcept;
 
 class ClientSessionCommandSink {
 public:

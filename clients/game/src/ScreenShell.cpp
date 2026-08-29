@@ -1485,6 +1485,7 @@ bool drawLifecycleModal(
     const PlayerRoundSnapshot& snapshot,
     const ClientSessionController& session,
     LifecycleModalGeometry& geometry,
+    std::optional<TrophyAwardPresentation> trophyAward,
     SDL_FRect output) {
 
     geometry = {};
@@ -1496,7 +1497,11 @@ bool drawLifecycleModal(
     setColor(context.renderer, SDL_Color{4, 6, 8, 176});
     SDL_RenderFillRect(context.renderer, &output);
     const float scale = context.scale;
-    const float panelHeight = presentation->offersWatch ? 218.0F : 180.0F;
+    const bool showTrophyAward =
+        presentation->kind == LifecycleModalKind::HuntEnded &&
+        trophyAward.has_value();
+    const float panelHeight = presentation->offersWatch || showTrophyAward
+        ? 218.0F : 180.0F;
     const SDL_FRect panel{
         output.x + (output.w - 430.0F * scale) * 0.5F,
         output.y + (output.h - panelHeight * scale) * 0.5F,
@@ -1540,6 +1545,25 @@ bool drawLifecycleModal(
     }
 
     float buttonY = panel.y + 116.0F * scale;
+    if (showTrophyAward) {
+        const std::string delta = trophyAward->delta >= 0
+            ? "+" + std::to_string(trophyAward->delta)
+            : std::to_string(trophyAward->delta);
+        if (!context.centeredLabel(
+                "TROPHIES  " + delta + "   TOTAL  " +
+                    std::to_string(trophyAward->total),
+                FontWeight::Bold,
+                ui::Typography::objectiveBody,
+                ui::Theme::gold,
+                SDL_FRect{
+                    panel.x + 20.0F * scale,
+                    panel.y + 108.0F * scale,
+                    panel.w - 40.0F * scale,
+                    26.0F * scale})) {
+            return false;
+        }
+        buttonY = panel.y + 154.0F * scale;
+    }
     if (presentation->offersWatch) {
         const SDL_FRect watch{
             panel.x + 42.0F * scale,
@@ -1680,6 +1704,7 @@ bool renderScreenShell(
     const MapActionMenuState& mapActionMenu,
     MapActionMenuGeometry& mapActionMenuGeometry,
     LifecycleModalGeometry& lifecycleModalGeometry,
+    std::optional<TrophyAwardPresentation> trophyAward,
 #if defined(BASILISK_GAME_DEBUG)
     const debug::DebugMapTruth* debugMapTruth,
     const debug::DebugGameplayTruth* debugGameplayTruth,
@@ -1911,6 +1936,7 @@ bool renderScreenShell(
         snapshot,
         session,
         lifecycleModalGeometry,
+        trophyAward,
         output);
 }
 

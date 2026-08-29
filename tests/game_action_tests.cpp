@@ -574,6 +574,42 @@ void spectatorTerminalResultUsesPublicWinnerProfile() {
     assert(!view.canSubmitActions());
 }
 
+void terminalTrophyPresentationIsEligibleAndExactlyOnce() {
+    const auto positive = terminalTrophyAward(
+        client::MatchMode::Online, MatchStatus::Completed,
+        std::int64_t{8}, 11, false);
+    assert(positive == (TrophyAwardPresentation{3, 11}));
+
+    const auto negative = terminalTrophyAward(
+        client::MatchMode::Online, MatchStatus::Completed,
+        std::int64_t{8}, 7, false);
+    assert(negative == (TrophyAwardPresentation{-1, 7}));
+
+    const auto draw = terminalTrophyAward(
+        client::MatchMode::Online, MatchStatus::Completed,
+        std::int64_t{8}, 8, false);
+    assert(draw == (TrophyAwardPresentation{0, 8}));
+
+    assert(!terminalTrophyAward(
+        client::MatchMode::AI, MatchStatus::Completed,
+        std::int64_t{8}, 11, false).has_value());
+    assert(!terminalTrophyAward(
+        client::MatchMode::Sandbox, MatchStatus::Completed,
+        std::int64_t{8}, 11, false).has_value());
+    assert(!terminalTrophyAward(
+        client::MatchMode::Online, MatchStatus::Active,
+        std::int64_t{8}, 11, false).has_value());
+
+    // A fresh reconnect has no locally observed pre-match total, and an
+    // already-presented terminal state cannot imply another award.
+    assert(!terminalTrophyAward(
+        client::MatchMode::Online, MatchStatus::Completed,
+        std::nullopt, 11, false).has_value());
+    assert(!terminalTrophyAward(
+        client::MatchMode::Online, MatchStatus::Completed,
+        std::int64_t{8}, 11, true).has_value());
+}
+
 void controllerOwnsMetadataAndSelectsNewestLocalSnapshot() {
     PublicMatchMetadata metadata;
     metadata.totalCaves = 40;
@@ -1158,6 +1194,7 @@ int main() {
     finalDeathOffersQuitOnly();
     sandboxLifecycleCopyIsParticipantNeutral();
     spectatorTerminalResultUsesPublicWinnerProfile();
+    terminalTrophyPresentationIsEligibleAndExactlyOnce();
     controllerOwnsMetadataAndSelectsNewestLocalSnapshot();
     sandboxParticipantStatusDoesNotTreatMissingRemoteSnapshotAsDead();
     controllerHandlesMissingSpectatorSnapshotSafely();

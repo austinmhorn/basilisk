@@ -490,7 +490,16 @@ bool renderMainMenu(
             : "YOUR TROPHIES  UNAVAILABLE";
         if (!label(text, trophies, FontWeight::SemiBold,
                 static_cast<float>(13.0 * scale), ui::Theme::gold,
-                left, buttonY, error)) return false;
+                left, buttonY, error) ||
+            !label(text,
+                "PAGE " + std::to_string(
+                    menu.leaderboardOffset() /
+                        MainMenuState::leaderboardPageSize + 1),
+                FontWeight::SemiBold,
+                static_cast<float>(10.0 * scale), ui::Theme::mutedBright,
+                left + 550.0 * scale, buttonY + 2.0 * scale, error)) {
+            return false;
+        }
         buttonY += 42.0 * scale;
         const std::array headings{"RANK", "USERNAME", "TROPHIES"};
         const std::array<double, 3> columns{0.0, 90.0, 550.0};
@@ -500,13 +509,24 @@ bool renderMainMenu(
                     left + columns[index] * scale, buttonY, error)) return false;
         }
         buttonY += 28.0 * scale;
-        if (!leaderboard.has_value() ||
+        if (menu.leaderboardLoadState() == LeaderboardLoadState::Error) {
+            const std::string message = menu.leaderboardError().empty()
+                ? "Unable to load the leaderboard."
+                : menu.leaderboardError();
+            if (!label(text, message, FontWeight::Regular,
+                    static_cast<float>(12.0 * scale), ui::Theme::red,
+                    left, buttonY, error)) return false;
+        } else if (menu.leaderboardLoadState() == LeaderboardLoadState::Loading ||
+            !leaderboard.has_value() ||
             leaderboard->offset != menu.leaderboardOffset()) {
-            if (!label(text, "Leaderboard data unavailable.", FontWeight::Regular,
+            if (!label(text, "Loading leaderboard...", FontWeight::Regular,
                     static_cast<float>(12.0 * scale), ui::Theme::mutedBright,
                     left, buttonY, error)) return false;
         } else if (leaderboard->entries.empty()) {
-            if (!label(text, "No ranked hunters on this page.", FontWeight::Regular,
+            const std::string_view empty = menu.leaderboardOffset() == 0
+                ? "No ranked hunters yet."
+                : "No more ranked hunters.";
+            if (!label(text, empty, FontWeight::Regular,
                     static_cast<float>(12.0 * scale), ui::Theme::mutedBright,
                     left, buttonY, error)) return false;
         } else {
@@ -1028,7 +1048,8 @@ bool renderMainMenu(
             y, arrowWidth * scale, 38.0 * scale};
         if (!drawFooterButton(MainMenuAction::PreviousPage, previous,
                 "\xE2\x86\x90", menu.leaderboardOffset() > 0) ||
-            !drawFooterButton(MainMenuAction::NextPage, next, "\xE2\x86\x92"))
+            !drawFooterButton(MainMenuAction::NextPage, next, "\xE2\x86\x92",
+                menu.leaderboardHasNextPage()))
             return false;
     }
 

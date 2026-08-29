@@ -144,6 +144,15 @@ MainMenuAction MainMenuState::selectedAction() const noexcept {
 std::uint32_t MainMenuState::leaderboardOffset() const noexcept {
     return leaderboardOffset_;
 }
+LeaderboardLoadState MainMenuState::leaderboardLoadState() const noexcept {
+    return leaderboardLoadState_;
+}
+const std::string& MainMenuState::leaderboardError() const noexcept {
+    return leaderboardError_;
+}
+bool MainMenuState::leaderboardHasNextPage() const noexcept {
+    return leaderboardHasNextPage_;
+}
 const std::string& MainMenuState::lobbyCode() const noexcept { return lobbyCode_; }
 const std::string& MainMenuState::lobbyError() const noexcept { return lobbyError_; }
 bool MainMenuState::lobbyWaiting() const noexcept { return lobbyWaiting_; }
@@ -404,6 +413,9 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
             return MainMenuResult::StartSandbox;
         case MainMenuAction::Leaderboards:
             leaderboardOffset_ = 0;
+            leaderboardLoadState_ = LeaderboardLoadState::Loading;
+            leaderboardError_.clear();
+            leaderboardHasNextPage_ = false;
             setPage(MainMenuPage::Leaderboards);
             return MainMenuResult::RequestLeaderboard;
         case MainMenuAction::Settings:
@@ -451,12 +463,19 @@ MainMenuResult MainMenuState::activate(MainMenuAction action) noexcept {
         case MainMenuAction::PreviousPage:
             if (leaderboardOffset_ >= leaderboardPageSize) {
                 leaderboardOffset_ -= leaderboardPageSize;
+                leaderboardLoadState_ = LeaderboardLoadState::Loading;
+                leaderboardError_.clear();
                 return MainMenuResult::RequestLeaderboard;
             }
             break;
         case MainMenuAction::NextPage:
-            leaderboardOffset_ += leaderboardPageSize;
-            return MainMenuResult::RequestLeaderboard;
+            if (leaderboardHasNextPage_) {
+                leaderboardOffset_ += leaderboardPageSize;
+                leaderboardLoadState_ = LeaderboardLoadState::Loading;
+                leaderboardError_.clear();
+                return MainMenuResult::RequestLeaderboard;
+            }
+            break;
         case MainMenuAction::Logout:
             return MainMenuResult::Logout;
         case MainMenuAction::FindGame:
@@ -583,7 +602,21 @@ void MainMenuState::lobbyFailed(std::string error) {
     lobbyError_ = std::move(error);
 }
 void MainMenuState::connectionLost(std::string error) {
+    if (page_ == MainMenuPage::Leaderboards) {
+        leaderboardFailed(error);
+        return;
+    }
     if (lobbyWaiting_) lobbyFailed(std::move(error));
+}
+void MainMenuState::leaderboardLoaded(bool hasNextPage) noexcept {
+    leaderboardLoadState_ = LeaderboardLoadState::Loaded;
+    leaderboardError_.clear();
+    leaderboardHasNextPage_ = hasNextPage;
+}
+void MainMenuState::leaderboardFailed(std::string error) {
+    leaderboardLoadState_ = LeaderboardLoadState::Error;
+    leaderboardError_ = std::move(error);
+    leaderboardHasNextPage_ = false;
 }
 void MainMenuState::matchmakingCancelled() {
     lobbyCode_.clear(); lobbyError_.clear(); lobbyWaiting_ = false;
