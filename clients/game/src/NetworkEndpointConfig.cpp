@@ -5,6 +5,15 @@
 
 namespace basilisk::game {
 
+NetworkEndpointConfig clientNetworkEndpointConfig(
+    ClientEndpointDefault endpointDefault) {
+
+    NetworkEndpointConfig config;
+    if (endpointDefault == ClientEndpointDefault::Production)
+        config.connectUrl = kProductionWebSocketEndpoint;
+    return config;
+}
+
 bool applyNetworkEndpointOption(
     std::string_view option,
     std::string_view value,

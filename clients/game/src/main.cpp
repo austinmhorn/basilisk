@@ -490,7 +490,13 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
 
     std::optional<std::string> connectUrl;
     std::optional<std::string> connectToken;
-    basilisk::game::NetworkEndpointConfig endpointConfig;
+#if defined(BASILISK_NATIVE_PRODUCTION_ENDPOINT)
+    auto endpointConfig = basilisk::game::clientNetworkEndpointConfig(
+        basilisk::game::ClientEndpointDefault::Production);
+#else
+    auto endpointConfig = basilisk::game::clientNetworkEndpointConfig(
+        basilisk::game::ClientEndpointDefault::LocalDevelopment);
+#endif
     for (int index = 1; index < argc; ++index) {
         if (argv == nullptr || argv[index] == nullptr) continue;
         const std::string_view argument{argv[index]};
