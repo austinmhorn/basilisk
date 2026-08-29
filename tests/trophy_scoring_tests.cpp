@@ -124,6 +124,24 @@ void drawAndUnfinishedScoreNothing() {
     assert(entriesFor(ledger).empty());
 }
 
+void authoritativeEliminationDoesNotFabricateKillCredit() {
+    TrophyLedger ledger;
+    const std::vector events{
+        GameEvent{GameEventType::PlayerDisconnectTimedOut,
+                  PlayerId{2}, PlayerId{2}},
+        GameEvent{GameEventType::PlayerKilled,
+                  std::nullopt, PlayerId{2}},
+    };
+    assert(ledger.scoreMatch(
+        {"match-disconnect"}, accounts,
+        completed(MatchOutcome::BasiliskKilled, PlayerId{1}), events) ==
+        TrophyScoreResult::Scored);
+    assert(totalFor(ledger, accounts.at(PlayerId{1})) == 2);
+    assert(totalFor(ledger, accounts.at(PlayerId{2})) == -1);
+    assert(!hasEntry(
+        ledger, accounts.at(PlayerId{1}), TrophyReason::PlayerKill, 1));
+}
+
 void duplicateScoringIsRejectedWithoutDuplicateEntries() {
     TrophyLedger ledger;
     const auto result = completed(MatchOutcome::BasiliskKilled, PlayerId{1});
@@ -194,6 +212,7 @@ int main() {
     extractionScoresThreeTotal();
     killAndExtractionStack();
     drawAndUnfinishedScoreNothing();
+    authoritativeEliminationDoesNotFabricateKillCredit();
     duplicateScoringIsRejectedWithoutDuplicateEntries();
     authoritativeMatchScoresItsTerminalEventStream();
     nonOnlineMatchesRejectTrophyScoring();

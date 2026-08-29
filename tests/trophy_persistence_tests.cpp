@@ -378,6 +378,46 @@ public:
     }
 };
 
+class FailOncePersistence final : public TrophyPersistence {
+public:
+    TrophyAppendResult appendMatch(
+        const TrophyMatchId& match,
+        std::span<const TrophyLedgerEntry> entries,
+        std::string& error) override {
+        ++appendAttempts;
+        if (appendAttempts == 1) {
+            error = "simulated transient database failure";
+            return TrophyAppendResult::Error;
+        }
+        return delegate_->appendMatch(match, entries, error);
+    }
+
+    bool loadEntries(
+        std::vector<TrophyLedgerEntry>& entries,
+        std::string& error) const override {
+        return delegate_->loadEntries(entries, error);
+    }
+
+    bool trophyTotal(
+        const AccountIdentity& account,
+        std::int64_t& result,
+        std::string& error) const override {
+        return delegate_->trophyTotal(account, result, error);
+    }
+
+    bool leaderboard(
+        std::vector<TrophyLeaderboardEntry>& entries,
+        std::string& error) const override {
+        return delegate_->leaderboard(entries, error);
+    }
+
+    int appendAttempts{};
+
+private:
+    std::shared_ptr<TrophyPersistence> delegate_{
+        makeInMemoryTrophyPersistence()};
+};
+
 void persistenceFailureDoesNotCorruptTerminalGameplayState() {
     auto ledger = std::make_shared<TrophyLedger>(
         std::make_shared<FailingPersistence>());
@@ -411,6 +451,40 @@ void persistenceFailureDoesNotCorruptTerminalGameplayState() {
     assert(receivedUpdate);
     assert(update.snapshot.matchStatus == MatchStatus::Completed);
     assert(update.snapshot.matchOutcome == MatchOutcome::Draw);
+}
+
+void transientPersistenceFailureRetriesAndFinalizesOnce() {
+    auto persistence = std::make_shared<FailOncePersistence>();
+    auto ledger = std::make_shared<TrophyLedger>(persistence);
+    std::string error;
+    auto host = AuthoritativeInMemoryMatch::create(
+        MapSeed{20260816}, MatchSeed{424242}, profiles(), error,
+        TrophyScoringContext{
+            TrophyMatchId{"retry-terminal-draw"}, accounts, ledger});
+    assert(host != nullptr && error.empty());
+    auto p1 = host->connect(PlayerId{1}, error);
+    auto p2 = host->connect(PlayerId{2}, error);
+    assert(p1 != nullptr && p2 != nullptr);
+    assert(p1->send(network::ClientCommand{
+        network::kProtocolVersion, network::QuitCommand{PlayerId{1}}}));
+    assert(p2->send(network::ClientCommand{
+        network::kProtocolVersion, network::QuitCommand{PlayerId{2}}}));
+
+    assert(persistence->appendAttempts == 1);
+    assert(host->trophyScoringError().has_value());
+    host->advanceTime(1);
+    assert(persistence->appendAttempts == 2);
+    assert(!host->trophyScoringError().has_value());
+
+    // Once SQLite/in-memory persistence has durably claimed the MatchId,
+    // terminal ticks cannot append or award it again.
+    host->advanceTime(1);
+    host->advanceTime(30'000);
+    assert(persistence->appendAttempts == 2);
+    assert(ledger->scoreMatch(
+        TrophyMatchId{"retry-terminal-draw"}, accounts,
+        MatchResult{MatchStatus::Completed, MatchOutcome::Draw, std::nullopt},
+        {}) == TrophyScoreResult::AlreadyScored);
 }
 
 struct DirectClient {
@@ -587,7 +661,7 @@ void realAuthoritativeWinnerPersistsAwardsForDurableAccounts() {
         *mirror.result.winner == PlayerId{1} ? PlayerId{2} : PlayerId{1});
     assert(total(*open(database), winner.value) >= 2);
     assert(total(*open(database), loser.value) == -1);
-    const DirectClient& winnerClient = *mirror.result.winner == PlayerId{1}
+    DirectClient& winnerClient = *mirror.result.winner == PlayerId{1}
         ? p1
         : p2;
     const DirectClient& loserClient = *mirror.result.winner == PlayerId{1}
@@ -595,6 +669,27 @@ void realAuthoritativeWinnerPersistsAwardsForDurableAccounts() {
         : p1;
     assert(winnerClient.trophyTotal == total(*open(database), winner.value));
     assert(loserClient.trophyTotal == -1);
+
+    const std::int64_t winnerTotal = winnerClient.trophyTotal;
+    const std::int64_t loserTotal = loserClient.trophyTotal;
+    winnerClient.endpoint->disconnect();
+    auto terminalReconnect = host->reconnect(*mirror.result.winner, error);
+    assert(terminalReconnect != nullptr && error.empty());
+    auto terminalBootstrapFrame = terminalReconnect->takeNextServerFrame();
+    assert(terminalBootstrapFrame.has_value());
+    network::ServerBootstrap terminalBootstrap;
+    assert(network::decodeServerBootstrap(
+        *terminalBootstrapFrame, terminalBootstrap, error));
+    assert(terminalBootstrap.initialSnapshot.matchStatus ==
+           MatchStatus::Completed);
+    assert(terminalBootstrap.trophyTotal == winnerTotal);
+
+    // Reconnect publication and repeated terminal processing cannot append a
+    // second award for either durable account.
+    host->advanceTime(1);
+    host->advanceTime(30'000);
+    assert(total(*open(database), winner.value) == winnerTotal);
+    assert(total(*open(database), loser.value) == loserTotal);
 
     TrophyLedger reopened(open(database));
     assert(reopened.scoreMatch(
@@ -614,5 +709,6 @@ int main() {
     unfinishedAuthoritativeMatchDoesNotClaimItsId();
     authoritativeZeroEntryDrawIsClaimedOnce();
     persistenceFailureDoesNotCorruptTerminalGameplayState();
+    transientPersistenceFailureRetriesAndFinalizesOnce();
     realAuthoritativeWinnerPersistsAwardsForDurableAccounts();
 }
