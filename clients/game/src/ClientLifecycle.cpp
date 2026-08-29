@@ -1,5 +1,7 @@
 #include "ClientLifecycle.hpp"
 
+#include "ClientSessionController.hpp"
+
 #include <algorithm>
 #include <string_view>
 
@@ -21,7 +23,8 @@ std::string_view username(
 
 std::string resultText(
     const PlayerRoundSnapshot& snapshot,
-    std::span<const client::PublicPlayerProfile> profiles) {
+    std::span<const client::PublicPlayerProfile> profiles,
+    client::MatchMode matchMode) {
 
     const std::string winner = snapshot.winner.has_value()
         ? std::string{username(*snapshot.winner, profiles)}
@@ -32,7 +35,9 @@ std::string resultText(
                 ? winner + " killed the Basilisk and wins the hunt."
                 : "The Basilisk was killed.";
         case MatchOutcome::SimultaneousBasiliskKill:
-            return "Both hunters struck the Basilisk down. The hunt ends in a draw.";
+            return matchMode == client::MatchMode::Sandbox
+                ? "Multiple hunters struck the Basilisk down. The hunt ends in a draw."
+                : "Both hunters struck the Basilisk down. The hunt ends in a draw.";
         case MatchOutcome::EscapedWithSigil:
             return snapshot.winner.has_value()
                 ? winner + " escaped with the rival Hunter's Sigil and wins the hunt."
@@ -50,7 +55,8 @@ std::string resultText(
 std::optional<LifecycleModalPresentation> lifecycleModalPresentation(
     const PlayerRoundSnapshot& viewedSnapshot,
     const client::ClientViewContext& viewContext,
-    std::span<const client::PublicPlayerProfile> profiles) {
+    std::span<const client::PublicPlayerProfile> profiles,
+    client::MatchMode matchMode) {
 
     if (viewContext.mode == client::ClientViewMode::Defeated &&
         !viewedSnapshot.alive) {
@@ -60,7 +66,9 @@ std::optional<LifecycleModalPresentation> lifecycleModalPresentation(
             canWatch ? LifecycleModalKind::FirstDeath
                      : LifecycleModalKind::FinalDeath,
             "YOU DIED",
-            canWatch ? "The remaining hunter continues the hunt."
+            canWatch ? (matchMode == client::MatchMode::Sandbox
+                ? "Surviving hunters continue the hunt."
+                : "The remaining hunter continues the hunt.")
                      : "No hunter remains to watch.",
             canWatch,
         };
@@ -69,7 +77,7 @@ std::optional<LifecycleModalPresentation> lifecycleModalPresentation(
         return LifecycleModalPresentation{
             LifecycleModalKind::HuntEnded,
             "HUNT ENDED",
-            resultText(viewedSnapshot, profiles),
+            resultText(viewedSnapshot, profiles, matchMode),
             false,
         };
     }
@@ -104,6 +112,18 @@ bool beginSpectating(client::ClientViewContext& viewContext) {
     viewContext.viewedPlayer = *viewContext.spectatablePlayer;
     viewContext.mode = client::ClientViewMode::Spectating;
     return true;
+}
+
+bool hasAuthoritativeGameplaySession(
+    const ClientSessionController* session) noexcept {
+    return session != nullptr && session->displayedSnapshot() != nullptr;
+}
+
+bool shouldAttemptStartupSessionRestore(
+    bool developmentLaunch,
+    bool fixedTokenLaunch,
+    bool hasStoredSessionToken) noexcept {
+    return !developmentLaunch && !fixedTokenLaunch && hasStoredSessionToken;
 }
 
 } // namespace basilisk::game

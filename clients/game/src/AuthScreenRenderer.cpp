@@ -176,6 +176,14 @@ bool renderAuthScreen(
     if (!state.error().empty() && !label(text, state.error(), FontWeight::Medium,
             10.0F * scale, ui::Theme::red, left,
             geometry.switchMode.y + 45.0 * scale, error)) return false;
+    geometry.back = {shell.x + 34.0 * scale,
+        shell.y + shell.height - 64.0 * scale, 100.0 * scale, 38.0 * scale};
+    const auto backStyle = ui::footerButtonStyle(true);
+    pill(renderer, geometry.back, backStyle.fill, backStyle.border);
+    if (!labelCentered(text, "BACK", FontWeight::SemiBold,
+            10.0F * scale, backStyle.text,
+            geometry.back.x + geometry.back.width * 0.5,
+            geometry.back.y + 11.0 * scale, error)) return false;
     error.clear();
     return true;
 }

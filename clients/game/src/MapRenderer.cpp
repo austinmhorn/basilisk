@@ -327,20 +327,23 @@ bool renderPlayerKnownMap(
         const bool current = cave.cave == snapshot.currentCave;
         const bool pit = containsPit(snapshot, cave.cave);
         const bool hovered = presentation.hoveredCave == cave.cave;
+        const bool surveyed = cave.surveyed && !current;
         const float radius = (current ? 18.0F : 16.0F) * uiScale;
         fillCircle(
             renderer,
             *center,
             radius,
             current ? SDL_Color{169, 119, 30, SDL_ALPHA_OPAQUE} :
-                SDL_Color{31, 39, 46, SDL_ALPHA_OPAQUE});
+                (surveyed ? SDL_Color{31, 39, 46, 120} :
+                    SDL_Color{31, 39, 46, SDL_ALPHA_OPAQUE}));
         const SDL_Color outline = current
             ? SDL_Color{255, 224, 154, SDL_ALPHA_OPAQUE}
             : (pit
                 ? (hovered ? SDL_Color{239, 132, 120, SDL_ALPHA_OPAQUE} :
                     SDL_Color{201, 91, 79, SDL_ALPHA_OPAQUE})
                 : (hovered ? ui::Theme::text :
-                    SDL_Color{135, 147, 158, SDL_ALPHA_OPAQUE}));
+                    (surveyed ? SDL_Color{135, 147, 158, 150} :
+                        SDL_Color{135, 147, 158, SDL_ALPHA_OPAQUE})));
         drawCircleOutline(
             renderer,
             *center,
@@ -351,7 +354,7 @@ bool renderPlayerKnownMap(
                 textRenderer,
                 std::to_string(cave.cave),
                 13.0F * uiScale,
-                ui::Theme::text,
+                surveyed ? SDL_Color{226, 231, 235, 170} : ui::Theme::text,
                 *center,
                 error)) {
             return false;

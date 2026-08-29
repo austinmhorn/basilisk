@@ -10,6 +10,8 @@
 #include "basilisk/systems/LooseArrowSystem.hpp"
 #include "basilisk/systems/MapDiscoverySystem.hpp"
 #include "basilisk/systems/PitInvestigationSystem.hpp"
+#include "basilisk/systems/SearchSystem.hpp"
+#include "basilisk/systems/SigilPlacementSystem.hpp"
 #include "basilisk/systems/TurnResolver.hpp"
 
 namespace basilisk {
@@ -47,6 +49,30 @@ bool isWorldUtility(const PlayerAction& action) {
 }
 
 } // namespace
+
+std::vector<GameEvent> RoundController::resolveStationaryAction(
+    MatchState& state, const PlayerAction& action) const {
+    auto* player = findPlayer(state, action.player);
+    if (!player || !player->alive) return {};
+    if (action.type == ActionType::UseItem)
+        return ItemSystem::use(state, *player, action);
+    if (action.type != ActionType::Search) return {};
+
+    // This phase intentionally precedes the remainder of the round. Its
+    // deterministic stream is isolated so resumption cannot reroll the search.
+    RandomGenerator rng{
+        static_cast<std::uint64_t>(state.matchSeed) ^
+        (static_cast<std::uint64_t>(state.round) * 0x9E3779B97F4A7C15ULL) ^
+        static_cast<std::uint64_t>(player->id)};
+    std::vector<GameEvent> events;
+    auto investigationEvents = PitInvestigationSystem::resolve(state, {action});
+    events.insert(events.end(), investigationEvents.begin(), investigationEvents.end());
+    recoverSigilAtCurrentCave(state, *player, events);
+    state.mostRecentSearchCave = player->cave;
+    auto searchEvents = SearchSystem::search(*player, state.rules, rng);
+    events.insert(events.end(), searchEvents.begin(), searchEvents.end());
+    return events;
+}
 
 std::vector<GameEvent> RoundController::resolve(
     MatchState& state,

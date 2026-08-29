@@ -73,8 +73,8 @@ concept HasLedgerRows = requires(T value) { value.ledgerRows; };
 template <typename T>
 concept HasTrophyMatchId = requires(T value) { value.trophyMatchId; };
 
-static_assert(kProtocolVersion == 4);
-static_assert(std::variant_size_v<ClientCommandPayload> == 5);
+static_assert(kProtocolVersion == 9);
+static_assert(std::variant_size_v<ClientCommandPayload> == 6);
 static_assert(!HasWorld<ServerBootstrap>);
 static_assert(!HasAuthoritativeState<ServerBootstrap>);
 static_assert(!HasEvents<ServerBootstrap>);
@@ -163,6 +163,7 @@ PlayerRoundSnapshot snapshotFor(
 
 ServerBootstrap bootstrapFor(PlayerId localPlayer = PlayerId{1}) {
     ServerBootstrap bootstrap;
+    bootstrap.matchMode = client::MatchMode::Online;
     bootstrap.matchMetadata.totalCaves = 40;
     bootstrap.matchMetadata.players = {
         PublicPlayerSlot{PlayerId{1}, PlayerSlot::P1},
@@ -218,7 +219,8 @@ PlayerRoundSnapshot representativeSnapshot() {
             }},
         DiscoveredCaveView{
             CaveId{12},
-            {TunnelView{TunnelId{1}, CaveId{7}, false}}},
+            {TunnelView{TunnelId{1}, CaveId{7}, false}},
+            true},
     };
     snapshot.looseArrowPresent = true;
     snapshot.temporarilyRevealedPitCaves = {CaveId{34}};
@@ -232,7 +234,6 @@ PlayerRoundSnapshot representativeSnapshot() {
     AvailableAction useSurvey;
     useSurvey.type = ActionType::UseItem;
     useSurvey.targetItem = ItemType::SurveyFragment;
-    useSurvey.targetTunnel = TunnelId{2};
     AvailableAction escape;
     escape.type = ActionType::Contextual;
     escape.contextualAction = ContextualActionType::Escape;
@@ -307,6 +308,7 @@ void allServerFieldsRoundTripExactly() {
     ServerBootstrap decoded;
     assert(decodeServerBootstrap(bytes, decoded, error));
     assert(decoded.protocolVersion == kProtocolVersion);
+    assert(decoded.matchMode == client::MatchMode::Online);
     assert(decoded.trophyTotal == -7);
     assert(decoded.matchMetadata.totalCaves == 40);
     assert(decoded.matchMetadata.players.size() == 2);
@@ -315,6 +317,31 @@ void allServerFieldsRoundTripExactly() {
     assert(decoded.profiles[0].callingCardId.value == "ember-field");
     assert(decoded.profiles[1].emblemId.value == "ward");
     assert(decoded.viewContext.mode == client::ClientViewMode::Playing);
+
+    auto sandboxConfig = client::defaultSandboxSessionConfig(4);
+    sandboxConfig.humanPlayerCount = 3;
+    const LobbyResponse lobbySource{kProtocolVersion, SandboxLobbyUpdated{
+        "SBX-NAMES1", sandboxConfig,
+        {
+            {1, PlayerId{1}, client::SandboxLobbySlotKind::Host,
+                true, true, "Austin"},
+            {2, PlayerId{2}, client::SandboxLobbySlotKind::EmptyHuman,
+                true, false, "Savannah"},
+            {3, PlayerId{3}, client::SandboxLobbySlotKind::EmptyHuman,
+                false, false, ""},
+            {4, PlayerId{4}, client::SandboxLobbySlotKind::Ai,
+                true, true, ""},
+        }, PlayerId{1}}};
+    assertStableRoundTrip(lobbySource, decodeLobbyResponse);
+    WireBytes lobbyBytes;
+    assert(encodeWire(lobbySource, lobbyBytes, error));
+    LobbyResponse decodedLobby;
+    assert(decodeLobbyResponse(lobbyBytes, decodedLobby, error));
+    const auto& lobby = std::get<SandboxLobbyUpdated>(decodedLobby.payload);
+    assert(lobby.slots[0].publicName == "Austin");
+    assert(lobby.slots[1].publicName == "Savannah");
+    assert(lobby.slots[2].publicName.empty());
+    assert(lobby.slots[3].publicName.empty());
 
     const PlayerRoundSnapshot& snapshot = decoded.initialSnapshot;
     assert(snapshot.player == PlayerId{1});
@@ -330,6 +357,8 @@ void allServerFieldsRoundTripExactly() {
     assert(snapshot.map.caves[0].exits[1].id == TunnelId{2});
     assert(!snapshot.map.caves[0].exits[1].destination.has_value());
     assert(snapshot.map.caves[0].exits[1].strongColdDraft);
+    assert(!snapshot.map.caves[0].surveyed);
+    assert(snapshot.map.caves[1].surveyed);
     assert(snapshot.temporarilyRevealedPitCaves ==
            std::vector<CaveId>{CaveId{34}});
     assert(snapshot.availableActions.size() == 5);
@@ -376,6 +405,27 @@ void allServerFieldsRoundTripExactly() {
     assert(decodedUpdate.trophyTotal == 19);
 }
 
+void sixParticipantMetadataSeatsRoundTrip() {
+    ServerBootstrap source = bootstrapFor();
+    source.matchMode = client::MatchMode::Sandbox;
+    for (std::uint8_t index = 2; index < 6; ++index) {
+        const PlayerId player = static_cast<PlayerId>(index + 1);
+        source.matchMetadata.players.push_back(
+            PublicPlayerSlot{player, static_cast<PlayerSlot>(index)});
+        source.profiles.push_back(client::PublicPlayerProfile{
+            player, "Sandbox Hunter " + std::to_string(player),
+            {"arrow-right-black"}, {"circle-black"}});
+    }
+    WireBytes bytes; std::string error;
+    assert(encodeWire(source, bytes, error));
+    ServerBootstrap decoded;
+    assert(decodeServerBootstrap(bytes, decoded, error));
+    assert(decoded.matchMode == client::MatchMode::Sandbox);
+    assert(decoded.matchMetadata.players.size() == 6);
+    assert(decoded.matchMetadata.players[2].slot == PlayerSlot::P3);
+    assert(decoded.matchMetadata.players[5].slot == PlayerSlot::P6);
+}
+
 void everyClientCommandRoundTrips() {
     PlayerAction action;
     action.player = PlayerId{7};
@@ -385,11 +435,12 @@ void everyClientCommandRoundTrips() {
     action.contextualAction = ContextualActionType::Escape;
     action.targetTunnel = TunnelId{9};
     const std::vector<ClientCommand> commands{
-        ClientCommand{kProtocolVersion, SubmitActionCommand{action}},
-        ClientCommand{kProtocolVersion, LockActionCommand{PlayerId{7}}},
+        ClientCommand{kProtocolVersion, SubmitActionCommand{RoundNumber{23}, action}},
+        ClientCommand{kProtocolVersion, LockActionCommand{RoundNumber{23}, PlayerId{7}}},
         ClientCommand{kProtocolVersion,
             WatchRemainingHunterCommand{PlayerId{7}, PlayerId{11}}},
         ClientCommand{kProtocolVersion, QuitCommand{PlayerId{7}}},
+        ClientCommand{kProtocolVersion, SubmitClashResponse{ClashId{9}, "fang"}},
         ClientCommand{kProtocolVersion, LeaderboardPageRequest{20, 10}},
     };
     for (const ClientCommand& command : commands)
@@ -400,7 +451,9 @@ void everyClientCommandRoundTrips() {
     assert(encodeWire(commands.front(), bytes, error));
     ClientCommand decoded;
     assert(decodeClientCommand(bytes, decoded, error));
-    const auto& submitted = std::get<SubmitActionCommand>(decoded.payload).action;
+    const auto& submittedCommand = std::get<SubmitActionCommand>(decoded.payload);
+    assert(submittedCommand.round == RoundNumber{23});
+    const auto& submitted = submittedCommand.action;
     assert(submitted.player == action.player);
     assert(submitted.type == action.type);
     assert(submitted.targetCave == action.targetCave);
@@ -468,20 +521,69 @@ void cosmeticLoadoutMessagesRoundTrip() {
 }
 
 void goldenFixtureIsStable() {
-    const ClientCommand quit{
+    const ClientCommand lock{
         kProtocolVersion,
-        QuitCommand{PlayerId{42}},
+        LockActionCommand{RoundNumber{0x01020304}, PlayerId{42}},
     };
     WireBytes bytes;
     std::string error;
-    assert(encodeWire(quit, bytes, error));
+    assert(encodeWire(lock, bytes, error));
     const WireBytes expected{
         0x42, 0x53, 0x4b, 0x31,
-        0x13,
-        0x00, 0x00, 0x00, 0x04,
+        0x11,
+        0x00, 0x00, 0x00, 0x09,
+        0x01, 0x02, 0x03, 0x04,
         0x00, 0x00, 0x00, 0x2a,
     };
     assert(bytes == expected);
+}
+
+void clashMessagesRoundTripAndDriveOneClientPhase() {
+    ClashStarted started{kProtocolVersion, ClashId{77}, {PlayerId{17}, PlayerId{42}}, "fang", 8000};
+    WireBytes bytes; std::string error;
+    assert(encodeWire(started, bytes, error));
+    ClashStarted decodedStart;
+    assert(decodeClashStarted(bytes, decodedStart, error));
+    assert(decodedStart.clash == started.clash && decodedStart.participants == started.participants);
+    assert(decodedStart.challengeWord == "fang" && decodedStart.remainingMs == 8000);
+
+    auto transport = std::make_shared<FakeTransport>();
+    auto adapter = NetworkGameSessionAdapter::create(bootstrapFor(), transport, error);
+    assert(adapter != nullptr);
+    assert(adapter->ingest(decodedStart, error));
+    assert(adapter->submitClashResponse(" FANG "));
+    assert(std::holds_alternative<SubmitClashResponse>(transport->commands.back().payload));
+    const auto& submitted = std::get<SubmitClashResponse>(transport->commands.back().payload);
+    assert(submitted.clash == 77 && submitted.response == " FANG ");
+
+    ClashResolved resolved{kProtocolVersion, 77, PlayerId{42}, {PlayerId{17}}};
+    assert(encodeWire(resolved, bytes, error));
+    ClashResolved decodedResult;
+    assert(decodeClashResolved(bytes, decodedResult, error));
+    assert(adapter->ingest(std::move(decodedResult), error));
+    assert(!adapter->activeClash().has_value());
+
+    ClashStarted queued{kProtocolVersion, ClashId{78},
+        {PlayerId{11}, PlayerId{23}, PlayerId{42}}, "torch", 8000};
+    assert(adapter->ingest(std::move(queued), error));
+    assert(adapter->activeClash().has_value());
+    assert(adapter->activeClash()->clash == ClashId{78});
+    assert(adapter->activeClash()->participants.size() == 3);
+
+    ClashResolved stale{kProtocolVersion, ClashId{77},
+        PlayerId{42}, {PlayerId{17}}};
+    assert(!adapter->ingest(std::move(stale), error));
+    assert(adapter->activeClash().has_value());
+    assert(adapter->activeClash()->clash == ClashId{78});
+
+    ClashResolved queuedResolved{kProtocolVersion, ClashId{78},
+        PlayerId{23}, {PlayerId{11}, PlayerId{42}}};
+    assert(adapter->ingest(std::move(queuedResolved), error));
+    assert(!adapter->activeClash().has_value());
+
+    assert(encodeWire(resolved, bytes, error));
+    bytes.pop_back();
+    assert(!decodeClashResolved(bytes, decodedResult, error));
 }
 
 void malformedWireIsRejected() {
@@ -509,20 +611,21 @@ void malformedWireIsRejected() {
     assert(!decodeClientCommand(malformed, command, error));
 
     malformed = valid;
-    malformed[8] = 0x05;
+    malformed[8] = 0xff;
     assert(!decodeClientCommand(malformed, command, error));
 
     PlayerAction action;
     action.player = PlayerId{1};
     WireBytes submitted;
     assert(encodeWire(
-        ClientCommand{kProtocolVersion, SubmitActionCommand{action}},
+        ClientCommand{kProtocolVersion,
+            SubmitActionCommand{RoundNumber{1}, action}},
         submitted,
         error));
-    submitted[13] = 0xff;
+    submitted[17] = 0xff;
     assert(!decodeClientCommand(submitted, command, error));
-    submitted[13] = static_cast<std::uint8_t>(ActionType::Search);
-    submitted[14] = 0x02;
+    submitted[17] = static_cast<std::uint8_t>(ActionType::Search);
+    submitted[18] = 0x02;
     assert(!decodeClientCommand(submitted, command, error));
 
     WireBytes bootstrapBytes;
@@ -539,17 +642,22 @@ void malformedWireIsRejected() {
     assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
 
     malformedBootstrap = bootstrapBytes;
-    malformedBootstrap[8] = 0x05;
+    malformedBootstrap[8] = 0xff;
     assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
 
     malformedBootstrap = bootstrapBytes;
     malformedBootstrap[4] = 0xff;
     assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
 
-    bootstrapBytes[13] = 0x00;
+    malformedBootstrap = bootstrapBytes;
+    malformedBootstrap[9] = 0xff;
+    assert(!decodeServerBootstrap(malformedBootstrap, bootstrap, error));
+    assert(error == "Invalid match mode.");
+
     bootstrapBytes[14] = 0x00;
-    bootstrapBytes[15] = 0x40;
-    bootstrapBytes[16] = 0x01;
+    bootstrapBytes[15] = 0x00;
+    bootstrapBytes[16] = 0x40;
+    bootstrapBytes[17] = 0x01;
     assert(!decodeServerBootstrap(bootstrapBytes, bootstrap, error));
 
     ServerBootstrap missingRequiredProfile = representativeBootstrap();
@@ -665,12 +773,14 @@ void outboundCommandsReachTransportExactly() {
     const auto* submitted = std::get_if<SubmitActionCommand>(
         &transport->commands[0].payload);
     assert(submitted != nullptr);
+    assert(submitted->round == RoundNumber{1});
     assert(submitted->action.player == PlayerId{1});
     assert(submitted->action.type == ActionType::Move);
     assert(submitted->action.targetCave == CaveId{12});
     const auto* locked =
         std::get_if<LockActionCommand>(&transport->commands[1].payload);
-    assert(locked != nullptr && locked->player == PlayerId{1});
+    assert(locked != nullptr && locked->round == RoundNumber{1} &&
+        locked->player == PlayerId{1});
 
     std::string error;
     assert(adapter->ingest(
@@ -751,6 +861,16 @@ void inboundUpdatesReachController() {
            client::ClientViewMode::Playing);
     assert(adapter->controller().trophyTotal() == -3);
     assert(transport->commands.empty());
+
+    const AvailableAction search{ActionType::Search};
+    assert(adapter->controller().submitAndLock(search));
+    assert(transport->commands.size() == 2);
+    const auto& submitted = std::get<SubmitActionCommand>(
+        transport->commands[0].payload);
+    const auto& locked = std::get<LockActionCommand>(
+        transport->commands[1].payload);
+    assert(submitted.round == RoundNumber{3});
+    assert(locked.round == RoundNumber{3});
 }
 
 void protocolMismatchIsRejectedCleanly() {
@@ -776,6 +896,12 @@ void protocolMismatchIsRejectedCleanly() {
     assert(!adapter->ingest(std::move(update), error));
     assert(!error.empty());
     assert(adapter->controller().displayedSnapshot()->round == before);
+    assert(adapter->controller().submitAndLock(
+        AvailableAction{ActionType::Search}));
+    assert(std::get<SubmitActionCommand>(transport->commands[0].payload).round ==
+        before);
+    assert(std::get<LockActionCommand>(transport->commands[1].payload).round ==
+        before);
 }
 
 } // namespace
@@ -783,10 +909,12 @@ void protocolMismatchIsRejectedCleanly() {
 int main() {
     configurableNetworkEndpointsPreserveDefaultsAndCustomValues();
     allServerFieldsRoundTripExactly();
+    sixParticipantMetadataSeatsRoundTrip();
     everyClientCommandRoundTrips();
     publicLeaderboardRequestAndResponseRoundTrip();
     cosmeticLoadoutMessagesRoundTrip();
     goldenFixtureIsStable();
+    clashMessagesRoundTripAndDriveOneClientPhase();
     malformedWireIsRejected();
     byteTransportAndDecodedServerDataReachController();
     bootstrapCreatesUsableController();

@@ -86,7 +86,9 @@ void printExplorationHistory(const PlayerRoundSnapshot& snapshot) {
     for (const auto& cave : snapshot.map.caves) {
         if (cave.cave == snapshot.currentCave) continue;
         printed = true;
-        std::cout << "  Cave " << cave.cave << ": ";
+        std::cout << "  Cave " << cave.cave;
+        if (cave.surveyed) std::cout << " [SURVEYED]";
+        std::cout << ": ";
         for (std::size_t i = 0; i < cave.exits.size(); ++i) {
             const auto& exit = cave.exits[i];
             if (exit.destination.has_value()) std::cout << *exit.destination;

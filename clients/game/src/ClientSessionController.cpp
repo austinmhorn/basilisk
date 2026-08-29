@@ -1,5 +1,6 @@
 #include "ClientSessionController.hpp"
 
+#include <algorithm>
 #include <utility>
 
 namespace basilisk::game {
@@ -31,6 +32,16 @@ const client::ClientViewContext& ClientSessionController::viewContext() const no
 
 std::int64_t ClientSessionController::trophyTotal() const noexcept {
     return trophyTotal_;
+}
+
+client::MatchMode ClientSessionController::matchMode() const noexcept { return matchMode_; }
+void ClientSessionController::setMatchMode(client::MatchMode mode) noexcept { matchMode_ = mode; }
+void ClientSessionController::setParticipantSubtitle(PlayerId player, std::string subtitle) {
+    participantSubtitles_.insert_or_assign(player, std::move(subtitle));
+}
+std::string_view ClientSessionController::participantSubtitle(PlayerId player) const noexcept {
+    const auto found = participantSubtitles_.find(player);
+    return found == participantSubtitles_.end() ? std::string_view{} : found->second;
 }
 
 void ClientSessionController::setViewContext(
@@ -100,6 +111,20 @@ bool ClientSessionController::submitAndLock(const AvailableAction& action) {
         actionCommands_->lockAction(viewContext_.localPlayer);
 }
 
+const std::optional<ActiveClash>& ClientSessionController::activeClash() const noexcept {
+    return activeClash_;
+}
+
+void ClientSessionController::setActiveClash(std::optional<ActiveClash> clash) {
+    activeClash_ = std::move(clash);
+}
+
+bool ClientSessionController::submitClashResponse(std::string response) {
+    return canSubmitActions() && actionCommands_ != nullptr && activeClash_.has_value() &&
+        actionCommands_->submitClashResponse(
+            viewContext_.localPlayer, activeClash_->id, std::move(response));
+}
+
 bool ClientSessionController::watchRemainingHunter() {
     if (viewContext_.mode != client::ClientViewMode::Defeated ||
         !viewContext_.spectatablePlayer.has_value()) {
@@ -112,6 +137,31 @@ bool ClientSessionController::watchRemainingHunter() {
         return false;
     }
     return beginSpectating(viewContext_);
+}
+
+bool ClientSessionController::cycleSpectatedPlayer(int direction) {
+    if (matchMode_ != client::MatchMode::Sandbox ||
+        viewContext_.mode != client::ClientViewMode::Spectating || direction == 0) {
+        return false;
+    }
+    std::vector<PlayerId> survivors;
+    for (const PublicPlayerSlot& slot : matchMetadata_.players) {
+        const PlayerRoundSnapshot* snapshot = snapshotFor(slot.player);
+        if (slot.player != viewContext_.localPlayer && snapshot != nullptr &&
+            snapshot->alive && snapshot->matchStatus == MatchStatus::Active) {
+            survivors.push_back(slot.player);
+        }
+    }
+    if (survivors.empty()) return false;
+    const auto current = std::find(
+        survivors.begin(), survivors.end(), viewContext_.viewedPlayer);
+    const std::size_t index = current == survivors.end()
+        ? 0U : static_cast<std::size_t>(current - survivors.begin());
+    const int count = static_cast<int>(survivors.size());
+    const int next = (static_cast<int>(index) + (direction < 0 ? -1 : 1) + count) % count;
+    viewContext_.viewedPlayer = survivors[static_cast<std::size_t>(next)];
+    viewContext_.spectatablePlayer = viewContext_.viewedPlayer;
+    return true;
 }
 
 bool ClientSessionController::quit() {

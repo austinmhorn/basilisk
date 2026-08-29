@@ -24,6 +24,11 @@ public:
     [[nodiscard]] bool ingest(
         network::ServerUpdate update,
         std::string& error);
+    [[nodiscard]] bool ingest(network::ClashStarted clash, std::string& error);
+    [[nodiscard]] bool ingest(network::ClashResolved clash, std::string& error);
+    [[nodiscard]] const std::optional<network::ClashStarted>& activeClash() const noexcept;
+    [[nodiscard]] const std::optional<network::ClashResolved>& lastClashResult() const noexcept;
+    [[nodiscard]] bool submitClashResponse(std::string response);
     [[nodiscard]] bool requestLeaderboard(
         std::uint32_t offset,
         std::uint32_t limit);
@@ -36,11 +41,15 @@ public:
 private:
     explicit NetworkGameSessionAdapter(
         std::unique_ptr<ClientSessionController> controller,
-        std::shared_ptr<network::ClientTransport> transport);
+        std::shared_ptr<network::ClientTransport> transport,
+        std::shared_ptr<RoundNumber> commandRound);
 
     std::unique_ptr<ClientSessionController> controller_;
     std::shared_ptr<network::ClientTransport> transport_;
+    std::shared_ptr<RoundNumber> commandRound_;
     std::optional<network::LeaderboardPageResponse> leaderboardPage_;
+    std::optional<network::ClashStarted> activeClash_;
+    std::optional<network::ClashResolved> lastClashResult_;
 };
 
 } // namespace basilisk::game

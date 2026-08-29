@@ -25,6 +25,10 @@ add_executable(BasiliskObjectiveTests
 target_link_libraries(BasiliskObjectiveTests PRIVATE Basilisk::Core)
 add_test(NAME BasiliskObjectiveTests COMMAND BasiliskObjectiveTests)
 
+add_executable(BasiliskSigilPlacementTests sigil_placement_tests.cpp)
+target_link_libraries(BasiliskSigilPlacementTests PRIVATE Basilisk::Core)
+add_test(NAME BasiliskSigilPlacementTests COMMAND BasiliskSigilPlacementTests)
+
 add_executable(BasiliskSimultaneousTests
     basilisk_simultaneous_tests.cpp
 )
@@ -54,6 +58,13 @@ add_executable(BasiliskObservationTests
 )
 target_link_libraries(BasiliskObservationTests PRIVATE Basilisk::Core)
 add_test(NAME BasiliskObservationTests COMMAND BasiliskObservationTests)
+
+add_executable(BasiliskMultiplayerSemanticsTests
+    multiplayer_semantics_tests.cpp
+)
+target_link_libraries(BasiliskMultiplayerSemanticsTests PRIVATE Basilisk::Core)
+add_test(NAME BasiliskMultiplayerSemanticsTests
+    COMMAND BasiliskMultiplayerSemanticsTests)
 
 add_executable(BasiliskClientPresentationTests
     client_presentation_tests.cpp
@@ -103,6 +114,8 @@ if(TARGET BasiliskGameRuntime)
         BasiliskGameTextRendererTests
         PRIVATE
             BasiliskGameRuntime
+            Basilisk::GameActions
+            Basilisk::ClientAI
     )
     target_compile_definitions(
         BasiliskGameTextRendererTests
@@ -125,6 +138,36 @@ if(TARGET BasiliskGameDebugLocalSession)
             Basilisk::GameDebugLocalSession
     )
     add_test(NAME BasiliskGameDebugMapTests COMMAND BasiliskGameDebugMapTests)
+endif()
+
+if(TARGET BasiliskClientAI)
+    add_executable(BasiliskClientAITests client_ai_tests.cpp)
+    target_link_libraries(BasiliskClientAITests PRIVATE Basilisk::ClientAI)
+    add_test(NAME BasiliskClientAITests COMMAND BasiliskClientAITests)
+
+    add_executable(BasiliskGameLocalAiSessionTests game_local_ai_session_tests.cpp)
+    target_link_libraries(BasiliskGameLocalAiSessionTests PRIVATE
+        Basilisk::GameLocalSession Basilisk::ClientAI)
+    target_compile_features(BasiliskGameLocalAiSessionTests PRIVATE cxx_std_20)
+    add_test(NAME BasiliskGameLocalAiSessionTests COMMAND BasiliskGameLocalAiSessionTests)
+
+    add_executable(BasiliskGameLocalSandboxSessionTests
+        game_local_sandbox_session_tests.cpp)
+    target_link_libraries(BasiliskGameLocalSandboxSessionTests PRIVATE
+        Basilisk::GameLocalSession Basilisk::ClientAI)
+    target_compile_features(BasiliskGameLocalSandboxSessionTests PRIVATE cxx_std_20)
+    add_test(NAME BasiliskGameLocalSandboxSessionTests
+        COMMAND BasiliskGameLocalSandboxSessionTests)
+endif()
+
+if(TARGET BasiliskAiSimulation)
+    add_executable(BasiliskAiSimulationTests ai_sim_tests.cpp)
+    target_link_libraries(BasiliskAiSimulationTests PRIVATE Basilisk::AiSimulation)
+    add_test(NAME BasiliskAiSimulationTests COMMAND BasiliskAiSimulationTests)
+
+    add_executable(BasiliskSandboxStressTests sandbox_stress_tests.cpp)
+    target_link_libraries(BasiliskSandboxStressTests PRIVATE Basilisk::AiSimulation)
+    add_test(NAME BasiliskSandboxStressTests COMMAND BasiliskSandboxStressTests)
 endif()
 
 if(TARGET BasiliskGameActions)

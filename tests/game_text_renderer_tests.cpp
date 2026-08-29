@@ -1,4 +1,8 @@
 #include "TextRenderer.hpp"
+#include "ScreenShell.hpp"
+#include "MainMenuRenderer.hpp"
+#include "AuthScreenRenderer.hpp"
+#include "UITheme.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -31,6 +35,78 @@ void requireDraw(
 } // namespace
 
 int main() {
+    basilisk::game::AuthScreenGeometry authGeometry;
+    authGeometry.back = {40.0, 600.0, 100.0, 38.0};
+    assert(basilisk::game::hitTest(authGeometry.back, {80.0, 619.0}));
+    assert(!basilisk::game::hitTest(authGeometry.back, {200.0, 619.0}));
+    constexpr auto focusedFooter = basilisk::game::ui::footerButtonStyle(true);
+    static_assert(focusedFooter.border.r == basilisk::game::ui::Theme::gold.r);
+    static_assert(focusedFooter.border.g == basilisk::game::ui::Theme::gold.g);
+    static_assert(focusedFooter.border.b == basilisk::game::ui::Theme::gold.b);
+
+    basilisk::game::MainMenuGeometry menuGeometry;
+    menuGeometry.buttons = {
+        {basilisk::game::MainMenuAction::NextPage, {600.0, 600.0, 40.0, 40.0}},
+        {basilisk::game::MainMenuAction::Back, {40.0, 600.0, 100.0, 40.0}},
+    };
+    assert(basilisk::game::hitTestMainMenu(menuGeometry, {80.0, 620.0}) ==
+        basilisk::game::MainMenuAction::Back);
+    assert(basilisk::game::hitTestMainMenu(menuGeometry, {620.0, 620.0}) ==
+        basilisk::game::MainMenuAction::NextPage);
+
+    const basilisk::game::PresentationRect menuShell{340.0, 110.0, 760.0, 680.0};
+    const auto sandboxBack = basilisk::game::mainMenuFooterButtonBounds(
+        menuShell, 1.0, 100.0, false);
+    const auto sandboxStart = basilisk::game::mainMenuFooterButtonBounds(
+        menuShell, 1.0, 170.0, true);
+    assert(sandboxBack.x == 388.0 && sandboxBack.y == 726.0);
+    assert(sandboxStart.x == 896.0 && sandboxStart.y == 726.0);
+    menuGeometry.buttons = {
+        {basilisk::game::MainMenuAction::Back, sandboxBack},
+        {basilisk::game::MainMenuAction::StartSandboxMatch, sandboxStart},
+    };
+    assert(basilisk::game::hitTestMainMenu(menuGeometry, {950.0, 745.0}) ==
+        basilisk::game::MainMenuAction::StartSandboxMatch);
+    assert(basilisk::game::sandboxLobbySlotTitle(2,
+        basilisk::client::SandboxLobbySlotKind::EmptyHuman, false) ==
+        "2.  WAITING FOR PLAYER");
+    assert(basilisk::game::sandboxLobbySlotTitle(1,
+        basilisk::client::SandboxLobbySlotKind::Host, true, "Austin") ==
+        "1.  Austin");
+    assert(basilisk::game::sandboxLobbySlotTitle(3,
+        basilisk::client::SandboxLobbySlotKind::EmptyHuman, true, "Melanie") ==
+        "3.  Melanie");
+    assert(basilisk::game::sandboxLobbySlotTitle(5,
+        basilisk::client::SandboxLobbySlotKind::Ai, true, "") ==
+        "5.  BASILISK AI 5");
+
+    menuGeometry.buttons = {
+        {basilisk::game::MainMenuAction::Back, sandboxBack},
+        {basilisk::game::MainMenuAction::ToggleSandboxReady, sandboxStart},
+    };
+    assert(basilisk::game::hitTestMainMenu(menuGeometry, {950.0, 745.0}) ==
+        basilisk::game::MainMenuAction::ToggleSandboxReady);
+
+    const auto emptyQuiver = basilisk::game::hudArrowSectionLayout(0);
+    assert(emptyQuiver.slotCount == 0);
+    assert(emptyQuiver.contentWidth == 0.0F);
+    assert(emptyQuiver.sectionWidth == 78.0F);
+
+    const auto normalQuiver = basilisk::game::hudArrowSectionLayout(5);
+    assert(normalQuiver.slotCount == 5);
+    assert(normalQuiver.contentWidth == 62.0F);
+    assert(normalQuiver.sectionWidth == 78.0F);
+
+    const auto sandboxQuiver = basilisk::game::hudArrowSectionLayout(10);
+    assert(sandboxQuiver.slotCount == 10);
+    assert(sandboxQuiver.contentWidth == 127.0F);
+    assert(sandboxQuiver.sectionWidth == 143.0F);
+    const float finalSlotRight = 9.0F *
+        (sandboxQuiver.slotWidth + sandboxQuiver.slotSpacing) +
+        sandboxQuiver.slotWidth;
+    assert(sandboxQuiver.sectionWidth - finalSlotRight == 16.0F);
+    assert(basilisk::game::hudArrowSectionLayout(-1).slotCount == 0);
+
     SDL_Surface* surface =
         SDL_CreateSurface(640, 360, SDL_PIXELFORMAT_RGBA32);
     assert(surface != nullptr);

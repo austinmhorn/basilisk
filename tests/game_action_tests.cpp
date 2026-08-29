@@ -16,6 +16,7 @@
 #include "PointerInput.hpp"
 #include "PauseMenu.hpp"
 #include "SnapshotPresentation.hpp"
+#include "SandboxPresentation.hpp"
 #include "basilisk/systems/RoundController.hpp"
 #include "basilisk/systems/SnapshotSystem.hpp"
 
@@ -237,10 +238,9 @@ void actionPresentationUsesUnifiedCopyAndTargetDetails() {
 
     AvailableAction survey = actionWithShape(ActionType::UseItem);
     survey.targetItem = ItemType::SurveyFragment;
-    survey.targetTunnel = TunnelId{6};
     const PresentedAction surveyRow = presentAvailableAction(survey);
     assert(surveyRow.title == "Use Survey Fragment");
-    assert(surveyRow.detail == "Tunnel 6 · Destination unknown");
+    assert(surveyRow.detail == "Reveal 3–5 unexplored caves");
 
     const std::array actions{knownMove, targetedShoot};
     assert(mapActionMenuChoiceTitle(
@@ -439,6 +439,30 @@ void playingLifecycleHasAuthorityAndNoModal() {
     assert(view.canSubmitActions());
 }
 
+void authoritativeGameplayBootstrapControlsResumeEligibility() {
+    assert(!hasAuthoritativeGameplaySession(nullptr));
+
+    ClientSessionController session;
+    assert(!hasAuthoritativeGameplaySession(&session));
+
+    client::ClientViewContext view;
+    view.localPlayer = PlayerId{3};
+    view.viewedPlayer = PlayerId{3};
+    session.setViewContext(view);
+    PlayerRoundSnapshot snapshot;
+    snapshot.player = PlayerId{3};
+    snapshot.round = RoundNumber{7};
+    assert(session.ingestSnapshot(std::move(snapshot)));
+    assert(hasAuthoritativeGameplaySession(&session));
+}
+
+void storedSessionStartsAutomaticRestoreOnlyForNormalLaunches() {
+    assert(shouldAttemptStartupSessionRestore(false, false, true));
+    assert(!shouldAttemptStartupSessionRestore(false, false, false));
+    assert(!shouldAttemptStartupSessionRestore(true, false, true));
+    assert(!shouldAttemptStartupSessionRestore(false, true, true));
+}
+
 void rivalReconnectStatusFollowsPlayerSafeObservations() {
     PlayerRoundSnapshot snapshot;
     snapshot.observations = {
@@ -508,6 +532,29 @@ void finalDeathOffersQuitOnly() {
     assert(!beginSpectating(view));
 }
 
+void sandboxLifecycleCopyIsParticipantNeutral() {
+    PlayerRoundSnapshot snapshot;
+    snapshot.player = PlayerId{1};
+    snapshot.alive = false;
+    snapshot.matchStatus = MatchStatus::Active;
+    client::ClientViewContext view{PlayerId{1}, PlayerId{1},
+        client::ClientViewMode::Defeated, PlayerId{2}};
+    const auto firstDeath = lifecycleModalPresentation(
+        snapshot, view, demoProfiles(), client::MatchMode::Sandbox);
+    assert(firstDeath.has_value());
+    assert(firstDeath->detail == "Surviving hunters continue the hunt.");
+
+    snapshot.alive = true;
+    snapshot.matchStatus = MatchStatus::Completed;
+    snapshot.matchOutcome = MatchOutcome::SimultaneousBasiliskKill;
+    view.mode = client::ClientViewMode::Spectating;
+    view.viewedPlayer = PlayerId{2};
+    const auto terminal = lifecycleModalPresentation(
+        snapshot, view, demoProfiles(), client::MatchMode::Sandbox);
+    assert(terminal.has_value());
+    assert(terminal->detail.starts_with("Multiple hunters"));
+}
+
 void spectatorTerminalResultUsesPublicWinnerProfile() {
     PlayerRoundSnapshot snapshot;
     snapshot.player = PlayerId{2};
@@ -564,6 +611,41 @@ void controllerOwnsMetadataAndSelectsNewestLocalSnapshot() {
     assert(session.displayedSnapshot()->health == 44);
     assert(session.matchMetadata().totalCaves == 40);
     assert(session.profiles().size() == 2);
+}
+
+void sandboxParticipantStatusDoesNotTreatMissingRemoteSnapshotAsDead() {
+    PublicMatchMetadata metadata;
+    metadata.players = {
+        {PlayerId{1}, PlayerSlot::P1},
+        {PlayerId{2}, PlayerSlot::P2},
+        {PlayerId{3}, PlayerSlot::P3},
+    };
+    std::vector<client::PublicPlayerProfile> profiles{
+        {PlayerId{1}, "Host", {"arrow-right-black"}, {"circle-black"}},
+        {PlayerId{2}, "Remote", {"arrow-right-black"}, {"circle-black"}},
+        {PlayerId{3}, "AI", {"arrow-right-black"}, {"circle-black"}},
+    };
+    ClientSessionController session(
+        std::move(metadata), std::move(profiles), playingView(), nullptr, nullptr);
+    session.setMatchMode(client::MatchMode::Sandbox);
+
+    PlayerRoundSnapshot local;
+    local.player = PlayerId{1};
+    local.alive = true;
+    assert(session.ingestSnapshot(local));
+
+    auto participants = sandboxParticipantPresentation(session);
+    assert(participants.size() == 3);
+    assert(participants[0].alive == std::optional<bool>{true});
+    assert(!participants[1].alive.has_value());
+    assert(!participants[2].alive.has_value());
+
+    PlayerRoundSnapshot remote;
+    remote.player = PlayerId{2};
+    remote.alive = false;
+    assert(session.ingestSnapshot(remote));
+    participants = sandboxParticipantPresentation(session);
+    assert(participants[1].alive == std::optional<bool>{false});
 }
 
 void controllerHandlesMissingSpectatorSnapshotSafely() {
@@ -758,7 +840,6 @@ void currentCaveMenuUsesOnlyCurrentLocationActions() {
     healing.targetItem = ItemType::HealingDraught;
     AvailableAction survey = actionWithShape(ActionType::UseItem);
     survey.targetItem = ItemType::SurveyFragment;
-    survey.targetTunnel = TunnelId{6};
     AvailableAction move = actionWithShape(ActionType::Move);
     move.targetCave = CaveId{12};
     AvailableAction shoot = actionWithShape(ActionType::Shoot);
@@ -774,7 +855,7 @@ void currentCaveMenuUsesOnlyCurrentLocationActions() {
 
     const auto matches = matchingSpatialActionIndices(
         actions, caveActionTarget(CaveId{7}), CaveId{7});
-    assert((matches == std::vector<std::size_t>{0, 1}));
+    assert((matches == std::vector<std::size_t>{0, 1, 2}));
 
     MapActionMenuState menu;
     assert(menu.open(
@@ -784,13 +865,14 @@ void currentCaveMenuUsesOnlyCurrentLocationActions() {
         actions,
         CaveId{7},
         playingView()));
-    assert(menu.choices().size() == 2);
+    assert(menu.choices().size() == 3);
     assert(menu.choices()[0].actionIndex == 0);
     assert(menu.choices()[1].actionIndex == 1);
+    assert(menu.choices()[2].actionIndex == 2);
 
     const auto unknownMatches = matchingSpatialActionIndices(
         actions, unknownExitActionTarget(CaveId{7}, TunnelId{6}), CaveId{7});
-    assert((unknownMatches == std::vector<std::size_t>{2}));
+    assert(unknownMatches.empty());
 }
 
 void inventoryItemSelectsOnlyMatchingLegalUseAction() {
@@ -1069,11 +1151,15 @@ int main() {
     emptyAndPopulatedRoundReportsUsePlayerObservations();
     roundReportLayoutIncludesEveryWrappedMessage();
     playingLifecycleHasAuthorityAndNoModal();
+    authoritativeGameplayBootstrapControlsResumeEligibility();
+    storedSessionStartsAutomaticRestoreOnlyForNormalLaunches();
     rivalReconnectStatusFollowsPlayerSafeObservations();
     firstDeathCanTransitionToViewOnlySpectating();
     finalDeathOffersQuitOnly();
+    sandboxLifecycleCopyIsParticipantNeutral();
     spectatorTerminalResultUsesPublicWinnerProfile();
     controllerOwnsMetadataAndSelectsNewestLocalSnapshot();
+    sandboxParticipantStatusDoesNotTreatMissingRemoteSnapshotAsDead();
     controllerHandlesMissingSpectatorSnapshotSafely();
     controllerOwnsWatchTransition();
     controllerForwardsCommandsWithAuthorityGating();

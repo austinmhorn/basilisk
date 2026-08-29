@@ -140,6 +140,17 @@ const char* behaviorName(BasiliskBehavior behavior) {
     return "UNKNOWN";
 }
 
+std::string carrierLabel(
+    const DebugGameplayTruth& truth, PlayerId carrier) {
+    const auto hunter = std::find_if(
+        truth.hunters.begin(), truth.hunters.end(),
+        [&](const DebugGameplayTruth::Hunter& candidate) {
+            return candidate.player == carrier;
+        });
+    if (hunter != truth.hunters.end()) return hunter->label;
+    return "P" + std::to_string(carrier);
+}
+
 bool drawTruthMarker(
     SDL_Renderer* renderer,
     TextRenderer& textRenderer,
@@ -319,20 +330,52 @@ bool renderGameplayTruth(
 
     const auto basiliskPosition =
         mapTruth.cavePositions.find(gameplayTruth.basiliskCave);
-    if (basiliskPosition == mapTruth.cavePositions.end()) return true;
     const float scale = static_cast<float>(geometry.transform.uiScale);
-    const SDL_FPoint center = project(
-        basiliskPosition->second, geometry.transform);
-    std::string detail = std::string{"BASILISK  "} +
-        behaviorName(gameplayTruth.basiliskBehavior) + "  E" +
-        std::to_string(gameplayTruth.basiliskEncounterCount);
-    return textRenderer.drawText(
-        detail,
-        FontWeight::SemiBold,
-        8.0F * scale,
-        SDL_Color{232, 151, 236, SDL_ALPHA_OPAQUE},
-        SDL_FPoint{center.x + 19.0F * scale, center.y - 7.0F * scale},
-        error);
+    if (basiliskPosition != mapTruth.cavePositions.end()) {
+        const SDL_FPoint center = project(
+            basiliskPosition->second, geometry.transform);
+        std::string detail = std::string{"BASILISK  "} +
+            behaviorName(gameplayTruth.basiliskBehavior) + "  E" +
+            std::to_string(gameplayTruth.basiliskEncounterCount);
+        if (!textRenderer.drawText(
+                detail, FontWeight::SemiBold, 8.0F * scale,
+                SDL_Color{232, 151, 236, SDL_ALPHA_OPAQUE},
+                SDL_FPoint{center.x + 19.0F * scale, center.y - 7.0F * scale},
+                error)) return false;
+    }
+
+    for (const DebugGameplayTruth::Sigil& sigil : gameplayTruth.sigils) {
+        if (sigil.state == DebugGameplayTruth::SigilState::OnMap) {
+            if (!drawTruthMarker(
+                    renderer, textRenderer, mapTruth, geometry, sigil.cave,
+                    "SIGIL", SDL_Color{235, 187, 79, SDL_ALPHA_OPAQUE},
+                    17.0F, error)) return false;
+            continue;
+        }
+        const auto position = mapTruth.cavePositions.find(sigil.cave);
+        if (position == mapTruth.cavePositions.end() || !sigil.carrier) continue;
+        const SDL_FPoint center = project(position->second, geometry.transform);
+        drawCircle(renderer, center, 20.0F * scale,
+            SDL_Color{235, 187, 79, SDL_ALPHA_OPAQUE});
+        const std::string label = "SIGIL · " +
+            carrierLabel(gameplayTruth, *sigil.carrier);
+        if (!textRenderer.drawText(
+                label, FontWeight::Bold, 8.0F * scale,
+                SDL_Color{235, 187, 79, SDL_ALPHA_OPAQUE},
+                SDL_FPoint{center.x + 23.0F * scale, center.y + 6.0F * scale},
+                error)) return false;
+    }
+    // Hunters render last so a coincident last-known, territorial, Sigil, or
+    // other truth marker cannot visually erase their authoritative position.
+    for (const DebugGameplayTruth::Hunter& hunter : gameplayTruth.hunters) {
+        if (!drawTruthMarker(
+                renderer, textRenderer, mapTruth, geometry, hunter.cave,
+                hunter.label, SDL_Color{76, 176, 255, SDL_ALPHA_OPAQUE},
+                14.0F, error)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool renderDebugStatusLegend(
@@ -340,14 +383,32 @@ bool renderDebugStatusLegend(
     const MapPresentationGeometry& geometry,
     bool mapRevealed,
     bool truthRevealed,
+    bool inventoryMenuOpen,
+    bool killMenuOpen,
+    bool killAvailable,
+    const DebugGameplayTruth& gameplayTruth,
     BasiliskBehavior behavior,
     std::string& error) {
 
     const float scale = static_cast<float>(geometry.transform.uiScale);
-    const std::array<std::string, 3> lines{
+    std::vector<std::string> lines{
         std::string{"F1  MAP    "} + (mapRevealed ? "ON" : "OFF"),
         std::string{"F2  TRUTH  "} + (truthRevealed ? "ON" : "OFF"),
-        std::string{"F3  BEHAVIOR  "} + behaviorName(behavior)};
+        std::string{"F3  BEHAVIOR  "} + behaviorName(behavior),
+        std::string{"F4  ITEMS  "} + (inventoryMenuOpen ? "ON" : "OFF")};
+    if (killAvailable) {
+        lines.push_back(std::string{"F5  KILL   "} + (killMenuOpen ? "ON" : "OFF"));
+        const auto ai = std::find_if(gameplayTruth.hunters.begin(), gameplayTruth.hunters.end(),
+            [](const DebugGameplayTruth::Hunter& hunter) {
+                return hunter.label == "AI" || hunter.label == "BASILISK AI";
+            });
+        if (ai != gameplayTruth.hunters.end()) {
+            lines.push_back("AI  HP " + std::to_string(ai->health) +
+                "  \xE2\x80\xA2  ARROWS " + std::to_string(ai->arrows));
+        }
+        lines.insert(lines.end(), gameplayTruth.aiDecisionTrace.begin(),
+            gameplayTruth.aiDecisionTrace.end());
+    }
     float y = static_cast<float>(
         geometry.transform.bounds.y + 10.0 * scale);
     for (const std::string& line : lines) {

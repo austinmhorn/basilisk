@@ -1,5 +1,7 @@
+#include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <unordered_set>
 #include <vector>
 
 #include "basilisk/Action.hpp"
@@ -107,38 +109,162 @@ void oldMinersMapTemporarilyRevealsActivePit() {
     assert(snapshot.temporarilyRevealedPitCaves[0] == CaveId{2});
 }
 
-void surveyFragmentRevealsChosenUnknownTunnel() {
+MatchState surveyWorld(CaveId caveCount = 10) {
     MatchState state;
+    state.matchSeed = MatchSeed{77123};
+    state.mapSeed = MapSeed{99117};
     state.rules.mapDiscoveryMode = MapDiscoveryMode::FogOfWar;
-    state.world.addCave(1); state.world.addCave(2); state.world.addCave(3);
-    state.world.connect(1, 2); state.world.connect(1, 3);
-    state.players = {PlayerState{1, 1, 100, 3, true}};
+    for (CaveId cave = 1; cave <= caveCount; ++cave) state.world.addCave(cave);
+    for (CaveId cave = 1; cave < caveCount; ++cave) {
+        state.world.connect(cave, cave + 1);
+    }
+    state.basilisk.alive = false;
+    state.players = {
+        PlayerState{1, 1, 100, 3, true},
+        PlayerState{2, caveCount, 100, 3, true},
+    };
     assert(state.players[0].inventory.add(ItemInstance{ItemType::SurveyFragment}, 3));
+    return state;
+}
+
+const AvailableAction* surveyAction(const PlayerRoundSnapshot& snapshot) {
+    const auto found = std::find_if(
+        snapshot.availableActions.begin(), snapshot.availableActions.end(),
+        [](const AvailableAction& action) {
+            return action.type == ActionType::UseItem &&
+                action.targetItem == ItemType::SurveyFragment;
+        });
+    return found == snapshot.availableActions.end() ? nullptr : &*found;
+}
+
+void surveyFragmentRevealsConnectedUnexploredRegion() {
+    MatchState state = surveyWorld();
 
     auto snapshot = SnapshotSystem::buildForPlayer(state, 1, {});
-    const auto it = std::find_if(snapshot.availableActions.begin(), snapshot.availableActions.end(),
-        [](const AvailableAction& a) {
-            return a.type == ActionType::UseItem && a.targetItem == ItemType::SurveyFragment &&
-                   a.targetTunnel.has_value();
-        });
-    assert(it != snapshot.availableActions.end());
+    assert(std::count_if(
+        snapshot.availableActions.begin(), snapshot.availableActions.end(),
+        [](const AvailableAction& action) {
+            return action.type == ActionType::UseItem &&
+                action.targetItem == ItemType::SurveyFragment;
+        }) == 1);
+    const AvailableAction* available = surveyAction(snapshot);
+    assert(available != nullptr);
+    assert(!available->targetCave.has_value());
+    assert(!available->targetTunnel.has_value());
 
     RoundController controller;
     PlayerAction action;
     action.player = 1;
     action.type = ActionType::UseItem;
     action.targetItem = ItemType::SurveyFragment;
-    action.targetTunnel = it->targetTunnel;
     const auto events = controller.resolve(state, {action});
 
     assert(!state.players[0].inventory.contains(ItemType::SurveyFragment));
-    assert(hasEvent(events, GameEventType::TunnelDestinationRevealed));
+    const auto& discovery = state.players[0].discovery;
+    assert(discovery.surveyedCaves.size() >= 3);
+    assert(discovery.surveyedCaves.size() <= 5);
+    assert(discovery.knownCaves.size() == discovery.surveyedCaves.size() + 1);
+    assert(!state.players[1].discovery.knownCaves.contains(CaveId{2}));
+
+    std::unordered_set<CaveId> eventCaves;
+    for (const GameEvent& event : events) {
+        if (event.type == GameEventType::CaveDiscovered && event.cave.has_value()) {
+            assert(eventCaves.insert(*event.cave).second);
+        }
+    }
+    assert(eventCaves == discovery.surveyedCaves);
+
+    // A linear fixture proves each reveal grew from the preceding known
+    // frontier rather than selecting disconnected world caves.
+    for (CaveId cave = 1; cave <= discovery.knownCaves.size(); ++cave) {
+        assert(discovery.knownCaves.contains(cave));
+    }
+
     snapshot = SnapshotSystem::buildForPlayer(state, 1, events);
-    const auto current = std::find_if(snapshot.map.caves.begin(), snapshot.map.caves.end(),
-        [](const DiscoveredCaveView& cave) { return cave.cave == 1; });
-    assert(current != snapshot.map.caves.end());
-    assert(std::any_of(current->exits.begin(), current->exits.end(),
-        [](const TunnelView& tunnel) { return tunnel.destination.has_value(); }));
+    bool foundOpaqueSurveyExit = false;
+    for (const DiscoveredCaveView& cave : snapshot.map.caves) {
+        if (!discovery.surveyedCaves.contains(cave.cave)) {
+            assert(!cave.surveyed);
+            continue;
+        }
+        assert(cave.surveyed);
+        assert(cave.exits.size() == state.world.cave(cave.cave).connections.size());
+        for (const TunnelView& exit : cave.exits) {
+            if (!exit.destination.has_value()) foundOpaqueSurveyExit = true;
+        }
+    }
+    assert(foundOpaqueSurveyExit);
+}
+
+void surveyFragmentClampsAndIsDeterministic() {
+    MatchState first = surveyWorld(CaveId{3});
+    assert(first.players[0].inventory.add(
+        ItemInstance{ItemType::SurveyFragment}, 3));
+    first.rules.surveyFragmentRevealMin = 5;
+    first.rules.surveyFragmentRevealMax = 5;
+    MatchState second = first;
+
+    RoundController controller;
+    PlayerAction use;
+    use.player = PlayerId{1};
+    use.type = ActionType::UseItem;
+    use.targetItem = ItemType::SurveyFragment;
+    const auto firstEvents = controller.resolve(first, {use});
+    const auto secondEvents = controller.resolve(second, {use});
+    (void)firstEvents;
+    (void)secondEvents;
+
+    assert(first.players[0].discovery.surveyedCaves.size() == 2);
+    assert(first.players[0].discovery.surveyedCaves ==
+           second.players[0].discovery.surveyedCaves);
+    assert(std::count_if(
+        first.players[0].inventory.items.begin(),
+        first.players[0].inventory.items.end(),
+        [](const ItemInstance& item) {
+            return item.type == ItemType::SurveyFragment;
+        }) == 1);
+}
+
+void surveyFragmentRandomFrontierGrowthIsDeterministic() {
+    MatchState first = surveyWorld(CaveId{8});
+    first.world.connect(CaveId{1}, CaveId{3});
+    first.world.connect(CaveId{1}, CaveId{4});
+    first.rules.surveyFragmentRevealMin = 3;
+    first.rules.surveyFragmentRevealMax = 3;
+    MatchState second = first;
+
+    PlayerAction use;
+    use.player = PlayerId{1};
+    use.type = ActionType::UseItem;
+    use.targetItem = ItemType::SurveyFragment;
+    RoundController controller;
+    const auto firstEvents = controller.resolve(first, {use});
+    const auto secondEvents = controller.resolve(second, {use});
+    (void)firstEvents;
+    (void)secondEvents;
+
+    assert(first.players[0].discovery.surveyedCaves.size() == 3);
+    assert(first.players[0].discovery.surveyedCaves ==
+           second.players[0].discovery.surveyedCaves);
+}
+
+void surveyFragmentIsUnavailableWhenNothingCanBeRevealed() {
+    MatchState state = surveyWorld(CaveId{3});
+    for (const CaveId cave : state.world.caveIds()) {
+        state.players[0].discovery.knownCaves.insert(cave);
+    }
+    const auto before = state.players[0].inventory.items.size();
+    const auto snapshot = SnapshotSystem::buildForPlayer(state, 1, {});
+    assert(surveyAction(snapshot) == nullptr);
+
+    PlayerAction forged;
+    forged.player = PlayerId{1};
+    forged.type = ActionType::UseItem;
+    forged.targetItem = ItemType::SurveyFragment;
+    RoundController controller;
+    const auto events = controller.resolve(state, {forged});
+    assert(events.empty());
+    assert(state.players[0].inventory.items.size() == before);
 }
 
 void bloodBaitCanPullBasiliskOneStepCloser() {
@@ -190,7 +316,10 @@ int main() {
     fullInventoryRejectsWeightedItem();
     healingDraughtRestoresFiftyAndIsConsumed();
     oldMinersMapTemporarilyRevealsActivePit();
-    surveyFragmentRevealsChosenUnknownTunnel();
+    surveyFragmentRevealsConnectedUnexploredRegion();
+    surveyFragmentClampsAndIsDeterministic();
+    surveyFragmentRandomFrontierGrowthIsDeterministic();
+    surveyFragmentIsUnavailableWhenNothingCanBeRevealed();
     bloodBaitCanPullBasiliskOneStepCloser();
     turnResolverUsesWeightedSearchSystem();
     std::cout << "Search and item tests passed.\n";

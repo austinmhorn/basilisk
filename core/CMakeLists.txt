@@ -13,6 +13,7 @@ add_library(BasiliskCore STATIC
     src/systems/PublicMatchMetadataSystem.cpp
     src/systems/RoundController.cpp
     src/systems/SearchSystem.cpp
+    src/systems/SigilPlacementSystem.cpp
     src/systems/SnapshotSystem.cpp
     src/systems/SoloCoordinator.cpp
     src/systems/TurnResolver.cpp

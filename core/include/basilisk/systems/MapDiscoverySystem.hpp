@@ -5,6 +5,7 @@
 #include "basilisk/Action.hpp"
 #include "basilisk/Event.hpp"
 #include "basilisk/MatchState.hpp"
+#include "basilisk/Random.hpp"
 #include "basilisk/world/DiscoveryState.hpp"
 
 namespace basilisk {
@@ -27,6 +28,17 @@ public:
     static void discoverCave(
         PlayerState& player,
         CaveId cave,
+        std::vector<GameEvent>& events);
+
+    [[nodiscard]] static bool hasSurveyFrontier(
+        const MatchState& state,
+        const PlayerState& player);
+
+    [[nodiscard]] static std::size_t surveyFrontier(
+        const MatchState& state,
+        PlayerState& player,
+        std::size_t revealCount,
+        RandomGenerator& random,
         std::vector<GameEvent>& events);
 
     [[nodiscard]] static bool revealTunnelDestination(

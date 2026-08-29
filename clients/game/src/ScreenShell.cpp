@@ -328,6 +328,7 @@ bool drawPlayerCard(
     SDL_FRect card,
     std::string_view designation,
     std::string_view username,
+    std::string_view subtitle,
     const client::CallingCardId* callingCardId,
     const client::EmblemId* emblemId,
     bool local,
@@ -390,15 +391,17 @@ bool drawPlayerCard(
             card.y + card.h - 2.0F * scale);
     }
 
+    const std::string_view topLine = subtitle.empty() ? designation : username;
+    const std::string_view bottomLine = subtitle.empty() ? username : subtitle;
     if (!context.label(
-            designation,
+            topLine,
             FontWeight::Bold,
             ui::Typography::playerDesignation,
             ui::Theme::muted,
             nameplate.x + 8.0F * scale,
             nameplate.y + 3.0F * scale) ||
         !context.label(
-            username,
+            bottomLine,
             FontWeight::SemiBold,
             ui::Typography::playerName,
             ui::Theme::text,
@@ -444,7 +447,48 @@ bool drawHeaderHud(
         playerCardHeight * (400.0F / 75.0F);
     float hudX = matchX;
     const auto& matchPlayers = session.matchMetadata().players;
-    if (matchPlayers.size() == 1) {
+    if (session.matchMode() == client::MatchMode::Sandbox) {
+        const auto participants = sandboxParticipantPresentation(session);
+        constexpr float stripWidth = 570.0F;
+        const float gap = 5.0F * scale;
+        const float chipWidth = (stripWidth * scale -
+            gap * static_cast<float>(participants.size() - 1U)) /
+            static_cast<float>(participants.size());
+        float chipX = matchX;
+        for (const auto& participant : participants) {
+            const SDL_FRect chip{chipX, top, chipWidth, playerCardHeight * scale};
+            const SDL_Color border = participant.viewed
+                ? ui::Theme::gold
+                : !participant.alive.has_value() ? ui::Theme::border
+                : *participant.alive ? ui::Theme::border : ui::Theme::red;
+            drawPanel(context.renderer, chip, 7.0F * scale,
+                participant.viewed ? SDL_Color{39, 34, 23, SDL_ALPHA_OPAQUE}
+                                   : ui::Theme::surface,
+                border, scale);
+            const std::string status = !participant.alive.has_value()
+                ? "IN MATCH" : *participant.alive ? "ALIVE" : "DEAD";
+            const SDL_Color statusColor =
+                participant.alive.has_value() && !*participant.alive
+                    ? ui::Theme::red : ui::Theme::muted;
+            if (!context.label(participant.label, FontWeight::Bold,
+                    8.0F, participant.viewed ? ui::Theme::gold : ui::Theme::text,
+                    chip.x + 7.0F * scale, chip.y + 5.0F * scale) ||
+                !context.label(status, FontWeight::SemiBold, 7.0F,
+                    statusColor,
+                    chip.x + 7.0F * scale, chip.y + 18.0F * scale) ||
+                !context.label(participant.subtitle, FontWeight::Regular, 5.5F,
+                    ui::Theme::muted, chip.x + 7.0F * scale,
+                    chip.y + 30.0F * scale)) return false;
+            if (participant.viewed) {
+                const std::string badge = participant.local ? "YOU" : "WATCHING";
+                if (!context.label(badge, FontWeight::Bold, 6.0F,
+                        ui::Theme::gold, chip.x + chip.w - 38.0F * scale,
+                        chip.y + 5.0F * scale)) return false;
+            }
+            chipX += chipWidth + gap;
+        }
+        hudX = matchX + stripWidth * scale + 16.0F * scale;
+    } else if (matchPlayers.size() == 1) {
         const PublicPlayerSlot& onlySlot = matchPlayers.front();
         const client::PublicPlayerProfile* profile =
             findProfile(session, onlySlot.player);
@@ -462,6 +506,7 @@ bool drawHeaderHud(
                 playerCard,
                 designation,
                 profile == nullptr ? "Player" : profile->username,
+                session.participantSubtitle(onlySlot.player),
                 profile == nullptr ? nullptr : &profile->callingCardId,
                 profile == nullptr ? nullptr : &profile->emblemId,
                 onlySlot.player == session.viewContext().localPlayer,
@@ -469,7 +514,7 @@ bool drawHeaderHud(
             return false;
         }
         hudX = playerCard.x + playerCard.w + 36.0F * scale;
-    } else {
+    } else if (matchPlayers.size() == 2) {
         const PublicPlayerSlot* p1Slot = findSlot(session, PlayerSlot::P1);
         const PublicPlayerSlot* p2Slot = findSlot(session, PlayerSlot::P2);
         const client::PublicPlayerProfile* p1 =
@@ -499,6 +544,7 @@ bool drawHeaderHud(
                 p1Card,
                 "P1",
                 p1 == nullptr ? "Player One" : p1->username,
+                p1Slot == nullptr ? std::string_view{} : session.participantSubtitle(p1Slot->player),
                 p1 == nullptr ? nullptr : &p1->callingCardId,
                 p1 == nullptr ? nullptr : &p1->emblemId,
                 p1Slot != nullptr &&
@@ -511,6 +557,7 @@ bool drawHeaderHud(
                 p2Card,
                 "P2",
                 p2 == nullptr ? "Player Two" : p2->username,
+                p2Slot == nullptr ? std::string_view{} : session.participantSubtitle(p2Slot->player),
                 p2 == nullptr ? nullptr : &p2->callingCardId,
                 p2 == nullptr ? nullptr : &p2->emblemId,
                 p2Slot != nullptr &&
@@ -610,12 +657,15 @@ bool drawHeaderHud(
             "ARROWS", FontWeight::Bold, ui::Typography::hudLabel, ui::Theme::muted, hudX, top + 3.0F * scale)) {
         return false;
     }
-    for (int index = 0; index < std::max(0, snapshot.maxArrows); ++index) {
-        const float slotX = hudX + static_cast<float>(index) * 13.0F * scale;
+    const HudArrowSectionLayout arrowLayout =
+        hudArrowSectionLayout(snapshot.maxArrows);
+    for (int index = 0; index < arrowLayout.slotCount; ++index) {
+        const float slotX = hudX + static_cast<float>(index) *
+            (arrowLayout.slotWidth + arrowLayout.slotSpacing) * scale;
         const SDL_FRect arrow{
             slotX,
             top + 19.0F * scale,
-            10.0F * scale,
+            arrowLayout.slotWidth * scale,
             20.0F * scale,
         };
         const float opacity = index < snapshot.arrows ? 1.0F : 0.22F;
@@ -642,7 +692,7 @@ bool drawHeaderHud(
         }
     }
 
-    hudX += 78.0F * scale;
+    hudX += arrowLayout.sectionWidth * scale;
     if (!context.label(
             "PACK", FontWeight::Bold, ui::Typography::hudLabel, ui::Theme::muted, hudX, top + 3.0F * scale)) {
         return false;
@@ -1439,7 +1489,7 @@ bool drawLifecycleModal(
 
     geometry = {};
     const auto presentation = lifecycleModalPresentation(
-        snapshot, session.viewContext(), session.profiles());
+        snapshot, session.viewContext(), session.profiles(), session.matchMode());
     if (!presentation.has_value()) return true;
 
     geometry.blocking = true;
@@ -1635,6 +1685,9 @@ bool renderScreenShell(
     const debug::DebugGameplayTruth* debugGameplayTruth,
     bool revealDebugMap,
     bool revealDebugGameplay,
+    bool debugInventoryMenuOpen,
+    bool debugKillMenuOpen,
+    bool debugKillAvailable,
 #endif
     int outputWidth,
     int outputHeight,
@@ -1798,6 +1851,10 @@ bool renderScreenShell(
             mapGeometry,
             revealDebugMap,
             revealDebugGameplay,
+            debugInventoryMenuOpen,
+            debugKillMenuOpen,
+            debugKillAvailable,
+            *debugGameplayTruth,
             debugGameplayTruth->basiliskBehavior,
             error)) {
         SDL_SetRenderClipRect(renderer, nullptr);

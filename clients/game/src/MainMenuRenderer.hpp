@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "MainMenu.hpp"
@@ -34,7 +35,19 @@ struct MainMenuGeometry {
     std::vector<EmblemTile> emblems;
 };
 
-[[nodiscard]] std::optional<std::size_t> hitTestMainMenu(
+[[nodiscard]] PresentationRect mainMenuFooterButtonBounds(
+    PresentationRect shell,
+    double scale,
+    double width,
+    bool rightAligned) noexcept;
+
+[[nodiscard]] std::string sandboxLobbySlotTitle(
+    std::size_t slot,
+    client::SandboxLobbySlotKind kind,
+    bool occupied,
+    std::string_view publicName = {});
+
+[[nodiscard]] std::optional<MainMenuAction> hitTestMainMenu(
     const MainMenuGeometry& geometry,
     PresentationPoint point) noexcept;
 

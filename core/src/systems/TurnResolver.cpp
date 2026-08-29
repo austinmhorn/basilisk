@@ -1,16 +1,19 @@
 #include "basilisk/systems/TurnResolver.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cstdint>
 #include <limits>
 #include <optional>
 #include <queue>
+#include <set>
 #include <stdexcept>
 #include <unordered_map>
 
 #include "basilisk/Random.hpp"
 #include "basilisk/systems/ItemSystem.hpp"
 #include "basilisk/systems/SearchSystem.hpp"
+#include "basilisk/systems/SigilPlacementSystem.hpp"
 #include "basilisk/systems/WorldDangerSystem.hpp"
 
 namespace basilisk {
@@ -263,50 +266,6 @@ int movementInterval(BasiliskBehavior behavior) {
     return 0;
 }
 
-void createBodyIfMissing(MatchState& state, const PlayerState& player,
-                         std::vector<GameEvent>& events) {
-    const bool exists = std::any_of(state.bodies.begin(), state.bodies.end(),
-        [&](const BodyState& body) { return body.owner == player.id; });
-    if (exists) return;
-    state.bodies.push_back(BodyState{player.id, player.cave, true, player.cave});
-    events.push_back(GameEvent{GameEventType::BodyCreated, std::nullopt, player.id, player.cave});
-}
-
-CaveId chooseExtractionCave(const MatchState& state, CaveId from) {
-    CaveId best = from;
-    int bestDistance = -1;
-    for (const CaveId cave : state.world.caveIds()) {
-        if (cave == from || caveContainsActivePit(state, cave)) continue;
-        const auto distance = distanceTo(state.world, from, cave);
-        if (!distance.has_value()) continue;
-        if (*distance > bestDistance || (*distance == bestDistance && cave < best)) {
-            bestDistance = *distance;
-            best = cave;
-        }
-    }
-    return best;
-}
-
-void discoverDynamicBodyContents(MatchState& state, PlayerState& player,
-                                 std::vector<GameEvent>& events) {
-    for (auto& body : state.bodies) {
-        if (!body.sigilAvailable || body.owner == player.id) continue;
-        const CaveId sigilCave = body.sigilCave.value_or(body.cave);
-        if (sigilCave != player.cave) continue;
-        if (body.cave == player.cave)
-            events.push_back(GameEvent{GameEventType::BodyFound, player.id, body.owner, body.cave});
-        body.sigilAvailable = false;
-        player.heldSigilFrom = body.owner;
-        events.push_back(GameEvent{GameEventType::SigilAcquired, player.id, body.owner, sigilCave});
-        state.extraction.active = true;
-        state.extraction.sigilHolder = player.id;
-        state.extraction.cave = chooseExtractionCave(state, player.cave);
-        events.push_back(GameEvent{GameEventType::ExtractionActivated, player.id, std::nullopt,
-            state.extraction.cave});
-        return;
-    }
-}
-
 void resolveEscape(MatchState& state, PlayerState& player, std::vector<GameEvent>& events) {
     if (state.result.status != MatchStatus::Active || !player.alive ||
         !state.extraction.active || !state.extraction.cave.has_value() ||
@@ -338,10 +297,19 @@ void resolveBasiliskContactDeaths(MatchState& state, std::vector<GameEvent>& eve
         player.alive = false;
         events.push_back(GameEvent{GameEventType::PlayerKilled, std::nullopt, player.id,
             player.cave, 0, state.basilisk.behavior});
-        createBodyIfMissing(state, player, events);
+        placeSigilsForDeath(state, player, player.cave, events);
     }
 
     resolveMutualDeathDraw(state, events);
+}
+
+void assertDistinctLivingHunterCaves(const MatchState& state) {
+    std::set<CaveId> occupied;
+    for (const PlayerState& player : state.players) {
+        if (!player.alive) continue;
+        assert(occupied.insert(player.cave).second &&
+            "PvP resolution requires unique living hunter occupancy");
+    }
 }
 
 } // namespace
@@ -368,6 +336,7 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
     }
 
     resolveBasiliskContactDeaths(state, events);
+    assertDistinctLivingHunterCaves(state);
 
     struct PendingDamage { PlayerId target; PlayerId attacker; CaveId cave; int amount; };
     std::vector<PendingDamage> pendingDamage;
@@ -379,6 +348,10 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
             !state.world.areConnected(shooter.cave, *action.targetCave)) continue;
         --shooter.arrows;
         events.push_back(GameEvent{GameEventType::ArrowFired, shooter.id, std::nullopt, *action.targetCave});
+        const auto targetCount = std::count_if(state.players.begin(), state.players.end(), [&](const PlayerState& player) {
+            return player.id != shooter.id && player.alive && player.cave == *action.targetCave;
+        });
+        assert(targetCount <= 1 && "Cave-targeted PvP shot found multiple living rivals");
         const auto targetPlayer = std::find_if(state.players.begin(), state.players.end(), [&](const PlayerState& player) {
             return player.id != shooter.id && player.alive && player.cave == *action.targetCave;
         });
@@ -408,10 +381,12 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
     std::unordered_map<PlayerId, PlayerId> lethalAttackerByTarget;
     for (const auto& damage : pendingDamage) {
         auto& target = playerById(state, damage.target);
+        const int healthBefore = target.health;
         target.health = std::max(0, target.health - damage.amount);
         events.push_back(GameEvent{GameEventType::PlayerDamaged, damage.attacker, target.id,
             damage.cave, damage.amount});
-        if (target.health <= 0) lethalAttackerByTarget[target.id] = damage.attacker;
+        if (healthBefore > 0 && target.health <= 0)
+            lethalAttackerByTarget.try_emplace(target.id, damage.attacker);
     }
     for (auto& player : state.players) {
         if (player.alive && player.health <= 0) {
@@ -420,7 +395,7 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
             const auto killerIt = lethalAttackerByTarget.find(player.id);
             if (killerIt != lethalAttackerByTarget.end()) killer = killerIt->second;
             events.push_back(GameEvent{GameEventType::PlayerKilled, killer, player.id, player.cave});
-            createBodyIfMissing(state, player, events);
+            placeSigilsForDeath(state, player, player.cave, events);
         }
     }
     if (state.result.status != MatchStatus::Completed) resolveMutualDeathDraw(state, events);
@@ -431,7 +406,7 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
         auto& player = playerById(state, action.player);
         if (!player.alive) continue;
         mostRecentSearchCave = player.cave;
-        discoverDynamicBodyContents(state, player, events);
+        recoverSigilAtCurrentCave(state, player, events);
         auto searchEvents = SearchSystem::search(player, state.rules, rng);
         events.insert(events.end(), searchEvents.begin(), searchEvents.end());
         if (state.basilisk.alive && state.basilisk.behavior == BasiliskBehavior::Skittish &&
@@ -469,7 +444,8 @@ std::vector<GameEvent> TurnResolver::resolve(MatchState& state,
                             hunterIt->alive = false;
                             events.push_back(GameEvent{GameEventType::PlayerKilled, std::nullopt, hunterIt->id,
                                 hunterIt->cave, 0, BasiliskBehavior::Enraged});
-                            createBodyIfMissing(state, *hunterIt, events);
+                            placeSigilsForDeath(
+                                state, *hunterIt, hunterIt->cave, events);
                             resolveMutualDeathDraw(state, events);
                         }
                     } else {

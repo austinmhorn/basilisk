@@ -8,15 +8,24 @@ namespace {
 class NetworkActionCommandSink final : public ActionCommandSink {
 public:
     explicit NetworkActionCommandSink(
-        std::shared_ptr<network::ClientTransport> transport)
-        : transport_(std::move(transport)) {}
+        std::shared_ptr<network::ClientTransport> transport,
+        std::shared_ptr<RoundNumber> commandRound)
+        : transport_(std::move(transport)),
+          commandRound_(std::move(commandRound)) {}
 
     [[nodiscard]] bool submitAction(const PlayerAction& action) override {
-        return send(network::SubmitActionCommand{action});
+        return send(network::SubmitActionCommand{*commandRound_, action});
     }
 
     [[nodiscard]] bool lockAction(PlayerId player) override {
-        return send(network::LockActionCommand{player});
+        return send(network::LockActionCommand{*commandRound_, player});
+    }
+
+    [[nodiscard]] bool submitClashResponse(
+        PlayerId,
+        ClashId clash,
+        std::string response) override {
+        return send(network::SubmitClashResponse{clash, std::move(response)});
     }
 
 private:
@@ -29,6 +38,7 @@ private:
     }
 
     std::shared_ptr<network::ClientTransport> transport_;
+    std::shared_ptr<RoundNumber> commandRound_;
 };
 
 class NetworkSessionCommandSink final : public ClientSessionCommandSink {
@@ -67,8 +77,10 @@ private:
 
 NetworkGameSessionAdapter::NetworkGameSessionAdapter(
     std::unique_ptr<ClientSessionController> controller,
-    std::shared_ptr<network::ClientTransport> transport)
-    : controller_(std::move(controller)), transport_(std::move(transport)) {}
+    std::shared_ptr<network::ClientTransport> transport,
+    std::shared_ptr<RoundNumber> commandRound)
+    : controller_(std::move(controller)), transport_(std::move(transport)),
+      commandRound_(std::move(commandRound)) {}
 
 std::unique_ptr<NetworkGameSessionAdapter>
 NetworkGameSessionAdapter::create(
@@ -86,8 +98,10 @@ NetworkGameSessionAdapter::create(
         return nullptr;
     }
 
+    auto commandRound = std::make_shared<RoundNumber>(
+        bootstrap.initialSnapshot.round);
     auto actionCommands =
-        std::make_unique<NetworkActionCommandSink>(transport);
+        std::make_unique<NetworkActionCommandSink>(transport, commandRound);
     auto sessionCommands =
         std::make_unique<NetworkSessionCommandSink>(transport);
     auto controller = std::make_unique<ClientSessionController>(
@@ -96,6 +110,7 @@ NetworkGameSessionAdapter::create(
         bootstrap.viewContext,
         std::move(actionCommands),
         std::move(sessionCommands));
+    controller->setMatchMode(bootstrap.matchMode);
     controller->setTrophyTotal(bootstrap.trophyTotal);
     if (!controller->ingestSnapshot(
             std::move(bootstrap.initialSnapshot),
@@ -105,7 +120,8 @@ NetworkGameSessionAdapter::create(
     }
     return std::unique_ptr<NetworkGameSessionAdapter>(
         new NetworkGameSessionAdapter(
-            std::move(controller), std::move(transport)));
+            std::move(controller), std::move(transport),
+            std::move(commandRound)));
 }
 
 ClientSessionController& NetworkGameSessionAdapter::controller() noexcept {
@@ -126,6 +142,7 @@ bool NetworkGameSessionAdapter::ingest(
         error = "Unsupported Basilisk network protocol version.";
         return false;
     }
+    const RoundNumber acceptedRound = update.snapshot.round;
     if (!controller_->ingestSnapshot(
             std::move(update.snapshot),
             std::move(update.mapGeometry))) {
@@ -136,7 +153,41 @@ bool NetworkGameSessionAdapter::ingest(
         controller_->setViewContext(*update.viewContext);
     }
     controller_->setTrophyTotal(update.trophyTotal);
+    *commandRound_ = acceptedRound;
     return true;
+}
+
+bool NetworkGameSessionAdapter::ingest(network::ClashStarted clash, std::string& error) {
+    error.clear();
+    if (clash.protocolVersion != network::kProtocolVersion || clash.challengeWord.empty()) {
+        error = "Invalid clash challenge."; return false;
+    }
+    activeClash_ = std::move(clash);
+    controller_->setActiveClash(ActiveClash{
+        activeClash_->clash, ClashKind::MoveToSameCave,
+        activeClash_->participants, activeClash_->challengeWord,
+        activeClash_->remainingMs});
+    lastClashResult_.reset();
+    return true;
+}
+
+bool NetworkGameSessionAdapter::ingest(network::ClashResolved clash, std::string& error) {
+    error.clear();
+    if (clash.protocolVersion != network::kProtocolVersion ||
+        !activeClash_ || activeClash_->clash != clash.clash) {
+        error = "Invalid clash result."; return false;
+    }
+    activeClash_.reset();
+    controller_->setActiveClash(std::nullopt);
+    lastClashResult_ = std::move(clash);
+    return true;
+}
+
+const std::optional<network::ClashStarted>& NetworkGameSessionAdapter::activeClash() const noexcept { return activeClash_; }
+const std::optional<network::ClashResolved>& NetworkGameSessionAdapter::lastClashResult() const noexcept { return lastClashResult_; }
+
+bool NetworkGameSessionAdapter::submitClashResponse(std::string response) {
+    return controller_ && controller_->submitClashResponse(std::move(response));
 }
 
 bool NetworkGameSessionAdapter::requestLeaderboard(

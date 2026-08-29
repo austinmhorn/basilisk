@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "basilisk/Action.hpp"
+#include "basilisk/Clash.hpp"
 #include "basilisk/Event.hpp"
 #include "basilisk/MatchState.hpp"
 
@@ -33,9 +34,12 @@ public:
     // immediate.
     [[nodiscard]] bool submitAction(const PlayerAction& action);
     [[nodiscard]] bool lockAction(PlayerId player);
+    [[nodiscard]] ClashSubmissionResult submitClashResponse(
+        PlayerId player, ClashId clash, std::string_view response);
+    [[nodiscard]] const ActiveClash* activeClash() const noexcept;
 
     void disconnect(PlayerId player);
-    void reconnect(PlayerId player);
+    [[nodiscard]] bool reconnect(PlayerId player);
     // An intentional departure eliminates the hunter immediately. Unlike a
     // transport disconnect, it does not start reconnect grace.
     void forfeit(PlayerId player);
@@ -51,11 +55,16 @@ private:
     MatchState& state_;
     std::unordered_map<PlayerId, HostSessionState> sessions_;
     std::vector<GameEvent> lastEvents_;
+    std::optional<PendingClashRound> pendingClash_;
+    ClashId nextClashId_{1};
 
     [[nodiscard]] bool isLivingPlayer(PlayerId player) const;
     [[nodiscard]] bool allRequiredPlayersLocked() const;
     [[nodiscard]] bool anotherLivingPlayerIsLocked(PlayerId player) const;
-    void tryResolveRound();
+    [[nodiscard]] bool tryResolveRound();
+    void resolveClash(std::optional<PlayerId> winner);
+    void startNextClashOrResolve();
+    void completePreparedRound();
     void eliminatePlayer(
         PlayerId player,
         std::optional<GameEventType> reason = std::nullopt);

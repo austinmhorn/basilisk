@@ -47,19 +47,14 @@ void appendUseItemAction(const PlayerState& player, ItemType item,
     actions.push_back(action);
 }
 
-void appendSurveyActions(const PlayerState& player, const PlayerMapView& map,
+void appendSurveyAction(const MatchState& state, const PlayerState& player,
                          std::vector<AvailableAction>& actions) {
     if (!player.inventory.contains(ItemType::SurveyFragment)) return;
-    const auto* current = currentCaveView(map);
-    if (!current) return;
-    for (const auto& exit : current->exits) {
-        if (exit.destination.has_value()) continue;
-        AvailableAction action;
-        action.type = ActionType::UseItem;
-        action.targetItem = ItemType::SurveyFragment;
-        action.targetTunnel = exit.id;
-        actions.push_back(action);
-    }
+    if (!MapDiscoverySystem::hasSurveyFrontier(state, player)) return;
+    AvailableAction action;
+    action.type = ActionType::UseItem;
+    action.targetItem = ItemType::SurveyFragment;
+    actions.push_back(action);
 }
 
 std::vector<AvailableAction> buildAvailableActions(
@@ -78,7 +73,7 @@ std::vector<AvailableAction> buildAvailableActions(
     appendUseItemAction(player, ItemType::OldMinersMap, actions);
     appendUseItemAction(player, ItemType::OldHuntersMap, actions);
     appendUseItemAction(player, ItemType::JackalRepellent, actions);
-    appendSurveyActions(player, map, actions);
+    appendSurveyAction(state, player, actions);
     appendUseItemAction(player, ItemType::BloodBait, actions);
 
     if (player.heldSigilFrom.has_value() && state.extraction.active &&
@@ -126,6 +121,7 @@ PlayerRoundSnapshot SnapshotSystem::buildForPlayer(
 
     snapshot.recoverableRivalSigilAvailable =
         player.alive && visibleState.result.status == MatchStatus::Active &&
+        !visibleState.extraction.sigilHolder.has_value() &&
         std::any_of(
             visibleState.bodies.begin(),
             visibleState.bodies.end(),

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <vector>
 
 namespace basilisk {
 namespace {
@@ -23,10 +24,60 @@ bool connectionIsKnownOrInferred(
             player.discovery.knownCaves.contains(b));
 }
 
+std::vector<CaveId> surveyFrontierCaves(
+    const MatchState& state,
+    const PlayerState& player) {
+
+    std::vector<CaveId> frontier;
+    for (const CaveId cave : state.world.caveIds()) {
+        if (player.discovery.knownCaves.contains(cave)) continue;
+        const auto& connections = state.world.cave(cave).connections;
+        if (std::any_of(
+                connections.begin(), connections.end(),
+                [&](CaveId adjacent) {
+                    return player.discovery.knownCaves.contains(adjacent);
+                })) {
+            frontier.push_back(cave);
+        }
+    }
+    std::sort(frontier.begin(), frontier.end());
+    return frontier;
+}
+
+void revealKnownSurveyConnections(
+    const MatchState& state,
+    PlayerState& player,
+    CaveId surveyed,
+    std::vector<GameEvent>& events) {
+
+    for (const CaveId adjacent : state.world.cave(surveyed).connections) {
+        if (!player.discovery.knownCaves.contains(adjacent)) continue;
+        if (!player.discovery.knownConnections.insert(
+                connectionKey(surveyed, adjacent)).second) {
+            continue;
+        }
+        const auto& exits = state.world.cave(adjacent).connections;
+        const auto tunnel = std::find(exits.begin(), exits.end(), surveyed);
+        GameEvent reveal{
+            GameEventType::TunnelDestinationRevealed,
+            player.id,
+            std::nullopt,
+            surveyed,
+            static_cast<int>(adjacent),
+        };
+        if (tunnel != exits.end()) {
+            reveal.tunnel = static_cast<TunnelId>(
+                std::distance(exits.begin(), tunnel) + 1);
+        }
+        events.push_back(reveal);
+    }
+}
+
 } // namespace
 
 void MapDiscoverySystem::initializePlayer(MatchState& state, PlayerState& player) {
     if (state.rules.mapDiscoveryMode == MapDiscoveryMode::FullMap) {
+        player.discovery.surveyedCaves.clear();
         for (const CaveId cave : state.world.caveIds()) {
             player.discovery.knownCaves.insert(cave);
             for (const CaveId destination : state.world.cave(cave).connections) {
@@ -72,6 +123,7 @@ void MapDiscoverySystem::discoverTraversal(
     std::vector<GameEvent>& events) {
 
     const bool caveWasNew = player.discovery.knownCaves.insert(to).second;
+    player.discovery.surveyedCaves.erase(to);
     const bool connectionWasNew =
         player.discovery.knownConnections.insert(connectionKey(from, to)).second;
 
@@ -95,8 +147,40 @@ void MapDiscoverySystem::discoverCave(
     CaveId cave,
     std::vector<GameEvent>& events) {
 
+    player.discovery.surveyedCaves.erase(cave);
     if (!player.discovery.knownCaves.insert(cave).second) return;
     events.push_back(GameEvent{GameEventType::CaveDiscovered, player.id, std::nullopt, cave});
+}
+
+bool MapDiscoverySystem::hasSurveyFrontier(
+    const MatchState& state,
+    const PlayerState& player) {
+
+    return !surveyFrontierCaves(state, player).empty();
+}
+
+std::size_t MapDiscoverySystem::surveyFrontier(
+    const MatchState& state,
+    PlayerState& player,
+    std::size_t revealCount,
+    RandomGenerator& random,
+    std::vector<GameEvent>& events) {
+
+    std::size_t revealed = 0;
+    while (revealed < revealCount) {
+        const std::vector<CaveId> frontier = surveyFrontierCaves(state, player);
+        if (frontier.empty()) break;
+        const std::size_t selected = static_cast<std::size_t>(random.range(
+            0, static_cast<int>(frontier.size() - 1)));
+        const CaveId cave = frontier[selected];
+        if (!player.discovery.knownCaves.insert(cave).second) continue;
+        player.discovery.surveyedCaves.insert(cave);
+        events.push_back(GameEvent{
+            GameEventType::CaveDiscovered, player.id, std::nullopt, cave});
+        revealKnownSurveyConnections(state, player, cave, events);
+        ++revealed;
+    }
+    return revealed;
 }
 
 bool MapDiscoverySystem::revealTunnelDestination(
@@ -144,6 +228,7 @@ PlayerMapView MapDiscoverySystem::buildView(
 
         DiscoveredCaveView caveView;
         caveView.cave = caveId;
+        caveView.surveyed = player.discovery.surveyedCaves.contains(caveId);
         const auto& connections = state.world.cave(caveId).connections;
         const auto pitClue = player.knownPitTunnels.find(caveId);
 

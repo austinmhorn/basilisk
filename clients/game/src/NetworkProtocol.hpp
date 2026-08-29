@@ -9,15 +9,18 @@
 #include "MapLayout.hpp"
 #include "PublicLeaderboard.hpp"
 #include "basilisk/Action.hpp"
+#include "basilisk/Clash.hpp"
 #include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/PublicMatchMetadata.hpp"
 #include "basilisk/client/ClientViewContext.hpp"
 #include "basilisk/client/AccountCosmetics.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
+#include "basilisk/client/MatchMode.hpp"
+#include "basilisk/client/SandboxConfiguration.hpp"
 
 namespace basilisk::game::network {
 
-inline constexpr std::uint32_t kProtocolVersion{4};
+inline constexpr std::uint32_t kProtocolVersion{9};
 
 struct CreateAccountRequest {
     std::string email;
@@ -85,9 +88,17 @@ struct JoinLobbyRequest { std::string lobbyCode; };
 struct CancelHostedLobbyRequest { std::string lobbyCode; };
 struct FindMatchRequest {};
 struct CancelFindMatchRequest {};
+struct HostSandboxLobbyRequest { client::SandboxSessionConfig config; };
+struct JoinSandboxLobbyRequest { std::string lobbyCode; };
+struct LeaveSandboxLobbyRequest { std::string lobbyCode; };
+struct SetSandboxReadyRequest { std::string lobbyCode; bool ready{}; };
+struct StartSandboxMatchRequest { std::string lobbyCode; };
 using LobbyRequestPayload = std::variant<
     HostLobbyRequest, JoinLobbyRequest, CancelHostedLobbyRequest,
-    FindMatchRequest, CancelFindMatchRequest>;
+    FindMatchRequest, CancelFindMatchRequest, HostSandboxLobbyRequest,
+    JoinSandboxLobbyRequest, LeaveSandboxLobbyRequest,
+    SetSandboxReadyRequest, StartSandboxMatchRequest>;
+// Keep Sandbox lobby control messages in the same authenticated request family.
 struct LobbyRequest {
     std::uint32_t protocolVersion{kProtocolVersion};
     LobbyRequestPayload payload;
@@ -103,9 +114,25 @@ struct LobbyCancelled { std::string lobbyCode; };
 struct LobbyFailure { std::string message; };
 struct MatchmakingQueued {};
 struct MatchmakingCancelled {};
+struct SandboxLobbySlotView {
+    std::uint8_t slot{};
+    PlayerId player{};
+    client::SandboxLobbySlotKind kind{client::SandboxLobbySlotKind::Ai};
+    bool occupied{};
+    bool ready{};
+    std::string publicName;
+};
+struct SandboxLobbyUpdated {
+    std::string lobbyCode;
+    client::SandboxSessionConfig config;
+    std::vector<SandboxLobbySlotView> slots;
+    PlayerId localPlayer{};
+};
+struct SandboxLobbyClosed { std::string lobbyCode; };
 using LobbyResponsePayload = std::variant<
     LobbyHosted, LobbyMatchAssigned, LobbyCancelled, LobbyFailure,
-    MatchmakingQueued, MatchmakingCancelled>;
+    MatchmakingQueued, MatchmakingCancelled, SandboxLobbyUpdated,
+    SandboxLobbyClosed>;
 struct LobbyResponse {
     std::uint32_t protocolVersion{kProtocolVersion};
     LobbyResponsePayload payload;
@@ -114,6 +141,7 @@ struct LobbyResponse {
 // Initial player-safe state supplied after an online session is established.
 struct ServerBootstrap {
     std::uint32_t protocolVersion{kProtocolVersion};
+    client::MatchMode matchMode{client::MatchMode::Online};
     PublicMatchMetadata matchMetadata;
     std::vector<client::PublicPlayerProfile> profiles;
     client::ClientViewContext viewContext;
@@ -135,10 +163,12 @@ struct ServerUpdate {
 };
 
 struct SubmitActionCommand {
+    RoundNumber round{};
     PlayerAction action;
 };
 
 struct LockActionCommand {
+    RoundNumber round{};
     PlayerId player{};
 };
 
@@ -150,6 +180,23 @@ struct WatchRemainingHunterCommand {
 struct QuitCommand {
     PlayerId player{};
 };
+
+struct ClashStarted {
+    std::uint32_t protocolVersion{kProtocolVersion};
+    ClashId clash{};
+    std::vector<PlayerId> participants;
+    std::string challengeWord;
+    std::uint64_t remainingMs{};
+};
+
+struct ClashResolved {
+    std::uint32_t protocolVersion{kProtocolVersion};
+    ClashId clash{};
+    PlayerId winner{};
+    std::vector<PlayerId> losers;
+};
+
+struct SubmitClashResponse { ClashId clash{}; std::string response; };
 
 inline constexpr std::uint32_t kMaximumLeaderboardPageSize{100};
 
@@ -169,6 +216,7 @@ using ClientCommandPayload = std::variant<
     LockActionCommand,
     WatchRemainingHunterCommand,
     QuitCommand,
+    SubmitClashResponse,
     LeaderboardPageRequest>;
 
 struct ClientCommand {

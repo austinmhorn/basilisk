@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <optional>
-#include <set>
 #include <utility>
 #include <vector>
 
@@ -81,45 +80,15 @@ public:
 
 #if defined(BASILISK_GAME_DEBUG_BUILD)
     [[nodiscard]] debug::DebugMapTruth debugMapTruth() const {
-        debug::DebugMapTruth truth;
-        truth.fullBounds = fullLayout_.positionedBounds();
-        for (const CaveId cave : state_.world.caveIds()) {
-            if (const auto position = fullLayout_.cavePosition(cave)) {
-                truth.cavePositions.emplace(cave, *position);
-            }
-        }
-
-        std::set<debug::PhysicalTunnel> tunnels;
-        for (const CaveId source : state_.world.caveIds()) {
-            for (const CaveId destination :
-                 state_.world.cave(source).connections) {
-                const auto [first, second] =
-                    std::minmax(source, destination);
-                tunnels.insert(debug::PhysicalTunnel{first, second});
-            }
-        }
-        truth.tunnels.assign(tunnels.begin(), tunnels.end());
-        return truth;
+        return debug::buildDebugMapTruth(state_, fullLayout_);
     }
 
     [[nodiscard]] debug::DebugGameplayTruth debugGameplayTruth() const {
-        debug::DebugGameplayTruth truth;
-        truth.basiliskCave = state_.basilisk.cave;
-        truth.basiliskAlive = state_.basilisk.alive;
-        truth.basiliskBehavior = state_.basilisk.behavior;
-        truth.basiliskLastCave = state_.basilisk.lastCave;
-        truth.basiliskEncounterCount = state_.basilisk.trueEncounters;
-        truth.basiliskRoundsSinceMove = state_.basilisk.roundsSinceMove;
-        truth.territorialSearchTarget = state_.mostRecentSearchCave;
-        truth.pitCaves.reserve(state_.pits.size());
-        for (const PitState& pit : state_.pits) {
-            truth.pitCaves.push_back(pit.cave);
-        }
-        truth.jackalCaves.reserve(state_.jackals.size());
-        for (const JackalState& jackal : state_.jackals) {
-            truth.jackalCaves.push_back(jackal.cave);
-        }
-        return truth;
+        return debug::buildDebugGameplayTruth(state_);
+    }
+    [[nodiscard]] std::vector<debug::DebugParticipant> debugParticipants() const {
+        if (state_.players.empty()) return {};
+        return {{state_.players.front().id, "HOST", state_.players.front().alive}};
     }
 
     [[nodiscard]] bool forceBasiliskBehavior(
@@ -128,6 +97,19 @@ public:
         state_.basilisk.behavior = behavior;
         state_.basilisk.roundsSinceMove = 0;
         return true;
+    }
+
+    [[nodiscard]] bool grantItem(ItemType item) {
+        const auto player = std::find_if(
+            state_.players.begin(), state_.players.end(),
+            [](const PlayerState& candidate) {
+                return candidate.id == kLocalPlayer;
+            });
+        if (player == state_.players.end() || !player->inventory.add(
+                ItemInstance{item}, state_.rules.maxInventoryItems)) {
+            return false;
+        }
+        return publishSnapshot(coordinator_.lastEvents());
     }
 #endif
 
@@ -243,7 +225,11 @@ LocalGameSessionAdapter::DebugSession LocalGameSessionAdapter::createDebug(
         },
         [actions = assembly.actions](BasiliskBehavior behavior) {
             return actions->forceBasiliskBehavior(behavior);
-        });
+        },
+        [actions = assembly.actions](PlayerId, ItemType item) {
+            return actions->grantItem(item);
+        }, debug::DebugMapProvider::KillPlayerSource{},
+        [actions = assembly.actions] { return actions->debugParticipants(); });
     return {std::move(assembly.session), std::move(provider)};
 }
 #endif

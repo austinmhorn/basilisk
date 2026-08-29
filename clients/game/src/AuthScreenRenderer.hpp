@@ -17,6 +17,7 @@ struct AuthScreenGeometry {
     std::vector<AuthFieldGeometry> fields;
     PresentationRect submit;
     PresentationRect switchMode;
+    PresentationRect back;
 };
 
 [[nodiscard]] bool renderAuthScreen(

@@ -4,6 +4,7 @@
 #include <iostream>
 #include <queue>
 #include <set>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -214,6 +215,11 @@ void defaultThirtyCaveMapHasExpectedShapeAndActors() {
     assert(state.jackals.size() == 2);
     assert(state.pits.size() == 1);
     assert(state.players.size() == 2);
+    assert(state.rules.startingArrows == 3);
+    assert(state.rules.maxArrows == 5);
+    assert(state.rules.looseArrowSpawnIntervalRounds == 5);
+    assert(std::all_of(state.players.begin(), state.players.end(),
+        [](const PlayerState& player) { return player.arrows == 3; }));
 }
 
 void initialPlacementsDoNotOverlap() {
@@ -332,6 +338,99 @@ void deadEndSpawnPoliciesAreConfigurable() {
     assert(MapGenerator::validateFairness(state, config));
 }
 
+void rosterGenerationSupportsTwoThroughSixHunters() {
+    ProceduralMapConfig config;
+    config.caveCount = 60;
+    config.extraConnections = 16;
+    config.minDiameter = 8;
+    config.maxDiameter = 30;
+    config.maxGenerationAttempts = 512;
+    for (std::size_t count = 2; count <= 6; ++count) {
+        std::vector<PlayerId> roster;
+        for (std::size_t index = 0; index < count; ++index)
+            roster.push_back(static_cast<PlayerId>(10 + index * 7));
+        const auto first = MapGenerator::generate(9000 + count, 42000, roster, {}, config);
+        const auto second = MapGenerator::generate(9000 + count, 42000, roster, {}, config);
+        assertSameGeneratedWorld(first, second);
+        assert(first.players.size() == count);
+        assert(MapGenerator::validateFairness(first, config));
+        std::set<CaveId> starts;
+        for (std::size_t index = 0; index < count; ++index) {
+            assert(first.players[index].id == roster[index]);
+            assert(starts.insert(first.players[index].cave).second);
+            assert(distanceBetween(first.world, first.players[index].cave,
+                first.basilisk.cave) >= config.minHunterBasiliskDistance);
+            for (const auto& pit : first.pits)
+                assert(distanceBetween(first.world, first.players[index].cave,
+                    pit.cave) >= config.minHunterPitDistance);
+            for (const auto& jackal : first.jackals)
+                assert(distanceBetween(first.world, first.players[index].cave,
+                    jackal.cave) >= config.minHunterJackalDistance);
+        }
+    }
+}
+
+void sixHunterGenerationIsReliableAcrossIndependentSeeds() {
+    ProceduralMapConfig config;
+    config.caveCount = 60;
+    config.extraConnections = 16;
+    config.minDiameter = 8;
+    config.maxDiameter = 30;
+    config.maxGenerationAttempts = 512;
+    const std::vector<PlayerId> roster{1, 2, 3, 4, 5, 6};
+    for (MapSeed seed = 1; seed <= 20001; seed += 1000) {
+        const auto state = MapGenerator::generate(
+            seed, MatchSeed{424242}, roster, {}, config);
+        assert(state.players.size() == roster.size());
+        assert(MapGenerator::validateFairness(state, config));
+    }
+}
+
+void customCaveAndJackalCountsAreExactAndDeterministic() {
+    ProceduralMapConfig config;
+    config.caveCount = 40;
+    config.extraConnections = 10;
+    config.minDiameter = 8;
+    config.maxDiameter = 30;
+    config.maxGenerationAttempts = 512;
+    config.jackalCount = 4;
+    const std::vector<PlayerId> roster{1, 2, 3};
+    const auto first = MapGenerator::generate(1, 424242, roster, {}, config);
+    const auto second = MapGenerator::generate(1, 424242, roster, {}, config);
+    assert(first.world.size() == 40);
+    assert(first.jackals.size() == 4);
+    assertSameGeneratedWorld(first, second);
+    assert(MapGenerator::validateFairness(first, config));
+
+    config.jackalCount = 0;
+    const auto noJackals = MapGenerator::generate(1, 424242, roster, {}, config);
+    assert(noJackals.world.size() == 40);
+    assert(noJackals.jackals.empty());
+}
+
+void invalidRostersAreRejected() {
+    bool rejected = false;
+    try { (void)MapGenerator::generate(1, 2, std::vector<PlayerId>{1}); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    assert(rejected);
+    rejected = false;
+    try { (void)MapGenerator::generate(1, 2, std::vector<PlayerId>{1, 1}); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    assert(rejected);
+    rejected = false;
+    try { (void)MapGenerator::generate(1, 2, std::vector<PlayerId>{0, 2}); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    assert(rejected);
+}
+
+void explicitDefaultRosterPreservesTwoPlayerGeneration() {
+    const auto legacy = MapGenerator::generate(20260812, 424242);
+    const std::vector<PlayerId> roster{1, 2};
+    const auto rosterBased = MapGenerator::generate(20260812, 424242, roster);
+    assertSameGeneratedWorld(legacy, rosterBased);
+    assert(generatedWorldSignature(rosterBased) == 14569748892413728933ULL);
+}
+
 } // namespace
 
 int main() {
@@ -345,6 +444,11 @@ int main() {
     pitCountRemainsConfigurableAndSeparated();
     pitsNeverSealOffRegionsAcrossManySeeds();
     deadEndSpawnPoliciesAreConfigurable();
+    rosterGenerationSupportsTwoThroughSixHunters();
+    sixHunterGenerationIsReliableAcrossIndependentSeeds();
+    customCaveAndJackalCountsAreExactAndDeterministic();
+    invalidRostersAreRejected();
+    explicitDefaultRosterPreservesTwoPlayerGeneration();
 
     std::cout << "Basilisk procedural map generator tests passed.\n";
     return 0;

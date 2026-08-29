@@ -198,6 +198,40 @@ private:
     std::size_t offset_{0};
 };
 
+bool writeSandboxConfig(Writer& writer, const client::SandboxSessionConfig& config) {
+    if (client::validateOnlineSandboxSessionConfig(config).has_value()) return false;
+    writer.u8(static_cast<std::uint8_t>(config.hunterCount));
+    writer.u8(static_cast<std::uint8_t>(config.humanPlayerCount));
+    writer.u8(static_cast<std::uint8_t>(config.caveCount));
+    writer.u8(static_cast<std::uint8_t>(config.jackalCount));
+    writer.u32(config.arrowSpawnIntervalRounds);
+    writer.i32(config.startingArrows);
+    writer.i32(config.maxArrows);
+    writer.u8(static_cast<std::uint8_t>(config.aiDifficulty));
+    writer.u8(static_cast<std::uint8_t>(config.aiBehavior));
+    return true;
+}
+
+bool readSandboxConfig(Reader& reader, client::SandboxSessionConfig& config) {
+    std::uint8_t hunters{}, humans{}, caves{}, jackals{}, difficulty{}, behavior{};
+    if (!reader.u8(hunters) || !reader.u8(humans) || !reader.u8(caves) ||
+        !reader.u8(jackals) || !reader.u32(config.arrowSpawnIntervalRounds) ||
+        !reader.i32(config.startingArrows) || !reader.i32(config.maxArrows) ||
+        !reader.u8(difficulty) || !reader.u8(behavior)) return false;
+    config.hunterCount = hunters;
+    config.humanPlayerCount = humans;
+    config.caveCount = caves;
+    config.jackalCount = jackals;
+    if (difficulty > static_cast<std::uint8_t>(client::ai::AiDifficulty::Hard) ||
+        behavior > static_cast<std::uint8_t>(client::ai::AiBehavior::Random))
+        return reader.fail("Invalid Sandbox AI configuration.");
+    config.aiDifficulty = static_cast<client::ai::AiDifficulty>(difficulty);
+    config.aiBehavior = static_cast<client::ai::AiBehavior>(behavior);
+    if (const auto error = client::validateOnlineSandboxSessionConfig(config))
+        return reader.fail(*error);
+    return true;
+}
+
 template <typename Enum>
 void writeEnum(Writer& writer, Enum value) {
     writer.u8(static_cast<std::uint8_t>(value));
@@ -350,14 +384,19 @@ bool readTunnel(Reader& reader, TunnelView& tunnel) {
 
 bool writeCave(Writer& writer, const DiscoveredCaveView& cave) {
     writeId(writer, cave.cave);
-    return writeVector(writer, cave.exits,
-        [&](const TunnelView& tunnel) { return writeTunnel(writer, tunnel); });
+    if (!writeVector(writer, cave.exits,
+            [&](const TunnelView& tunnel) { return writeTunnel(writer, tunnel); })) {
+        return false;
+    }
+    writer.boolean(cave.surveyed);
+    return true;
 }
 
 bool readCave(Reader& reader, DiscoveredCaveView& cave) {
     return readId(reader, cave.cave) &&
            readVector(reader, cave.exits,
-               [&](TunnelView& tunnel) { return readTunnel(reader, tunnel); });
+               [&](TunnelView& tunnel) { return readTunnel(reader, tunnel); }) &&
+           reader.boolean(cave.surveyed);
 }
 
 bool writeMap(Writer& writer, const PlayerMapView& map) {
@@ -634,7 +673,7 @@ bool readMetadata(Reader& reader, PublicMatchMetadata& metadata) {
             [&](PublicPlayerSlot& player) {
                 return readId(reader, player.player) &&
                        readEnum(reader, player.slot,
-                           static_cast<std::uint8_t>(PlayerSlot::P2));
+                           static_cast<std::uint8_t>(PlayerSlot::P6));
             })) return false;
     if (metadata.players.empty())
         return reader.fail("Match metadata requires a player.");
@@ -784,6 +823,11 @@ bool readHeader(
         case WireMessageType::MatchmakingCancelled:
         case WireMessageType::CosmeticLoadoutUpdated:
         case WireMessageType::CosmeticLoadoutUpdateFailed:
+        case WireMessageType::SandboxLobbyUpdated:
+        case WireMessageType::SandboxLobbyClosed:
+        case WireMessageType::ClashStarted:
+        case WireMessageType::ClashResolved:
+        case WireMessageType::SubmitClashResponse:
         case WireMessageType::SubmitAction:
         case WireMessageType::LockAction:
         case WireMessageType::WatchRemainingHunter:
@@ -798,6 +842,11 @@ bool readHeader(
         case WireMessageType::CancelHostedLobby:
         case WireMessageType::FindMatch:
         case WireMessageType::CancelFindMatch:
+        case WireMessageType::HostSandboxLobby:
+        case WireMessageType::JoinSandboxLobby:
+        case WireMessageType::LeaveSandboxLobby:
+        case WireMessageType::SetSandboxReady:
+        case WireMessageType::StartSandboxMatch:
         case WireMessageType::UpdateCosmeticLoadout:
             break;
         default:
@@ -828,6 +877,8 @@ WireMessageType commandType(const ClientCommandPayload& payload) {
             return WireMessageType::WatchRemainingHunter;
         if constexpr (std::is_same_v<T, QuitCommand>)
             return WireMessageType::Quit;
+        if constexpr (std::is_same_v<T, SubmitClashResponse>)
+            return WireMessageType::SubmitClashResponse;
         return WireMessageType::LeaderboardPageRequest;
     }, payload);
 }
@@ -864,8 +915,13 @@ bool inspectWireMessageType(
         case WireMessageType::LobbyFailure:
         case WireMessageType::MatchmakingQueued:
         case WireMessageType::MatchmakingCancelled:
+        case WireMessageType::SandboxLobbyUpdated:
+        case WireMessageType::SandboxLobbyClosed:
         case WireMessageType::CosmeticLoadoutUpdated:
         case WireMessageType::CosmeticLoadoutUpdateFailed:
+        case WireMessageType::ClashStarted:
+        case WireMessageType::ClashResolved:
+        case WireMessageType::SubmitClashResponse:
         case WireMessageType::SubmitAction:
         case WireMessageType::LockAction:
         case WireMessageType::WatchRemainingHunter:
@@ -880,6 +936,11 @@ bool inspectWireMessageType(
         case WireMessageType::CancelHostedLobby:
         case WireMessageType::FindMatch:
         case WireMessageType::CancelFindMatch:
+        case WireMessageType::HostSandboxLobby:
+        case WireMessageType::JoinSandboxLobby:
+        case WireMessageType::LeaveSandboxLobby:
+        case WireMessageType::SetSandboxReady:
+        case WireMessageType::StartSandboxMatch:
         case WireMessageType::UpdateCosmeticLoadout:
             type = candidate;
             return true;
@@ -897,6 +958,7 @@ bool encodeWire(
     if (message.protocolVersion != kProtocolVersion)
         return writer.fail("Unsupported Basilisk network protocol version.");
     writeHeader(writer, WireMessageType::ServerBootstrap, message.protocolVersion);
+    writer.u8(static_cast<std::uint8_t>(message.matchMode));
     if (!writeMetadata(writer, message.matchMetadata) ||
         !writeVector(writer, message.profiles,
             [&](const client::PublicPlayerProfile& profile) {
@@ -909,6 +971,30 @@ bool encodeWire(
     if (!writer.finish()) return false;
     ServerBootstrap validated;
     return decodeServerBootstrap(bytes, validated, error);
+}
+
+bool encodeWire(const ClashStarted& message, WireBytes& bytes, std::string& error) {
+    Writer writer(bytes, error);
+    if (message.protocolVersion != kProtocolVersion) return writer.fail("Unsupported Basilisk network protocol version.");
+    if (message.participants.size() < 2 || message.challengeWord.empty() || message.remainingMs == 0)
+        return writer.fail("Invalid clash challenge.");
+    writeHeader(writer, WireMessageType::ClashStarted, message.protocolVersion);
+    writer.u64(message.clash);
+    if (!writer.count(message.participants.size())) return false;
+    for (PlayerId player : message.participants) writer.u32(player);
+    if (!writer.string(message.challengeWord)) return false;
+    writer.u64(message.remainingMs);
+    return writer.finish();
+}
+
+bool encodeWire(const ClashResolved& message, WireBytes& bytes, std::string& error) {
+    Writer writer(bytes, error);
+    if (message.protocolVersion != kProtocolVersion) return writer.fail("Unsupported Basilisk network protocol version.");
+    writeHeader(writer, WireMessageType::ClashResolved, message.protocolVersion);
+    writer.u64(message.clash); writer.u32(message.winner);
+    if (!writer.count(message.losers.size())) return false;
+    for (PlayerId player : message.losers) writer.u32(player);
+    return writer.finish();
 }
 
 bool encodeWire(
@@ -944,8 +1030,10 @@ bool encodeWire(
     const bool written = std::visit([&](const auto& command) {
         using T = std::decay_t<decltype(command)>;
         if constexpr (std::is_same_v<T, SubmitActionCommand>) {
+            writer.u32(command.round);
             return writePlayerAction(writer, command.action);
         } else if constexpr (std::is_same_v<T, LockActionCommand>) {
+            writer.u32(command.round);
             writeId(writer, command.player);
             return true;
         } else if constexpr (std::is_same_v<T, WatchRemainingHunterCommand>) {
@@ -955,6 +1043,9 @@ bool encodeWire(
         } else if constexpr (std::is_same_v<T, QuitCommand>) {
             writeId(writer, command.player);
             return true;
+        } else if constexpr (std::is_same_v<T, SubmitClashResponse>) {
+            writer.u64(command.clash);
+            return writer.string(command.response);
         } else {
             if (command.limit == 0 ||
                 command.limit > kMaximumLeaderboardPageSize)
@@ -1120,6 +1211,16 @@ bool encodeWire(const LobbyRequest& message, WireBytes& bytes, std::string& erro
             return WireMessageType::CancelHostedLobby;
         if constexpr (std::is_same_v<T, FindMatchRequest>)
             return WireMessageType::FindMatch;
+        if constexpr (std::is_same_v<T, HostSandboxLobbyRequest>)
+            return WireMessageType::HostSandboxLobby;
+        if constexpr (std::is_same_v<T, JoinSandboxLobbyRequest>)
+            return WireMessageType::JoinSandboxLobby;
+        if constexpr (std::is_same_v<T, LeaveSandboxLobbyRequest>)
+            return WireMessageType::LeaveSandboxLobby;
+        if constexpr (std::is_same_v<T, SetSandboxReadyRequest>)
+            return WireMessageType::SetSandboxReady;
+        if constexpr (std::is_same_v<T, StartSandboxMatchRequest>)
+            return WireMessageType::StartSandboxMatch;
         return WireMessageType::CancelFindMatch;
     }, message.payload);
     writeHeader(writer, type, message.protocolVersion);
@@ -1128,7 +1229,15 @@ bool encodeWire(const LobbyRequest& message, WireBytes& bytes, std::string& erro
         if constexpr (std::is_same_v<T, HostLobbyRequest> ||
                       std::is_same_v<T, FindMatchRequest> ||
                       std::is_same_v<T, CancelFindMatchRequest>) return true;
-        else return !request.lobbyCode.empty() && writer.string(request.lobbyCode);
+        else if constexpr (std::is_same_v<T, HostSandboxLobbyRequest>)
+            return writeSandboxConfig(writer, request.config);
+        else {
+            if (request.lobbyCode.empty() || !writer.string(request.lobbyCode))
+                return false;
+            if constexpr (std::is_same_v<T, SetSandboxReadyRequest>)
+                writer.boolean(request.ready);
+            return true;
+        }
     }, message.payload);
     if (!written || !writer.finish()) return false;
     LobbyRequest validated;
@@ -1146,6 +1255,8 @@ bool encodeWire(const LobbyResponse& message, WireBytes& bytes, std::string& err
         if constexpr (std::is_same_v<T, LobbyCancelled>) return WireMessageType::LobbyCancelled;
         if constexpr (std::is_same_v<T, MatchmakingQueued>) return WireMessageType::MatchmakingQueued;
         if constexpr (std::is_same_v<T, MatchmakingCancelled>) return WireMessageType::MatchmakingCancelled;
+        if constexpr (std::is_same_v<T, SandboxLobbyUpdated>) return WireMessageType::SandboxLobbyUpdated;
+        if constexpr (std::is_same_v<T, SandboxLobbyClosed>) return WireMessageType::SandboxLobbyClosed;
         return WireMessageType::LobbyFailure;
     }, message.payload);
     writeHeader(writer, type, message.protocolVersion);
@@ -1159,8 +1270,23 @@ bool encodeWire(const LobbyResponse& message, WireBytes& bytes, std::string& err
         } else if constexpr (std::is_same_v<T, LobbyFailure>) {
             return !response.message.empty() && writer.string(response.message);
         } else if constexpr (std::is_same_v<T, LobbyHosted> ||
-                             std::is_same_v<T, LobbyCancelled>) {
+                             std::is_same_v<T, LobbyCancelled> ||
+                             std::is_same_v<T, SandboxLobbyClosed>) {
             return !response.lobbyCode.empty() && writer.string(response.lobbyCode);
+        } else if constexpr (std::is_same_v<T, SandboxLobbyUpdated>) {
+            if (response.lobbyCode.empty() || !writer.string(response.lobbyCode) ||
+                !writeSandboxConfig(writer, response.config) ||
+                !writer.count(response.slots.size())) return false;
+            for (const auto& slot : response.slots) {
+                writer.u8(slot.slot);
+                writer.u32(slot.player);
+                writer.u8(static_cast<std::uint8_t>(slot.kind));
+                writer.boolean(slot.occupied);
+                writer.boolean(slot.ready);
+                if (!writer.string(slot.publicName)) return false;
+            }
+            writer.u32(response.localPlayer);
+            return true;
         } else {
             return true;
         }
@@ -1177,9 +1303,15 @@ bool decodeServerBootstrap(
 
     Reader reader(bytes, error);
     ServerBootstrap decoded;
+    std::uint8_t encodedMatchMode{};
     if (!readHeader(reader, WireMessageType::ServerBootstrap,
             decoded.protocolVersion) ||
-        !readMetadata(reader, decoded.matchMetadata) ||
+        !reader.u8(encodedMatchMode))
+        return false;
+    if (encodedMatchMode > static_cast<std::uint8_t>(client::MatchMode::Sandbox))
+        return reader.fail("Invalid match mode.");
+    decoded.matchMode = static_cast<client::MatchMode>(encodedMatchMode);
+    if (!readMetadata(reader, decoded.matchMetadata) ||
         !readVector(reader, decoded.profiles,
             [&](client::PublicPlayerProfile& profile) {
                 return readProfile(reader, profile);
@@ -1238,6 +1370,27 @@ bool decodeServerUpdate(
     return true;
 }
 
+bool decodeClashStarted(std::span<const std::uint8_t> bytes, ClashStarted& message, std::string& error) {
+    Reader reader(bytes, error); ClashStarted decoded; std::uint32_t count{};
+    if (!readHeader(reader, WireMessageType::ClashStarted, decoded.protocolVersion) ||
+        !reader.u64(decoded.clash) || !reader.count(count) || count < 2) return false;
+    decoded.participants.resize(count);
+    for (auto& player : decoded.participants) if (!reader.u32(player)) return false;
+    if (!reader.string(decoded.challengeWord) || decoded.challengeWord.empty() ||
+        !reader.u64(decoded.remainingMs) || decoded.remainingMs == 0 || !finishRead(reader)) return false;
+    message = std::move(decoded); return true;
+}
+
+bool decodeClashResolved(std::span<const std::uint8_t> bytes, ClashResolved& message, std::string& error) {
+    Reader reader(bytes, error); ClashResolved decoded; std::uint32_t count{};
+    if (!readHeader(reader, WireMessageType::ClashResolved, decoded.protocolVersion) ||
+        !reader.u64(decoded.clash) || !reader.u32(decoded.winner) || !reader.count(count)) return false;
+    decoded.losers.resize(count);
+    for (auto& player : decoded.losers) if (!reader.u32(player)) return false;
+    if (!finishRead(reader)) return false;
+    message = std::move(decoded); return true;
+}
+
 bool decodeClientCommand(
     std::span<const std::uint8_t> bytes,
     ClientCommand& message,
@@ -1252,6 +1405,7 @@ bool decodeClientCommand(
         type != WireMessageType::LockAction &&
         type != WireMessageType::WatchRemainingHunter &&
         type != WireMessageType::Quit &&
+        type != WireMessageType::SubmitClashResponse &&
         type != WireMessageType::LeaderboardPageRequest) {
         error = (type == WireMessageType::ServerBootstrap ||
                  type == WireMessageType::ServerUpdate ||
@@ -1267,13 +1421,15 @@ bool decodeClientCommand(
     switch (type) {
         case WireMessageType::SubmitAction: {
             SubmitActionCommand command;
-            if (!readPlayerAction(reader, command.action)) return false;
+            if (!reader.u32(command.round) ||
+                !readPlayerAction(reader, command.action)) return false;
             decoded.payload = std::move(command);
             break;
         }
         case WireMessageType::LockAction: {
             LockActionCommand command;
-            if (!readId(reader, command.player)) return false;
+            if (!reader.u32(command.round) ||
+                !readId(reader, command.player)) return false;
             decoded.payload = command;
             break;
         }
@@ -1288,6 +1444,13 @@ bool decodeClientCommand(
             QuitCommand command;
             if (!readId(reader, command.player)) return false;
             decoded.payload = command;
+            break;
+        }
+        case WireMessageType::SubmitClashResponse: {
+            SubmitClashResponse command;
+            if (!reader.u64(command.clash) || !reader.string(command.response) || command.response.empty())
+                return false;
+            decoded.payload = std::move(command);
             break;
         }
         case WireMessageType::LeaderboardPageRequest: {
@@ -1479,7 +1642,12 @@ bool decodeLobbyRequest(std::span<const std::uint8_t> bytes,
     if (type != WireMessageType::HostLobby && type != WireMessageType::JoinLobby &&
         type != WireMessageType::CancelHostedLobby &&
         type != WireMessageType::FindMatch &&
-        type != WireMessageType::CancelFindMatch)
+        type != WireMessageType::CancelFindMatch &&
+        type != WireMessageType::HostSandboxLobby &&
+        type != WireMessageType::JoinSandboxLobby &&
+        type != WireMessageType::LeaveSandboxLobby &&
+        type != WireMessageType::SetSandboxReady &&
+        type != WireMessageType::StartSandboxMatch)
         return (error = "Unexpected wire message type."), false;
     Reader reader(bytes, error);
     LobbyRequest decoded;
@@ -1488,13 +1656,30 @@ bool decodeLobbyRequest(std::span<const std::uint8_t> bytes,
     else if (type == WireMessageType::FindMatch) decoded.payload = FindMatchRequest{};
     else if (type == WireMessageType::CancelFindMatch)
         decoded.payload = CancelFindMatchRequest{};
+    else if (type == WireMessageType::HostSandboxLobby) {
+        HostSandboxLobbyRequest request;
+        if (!readSandboxConfig(reader, request.config)) return false;
+        decoded.payload = std::move(request);
+    }
     else {
         std::string code;
         if (!reader.string(code) || code.empty())
             return reader.fail("Invalid lobby code.");
         if (type == WireMessageType::JoinLobby)
             decoded.payload = JoinLobbyRequest{std::move(code)};
-        else decoded.payload = CancelHostedLobbyRequest{std::move(code)};
+        else if (type == WireMessageType::CancelHostedLobby)
+            decoded.payload = CancelHostedLobbyRequest{std::move(code)};
+        else if (type == WireMessageType::JoinSandboxLobby)
+            decoded.payload = JoinSandboxLobbyRequest{std::move(code)};
+        else if (type == WireMessageType::LeaveSandboxLobby)
+            decoded.payload = LeaveSandboxLobbyRequest{std::move(code)};
+        else if (type == WireMessageType::StartSandboxMatch)
+            decoded.payload = StartSandboxMatchRequest{std::move(code)};
+        else {
+            bool ready{};
+            if (!reader.boolean(ready)) return false;
+            decoded.payload = SetSandboxReadyRequest{std::move(code), ready};
+        }
     }
     if (!finishRead(reader)) return false;
     message = std::move(decoded);
@@ -1510,7 +1695,9 @@ bool decodeLobbyResponse(std::span<const std::uint8_t> bytes,
         type != WireMessageType::LobbyCancelled &&
         type != WireMessageType::LobbyFailure &&
         type != WireMessageType::MatchmakingQueued &&
-        type != WireMessageType::MatchmakingCancelled)
+        type != WireMessageType::MatchmakingCancelled &&
+        type != WireMessageType::SandboxLobbyUpdated &&
+        type != WireMessageType::SandboxLobbyClosed)
         return (error = "Unexpected wire message type."), false;
     Reader reader(bytes, error);
     LobbyResponse decoded;
@@ -1524,9 +1711,46 @@ bool decodeLobbyResponse(std::span<const std::uint8_t> bytes,
         message = std::move(decoded);
         return true;
     }
+    if (type == WireMessageType::SandboxLobbyUpdated) {
+        SandboxLobbyUpdated response;
+        if (!reader.string(response.lobbyCode) || response.lobbyCode.empty() ||
+            !readSandboxConfig(reader, response.config)) return false;
+        std::uint32_t count{};
+        if (!reader.count(count) || count != response.config.hunterCount)
+            return reader.fail("Invalid Sandbox lobby roster.");
+        response.slots.reserve(count);
+        for (std::uint32_t index = 0; index < count; ++index) {
+            SandboxLobbySlotView slot;
+            std::uint32_t player{};
+            std::uint8_t kind{};
+            if (!reader.u8(slot.slot) || !reader.u32(player) ||
+                !reader.u8(kind) || !reader.boolean(slot.occupied) ||
+                !reader.boolean(slot.ready) || !reader.string(slot.publicName) ||
+                slot.slot != index + 1 || player != slot.slot || kind > 2)
+                return reader.fail("Invalid Sandbox lobby slot.");
+            slot.player = player;
+            slot.kind = static_cast<client::SandboxLobbySlotKind>(kind);
+            const bool human = slot.kind != client::SandboxLobbySlotKind::Ai;
+            if ((human && slot.occupied) != !slot.publicName.empty() ||
+                (!human && !slot.publicName.empty()))
+                return reader.fail("Invalid Sandbox lobby public name.");
+            response.slots.push_back(slot);
+        }
+        std::uint32_t localPlayer{};
+        if (!reader.u32(localPlayer) || localPlayer == 0 ||
+            localPlayer > response.config.humanPlayerCount)
+            return reader.fail("Invalid local Sandbox lobby slot.");
+        response.localPlayer = localPlayer;
+        decoded.payload = std::move(response);
+        if (!finishRead(reader)) return false;
+        message = std::move(decoded);
+        return true;
+    }
     std::string value;
     if (!reader.string(value) || value.empty()) return reader.fail("Invalid lobby response.");
     if (type == WireMessageType::LobbyHosted) decoded.payload = LobbyHosted{std::move(value)};
+    else if (type == WireMessageType::SandboxLobbyClosed)
+        decoded.payload = SandboxLobbyClosed{std::move(value)};
     else if (type == WireMessageType::LobbyCancelled)
         decoded.payload = LobbyCancelled{std::move(value)};
     else if (type == WireMessageType::LobbyFailure)

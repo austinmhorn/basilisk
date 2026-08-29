@@ -22,6 +22,8 @@ struct Rules {
 
     std::uint64_t multiplayerReserveMs{300000};
     std::uint64_t disconnectGraceMs{30000};
+    int clashDamage{20};
+    std::uint64_t clashTimeoutMs{8000};
 
     std::uint32_t looseArrowSpawnIntervalRounds{5};
     std::size_t maxLooseArrows{8};
@@ -34,6 +36,8 @@ struct Rules {
     int oldMinersMapRevealRounds{3};
     int jackalRepellentRounds{3};
     int bloodBaitRounds{5};
+    int surveyFragmentRevealMin{3};
+    int surveyFragmentRevealMax{5};
     std::uint32_t bloodBaitAttractionNumerator{1};
     std::uint32_t bloodBaitAttractionDenominator{2};
 

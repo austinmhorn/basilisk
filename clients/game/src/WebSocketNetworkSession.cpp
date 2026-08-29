@@ -268,7 +268,9 @@ public:
                  preMatchType == network::WireMessageType::LobbyCancelled ||
                  preMatchType == network::WireMessageType::LobbyFailure ||
                  preMatchType == network::WireMessageType::MatchmakingQueued ||
-                 preMatchType == network::WireMessageType::MatchmakingCancelled)) {
+                 preMatchType == network::WireMessageType::MatchmakingCancelled ||
+                 preMatchType == network::WireMessageType::SandboxLobbyUpdated ||
+                 preMatchType == network::WireMessageType::SandboxLobbyClosed)) {
                 network::LobbyResponse response;
                 if (!network::decodeLobbyResponse(frame, response, decodeError)) {
                     fail("Invalid lobby response: " + decodeError);
@@ -349,6 +351,20 @@ public:
                         else ingested = adapter_->ingest(
                             std::move(response), decodeError);
                     }
+                } else if (type == network::WireMessageType::ClashStarted) {
+                    network::ClashStarted clash;
+                    if (network::decodeClashStarted(frame, clash, decodeError)) {
+                        std::lock_guard lock(socketState_->mutex);
+                        if (socketState_->closed) shutdownRequested = true;
+                        else ingested = adapter_->ingest(std::move(clash), decodeError);
+                    }
+                } else if (type == network::WireMessageType::ClashResolved) {
+                    network::ClashResolved clash;
+                    if (network::decodeClashResolved(frame, clash, decodeError)) {
+                        std::lock_guard lock(socketState_->mutex);
+                        if (socketState_->closed) shutdownRequested = true;
+                        else ingested = adapter_->ingest(std::move(clash), decodeError);
+                    }
                 } else {
                     network::ServerUpdate update;
                     if (type == network::WireMessageType::ServerUpdate &&
@@ -393,6 +409,13 @@ public:
 
     ClientSessionController* controller() noexcept {
         return adapter_ == nullptr ? nullptr : &adapter_->controller();
+    }
+    const std::optional<network::ClashStarted>& activeClash() const noexcept {
+        static const std::optional<network::ClashStarted> none;
+        return adapter_ ? adapter_->activeClash() : none;
+    }
+    bool submitClashResponse(std::string response) {
+        return adapter_ && adapter_->submitClashResponse(std::move(response));
     }
 
     bool requestLeaderboard(std::uint32_t offset, std::uint32_t limit) {
@@ -678,6 +701,12 @@ ClientSessionController* WebSocketNetworkSession::controller() noexcept {
 }
 const ClientSessionController* WebSocketNetworkSession::controller() const noexcept {
     return impl_->controller();
+}
+const std::optional<network::ClashStarted>& WebSocketNetworkSession::activeClash() const noexcept {
+    return impl_->activeClash();
+}
+bool WebSocketNetworkSession::submitClashResponse(std::string response) {
+    return impl_->submitClashResponse(std::move(response));
 }
 bool WebSocketNetworkSession::requestLeaderboard(
     std::uint32_t offset,

@@ -403,14 +403,35 @@ private:
              type == network::WireMessageType::JoinLobby ||
              type == network::WireMessageType::CancelHostedLobby ||
              type == network::WireMessageType::FindMatch ||
-             type == network::WireMessageType::CancelFindMatch)) {
+             type == network::WireMessageType::CancelFindMatch ||
+             type == network::WireMessageType::HostSandboxLobby ||
+             type == network::WireMessageType::JoinSandboxLobby ||
+             type == network::WireMessageType::LeaveSandboxLobby ||
+            type == network::WireMessageType::SetSandboxReady ||
+             type == network::WireMessageType::StartSandboxMatch)) {
+            std::string publicName;
+            if (type == network::WireMessageType::HostSandboxLobby ||
+                type == network::WireMessageType::JoinSandboxLobby) {
+                PublicAccountProfile profile;
+                if (!authentication_->publicProfile(
+                        *found->second.account, profile, error)) {
+                    reject(socket, found->second, 1008, error);
+                    return;
+                }
+                publicName = profile.username.value;
+            }
             std::vector<LobbyProtocolDelivery> deliveries;
             if (!lobbyProtocol_.process(
-                    *found->second.account, bytes, deliveries, error)) {
+                    *found->second.account, publicName,
+                    bytes, deliveries, error)) {
                 reject(socket, found->second, 1008, error);
                 return;
             }
             handleLobbyDeliveries(deliveries);
+            if (auto launch = lobbyProtocol_.takeSandboxLaunch()) {
+                if (!launchSandboxMatch(*launch, error))
+                    reject(socket, found->second, 1008, error);
+            }
             return;
         }
         const bool explicitQuit =
@@ -521,16 +542,28 @@ private:
             type != network::WireMessageType::JoinLobby &&
             type != network::WireMessageType::CancelHostedLobby &&
             type != network::WireMessageType::FindMatch &&
-            type != network::WireMessageType::CancelFindMatch) {
+            type != network::WireMessageType::CancelFindMatch &&
+            type != network::WireMessageType::HostSandboxLobby &&
+            type != network::WireMessageType::JoinSandboxLobby &&
+            type != network::WireMessageType::LeaveSandboxLobby &&
+            type != network::WireMessageType::SetSandboxReady &&
+            type != network::WireMessageType::StartSandboxMatch) {
             socket.close(1008, "Unexpected pre-match message type");
             return;
         }
         std::vector<LobbyProtocolDelivery> deliveries;
-        if (!lobbyProtocol_.process(account, bytes, deliveries, error)) {
+        const auto authenticated = authenticatedPreMatch_.find(&socket);
+        const std::string_view publicName = authenticated == authenticatedPreMatch_.end()
+            ? std::string_view{} : authenticated->second.profile.username.value;
+        if (!lobbyProtocol_.process(
+                account, publicName, bytes, deliveries, error)) {
             socket.close(1008, error);
             return;
         }
         handleLobbyDeliveries(deliveries);
+        if (auto launch = lobbyProtocol_.takeSandboxLaunch()) {
+            if (!launchSandboxMatch(*launch, error)) socket.close(1008, error);
+        }
     }
 
     void handleLobbyDeliveries(
@@ -636,6 +669,77 @@ private:
                     {*guest, {PlayerId{2}, graceMs, true}},
                 },
                 false});
+        drainAll();
+        return true;
+    }
+
+    bool launchSandboxMatch(
+        SandboxMatchAssignment assignment, std::string& error) {
+        std::map<PlayerId, decltype(authenticatedPreMatch_)::iterator> connections;
+        for (const auto& [player, account] : assignment.humans) {
+            auto connection = std::find_if(authenticatedPreMatch_.begin(),
+                authenticatedPreMatch_.end(), [&](const auto& entry) {
+                    return entry.second.account == account;
+                });
+            if (connection == authenticatedPreMatch_.end()) {
+                error = "A Sandbox lobby member disconnected before launch.";
+                return false;
+            }
+            connections.emplace(player, connection);
+        }
+        std::vector<client::PublicPlayerProfile> profiles;
+        profiles.reserve(assignment.config.hunterCount);
+        for (std::size_t slot = 1; slot <= assignment.config.hunterCount; ++slot) {
+            const PlayerId player = static_cast<PlayerId>(slot);
+            const auto human = connections.find(player);
+            if (human != connections.end()) {
+                profiles.push_back({player, human->second->second.profile.username.value,
+                    human->second->second.cosmeticLoadout.callingCardId,
+                    human->second->second.cosmeticLoadout.emblemId});
+            } else {
+                profiles.push_back({player, "BASILISK AI " + std::to_string(slot),
+                    {"arrow-right-black"}, {"circle-black"}});
+            }
+        }
+        assignment.config.mapSeed = MapSeed{random_()};
+        assignment.config.matchSeed = MatchSeed{random_()};
+        assignment.config.aiSeed = client::ai::AiSeed{random_()};
+        std::vector<client::ai::AiConfig> aiConfigs;
+        for (const PlayerId player : assignment.aiPlayers) {
+            const client::ai::AiSeed seed{
+                assignment.config.aiSeed ^ static_cast<std::uint64_t>(player)};
+            aiConfigs.push_back({assignment.config.aiDifficulty,
+                client::ai::resolveBehavior(assignment.config.aiBehavior, seed),
+                player, seed});
+        }
+        auto match = AuthoritativeInMemoryMatch::createSandbox(
+            assignment.config, std::move(profiles), std::move(aiConfigs), error);
+        if (match == nullptr) return false;
+        const std::string matchId = "sandbox-" +
+            std::to_string(++nextMatchId_) + "-" + std::to_string(random_());
+        std::map<AccountIdentity, AssignedMatch::Participant> participants;
+        struct ConnectedHuman {
+            ix::WebSocket* socket;
+            AccountIdentity account;
+            PlayerId player;
+            std::shared_ptr<InMemoryMatchEndpoint> endpoint;
+        };
+        std::vector<ConnectedHuman> connected;
+        for (const auto& [player, account] : assignment.humans) {
+            auto endpoint = match->connect(player, error);
+            if (endpoint == nullptr) return false;
+            auto connection = connections.at(player);
+            connected.push_back({connection->first, account, player, endpoint});
+            participants.emplace(account, AssignedMatch::Participant{
+                player, match->disconnectGraceMs(), true});
+        }
+        for (const auto& human : connected)
+            authenticatedPreMatch_.erase(human.socket);
+        for (auto& human : connected)
+            clients_.emplace(human.socket, Client{human.player,
+                std::move(human.endpoint), human.account, matchId, true, true});
+        assignedMatches_.emplace(matchId, AssignedMatch{
+            std::move(match), std::move(participants), false});
         drainAll();
         return true;
     }
@@ -749,10 +853,16 @@ private:
                 pendingAuthentication_.erase(&socket);
                 return;
             }
+            if (!sendResponse(response)) {
+                endpoint->disconnect();
+                participant->second.connected = false;
+                participant->second.graceRemainingMs =
+                    assigned.match->disconnectGraceMs();
+                return;
+            }
             participant->second.connected = true;
             participant->second.graceRemainingMs =
                 assigned.match->disconnectGraceMs();
-            if (!sendResponse(response)) return;
             pendingAuthentication_.erase(&socket);
             clients_.emplace(&socket, Client{
                 participant->second.player,
@@ -806,6 +916,9 @@ private:
         pendingAuthentication_.erase(&socket);
         const auto preMatch = authenticatedPreMatch_.find(&socket);
         if (preMatch != authenticatedPreMatch_.end()) {
+            std::vector<LobbyProtocolDelivery> sandboxDeliveries;
+            lobbyProtocol_.disconnect(preMatch->second.account, sandboxDeliveries);
+            handleLobbyDeliveries(sandboxDeliveries);
             lobbies_.cancelHostedBy(preMatch->second.account);
             std::string ignored;
             (void)lobbies_.cancelFindMatch(preMatch->second.account, ignored);
@@ -816,6 +929,9 @@ private:
         if (found->second.account.has_value())
             lobbies_.cancelHostedBy(*found->second.account);
         if (found->second.account.has_value()) {
+            std::vector<LobbyProtocolDelivery> sandboxDeliveries;
+            lobbyProtocol_.disconnect(*found->second.account, sandboxDeliveries);
+            handleLobbyDeliveries(sandboxDeliveries);
             std::string ignored;
             (void)lobbies_.cancelFindMatch(*found->second.account, ignored);
         }

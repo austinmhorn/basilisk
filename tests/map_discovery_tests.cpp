@@ -245,6 +245,29 @@ void discoveriesRemainPlayerSpecific() {
     assert(!MapDiscoverySystem::knowsConnection(state.players[1], 1, 2));
 }
 
+void enteringSurveyedCaveMarksItExplored() {
+    auto state = makeFogWorld();
+    auto& player = state.players[0];
+    MapDiscoverySystem::initializePlayer(state, player);
+    player.discovery.knownCaves.insert(CaveId{2});
+    player.discovery.surveyedCaves.insert(CaveId{2});
+
+    const auto surveyedView = MapDiscoverySystem::buildView(state, player);
+    assert(caveView(surveyedView, CaveId{2}).surveyed);
+
+    PlayerAction move;
+    move.player = PlayerId{1};
+    move.type = ActionType::Move;
+    move.targetCave = CaveId{2};
+    RoundController controller;
+    static_cast<void>(controller.resolve(state, {move}));
+
+    assert(player.cave == CaveId{2});
+    assert(!player.discovery.surveyedCaves.contains(CaveId{2}));
+    const auto exploredView = MapDiscoverySystem::buildView(state, player);
+    assert(!caveView(exploredView, CaveId{2}).surveyed);
+}
+
 void deathDoesNotRevealCurrentCaveUnknownExits() {
     auto state = makeFogWorld();
     auto& player = state.players[0];
@@ -278,6 +301,7 @@ void fullMapModeRevealsCompleteTopology() {
 
     assert(view.caves.size() == state.world.size());
     for (const auto& cave : view.caves) {
+        assert(!cave.surveyed);
         for (const auto& exit : cave.exits) {
             assert(exit.destination.has_value());
         }
@@ -294,6 +318,7 @@ int main() {
     historicalUnknownExitReconcilesWithoutRevisit();
     shootingUnknownTunnelDoesNotRevealDestination();
     discoveriesRemainPlayerSpecific();
+    enteringSurveyedCaveMarksItExplored();
     deathDoesNotRevealCurrentCaveUnknownExits();
     fullMapModeRevealsCompleteTopology();
 

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
+#include <span>
 
 #include "basilisk/MatchState.hpp"
 
@@ -22,6 +24,7 @@ struct ProceduralMapConfig {
     int maxDiameter{20};
 
     std::size_t pitCount{1};
+    std::optional<std::size_t> jackalCount;
 
     // Competitive spawn fairness.
     int minHunterSeparation{6};
@@ -61,6 +64,13 @@ public:
     [[nodiscard]] static MatchState generate(
         MapSeed mapSeed,
         MatchSeed matchSeed,
+        const Rules& rules = {},
+        const ProceduralMapConfig& config = {});
+
+    [[nodiscard]] static MatchState generate(
+        MapSeed mapSeed,
+        MatchSeed matchSeed,
+        std::span<const PlayerId> roster,
         const Rules& rules = {},
         const ProceduralMapConfig& config = {});
 

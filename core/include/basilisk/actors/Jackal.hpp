@@ -12,6 +12,9 @@ struct JackalState {
     CaveId cave{};
     std::optional<CaveId> lastCave;
     std::vector<StatusEffect> statuses;
+    std::optional<CaveId> fleeOrigin;
+    std::optional<PlayerId> protectedHunter;
+    int fleeRoundsRemaining{0};
 };
 
 } // namespace basilisk

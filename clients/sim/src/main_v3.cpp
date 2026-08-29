@@ -260,7 +260,8 @@ const AvailableAction* useItem(const PlayerRoundSnapshot& s, ItemType item) {
 
 const AvailableAction* firstSurveyAction(const PlayerRoundSnapshot& s) {
     for (const auto& a : s.availableActions)
-        if (a.type == ActionType::UseItem && a.targetItem == ItemType::SurveyFragment && a.targetTunnel.has_value())
+        if (a.type == ActionType::UseItem &&
+            a.targetItem == ItemType::SurveyFragment)
             return &a;
     return nullptr;
 }

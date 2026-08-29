@@ -36,6 +36,10 @@ namespace basilisk::game::debug {
     const MapPresentationGeometry& geometry,
     bool mapRevealed,
     bool truthRevealed,
+    bool inventoryMenuOpen,
+    bool killMenuOpen,
+    bool killAvailable,
+    const DebugGameplayTruth& gameplayTruth,
     BasiliskBehavior behavior,
     std::string& error);
 
