@@ -145,6 +145,28 @@ int main() {
             assert(local.session->snapshotFor(slot.player)->round == before.round + 1);
     }
 
+    // This six-hunter seed rejects its first procedural candidate before
+    // succeeding on a later bounded attempt. That retry must not depend on
+    // C++ exception catching, which is disabled in the shipping WASM build.
+    auto sixHunterRetry = LocalSandboxSessionAdapter::create(configFor(
+        6, MapSeed{1}, MatchSeed{1 ^ 0x53414e44424f58ULL},
+        client::ai::AiDifficulty::Hard, client::ai::AiBehavior::Balanced,
+        client::ai::AiSeed{77}));
+    assert(sixHunterRetry.session != nullptr && sixHunterRetry.driver != nullptr);
+    assert(sixHunterRetry.session->matchMetadata().players.size() == 6);
+    std::set<PlayerId> retryPlayers;
+    for (const PublicPlayerSlot& slot :
+         sixHunterRetry.session->matchMetadata().players) {
+        assert(retryPlayers.insert(slot.player).second);
+        assert(sixHunterRetry.session->snapshotFor(slot.player) != nullptr);
+    }
+    const PlayerId retryHuman =
+        sixHunterRetry.session->viewContext().localPlayer;
+    const PlayerRoundSnapshot retryBefore =
+        *sixHunterRetry.session->snapshotFor(retryHuman);
+    assert(sixHunterRetry.session->submitAndLock(searchAction(retryBefore)));
+    advanceUntilNextRound(sixHunterRetry, retryHuman);
+
     auto first = LocalSandboxSessionAdapter::create(configFor(4, MapSeed{9004},
         MatchSeed{42000}, client::ai::AiDifficulty::Medium,
         client::ai::AiBehavior::Random, client::ai::AiSeed{8181}));
