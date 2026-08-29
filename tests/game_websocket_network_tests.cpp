@@ -1394,6 +1394,7 @@ void dynamicAssignedMatchesUsePersistentTrophyStore() {
         return host->state() == NetworkConnectionState::Connected &&
             guest->state() == NetworkConnectionState::Connected;
     }));
+    assert(!host->requestLeaderboard(0, 10));
     assert(host->authenticate({network::kProtocolVersion,
         network::AuthenticateSessionRequest{hostToken.value}}));
     assert(guest->authenticate({network::kProtocolVersion,
@@ -1404,6 +1405,20 @@ void dynamicAssignedMatchesUsePersistentTrophyStore() {
         return host->authenticationResponse().has_value() &&
             guest->authenticationResponse().has_value();
     }));
+    assert(host->controller() == nullptr);
+    assert(host->requestLeaderboard(0, 10));
+    assert(waitUntil([&] {
+        host->pump();
+        return host->leaderboardPage().has_value();
+    }));
+    assert(host->controller() == nullptr);
+    assert(host->leaderboardPage()->entries.size() == 2);
+    assert(host->leaderboardPage()->entries.front().username ==
+           hostProfile.username);
+    assert(host->leaderboardPage()->entries.front().trophyTotal == 2);
+    assert(!host->requestLeaderboard(0, 0));
+    assert(host->state() == NetworkConnectionState::Connected);
+
     assert(host->requestLobby({network::kProtocolVersion,
         network::HostLobbyRequest{}}));
     assert(waitUntil([&] {

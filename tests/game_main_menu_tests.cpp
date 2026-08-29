@@ -255,13 +255,25 @@ int main() {
            MainMenuResult::RequestLeaderboard);
     assert(menu.page() == MainMenuPage::Leaderboards);
     assert(menu.leaderboardOffset() == 0);
+    assert(menu.leaderboardLoadState() == LeaderboardLoadState::Loading);
+    assert(menu.activate(MainMenuAction::NextPage) == MainMenuResult::None);
+    menu.leaderboardLoaded(true);
+    assert(menu.leaderboardLoadState() == LeaderboardLoadState::Loaded);
+    assert(menu.leaderboardHasNextPage());
     assert(menu.activate(MainMenuAction::NextPage) ==
            MainMenuResult::RequestLeaderboard);
     assert(menu.leaderboardOffset() == MainMenuState::leaderboardPageSize);
+    assert(menu.leaderboardLoadState() == LeaderboardLoadState::Loading);
+    menu.leaderboardLoaded(false);
+    assert(!menu.leaderboardHasNextPage());
+    assert(menu.activate(MainMenuAction::NextPage) == MainMenuResult::None);
     assert(menu.activate(MainMenuAction::PreviousPage) ==
            MainMenuResult::RequestLeaderboard);
     assert(menu.leaderboardOffset() == 0);
     assert(menu.activate(MainMenuAction::PreviousPage) == MainMenuResult::None);
+    menu.leaderboardFailed("Leaderboard unavailable.");
+    assert(menu.leaderboardLoadState() == LeaderboardLoadState::Error);
+    assert(menu.leaderboardError() == "Leaderboard unavailable.");
 
     (void)menu.back();
     assert(menu.activate(MainMenuAction::Settings) == MainMenuResult::None);

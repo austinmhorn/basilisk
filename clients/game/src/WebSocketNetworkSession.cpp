@@ -281,6 +281,18 @@ public:
                 ++lobbyResponseRevision_;
                 continue;
             }
+            if (preMatchType ==
+                network::WireMessageType::LeaderboardPageResponse) {
+                network::LeaderboardPageResponse response;
+                if (!network::decodeLeaderboardPageResponse(
+                        frame, response, decodeError)) {
+                    fail("Invalid leaderboard response: " + decodeError);
+                    shutdownSocket();
+                    return;
+                }
+                leaderboardPage_ = std::move(response);
+                continue;
+            }
             decodeError.clear();
             if (adapter_ == nullptr) {
                 if (!network::inspectWireMessageType(
@@ -419,13 +431,17 @@ public:
     }
 
     bool requestLeaderboard(std::uint32_t offset, std::uint32_t limit) {
-        return adapter_ != nullptr && adapter_->requestLeaderboard(offset, limit);
+        if (!authenticated_ && adapter_ == nullptr) return false;
+        leaderboardPage_.reset();
+        return transport_->send(network::ClientCommand{
+            network::kProtocolVersion,
+            network::LeaderboardPageRequest{offset, limit},
+        });
     }
 
     const std::optional<network::LeaderboardPageResponse>&
     leaderboardPage() const noexcept {
-        static const std::optional<network::LeaderboardPageResponse> empty;
-        return adapter_ == nullptr ? empty : adapter_->leaderboardPage();
+        return leaderboardPage_;
     }
 
     bool authenticate(const network::AuthenticationRequest& request) {
@@ -625,6 +641,7 @@ private:
     std::size_t cosmeticLoadoutResponseRevision_{0};
     std::optional<network::LobbyResponse> lobbyResponse_;
     std::size_t lobbyResponseRevision_{0};
+    std::optional<network::LeaderboardPageResponse> leaderboardPage_;
     bool authenticationMode_{false};
     bool awaitingAuthentication_{false};
     bool authenticated_{false};

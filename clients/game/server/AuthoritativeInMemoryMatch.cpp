@@ -637,11 +637,9 @@ private:
     }
 
     void recordTrophyEvents(const std::vector<GameEvent>& events) {
-        if (!trophyScoring_.has_value()) return;
+        if (!trophyScoring_.has_value() || trophyScoringFinalized_) return;
         trophyEvents_.insert(trophyEvents_.end(), events.begin(), events.end());
-        if (match_.result.status != MatchStatus::Completed ||
-            trophyScoringAttempted_) return;
-        trophyScoringAttempted_ = true;
+        if (match_.result.status != MatchStatus::Completed) return;
         std::string error;
         const TrophyScoreResult result = trophyScoring_->ledger->scoreMatch(
             trophyScoring_->match,
@@ -649,6 +647,12 @@ private:
             match_.result,
             trophyEvents_,
             &error);
+        if (result == TrophyScoreResult::Scored ||
+            result == TrophyScoreResult::AlreadyScored) {
+            trophyScoringFinalized_ = true;
+            trophyScoringError_.reset();
+            trophyEvents_.clear();
+        }
         if (result == TrophyScoreResult::PersistenceError) {
             trophyScoringError_ = error.empty()
                 ? "Unable to persist trophy awards."
@@ -726,7 +730,7 @@ private:
     std::optional<TrophyScoringContext> trophyScoring_;
     std::shared_ptr<PublicTrophyReadModel> leaderboard_;
     std::vector<GameEvent> trophyEvents_;
-    bool trophyScoringAttempted_{false};
+    bool trophyScoringFinalized_{false};
     std::optional<std::string> trophyScoringError_;
     std::vector<NetworkAiAgent> aiAgents_;
     std::map<PlayerId, PlayerRoundSnapshot> aiSnapshots_;

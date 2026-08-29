@@ -98,6 +98,13 @@ enum class MainMenuResult {
     StartSandbox,
 };
 
+enum class LeaderboardLoadState {
+    Idle,
+    Loading,
+    Loaded,
+    Error,
+};
+
 class MainMenuState {
 public:
     static constexpr std::uint32_t leaderboardPageSize{10};
@@ -107,6 +114,9 @@ public:
     [[nodiscard]] std::size_t selectedIndex() const noexcept;
     [[nodiscard]] MainMenuAction selectedAction() const noexcept;
     [[nodiscard]] std::uint32_t leaderboardOffset() const noexcept;
+    [[nodiscard]] LeaderboardLoadState leaderboardLoadState() const noexcept;
+    [[nodiscard]] const std::string& leaderboardError() const noexcept;
+    [[nodiscard]] bool leaderboardHasNextPage() const noexcept;
     [[nodiscard]] const std::string& lobbyCode() const noexcept;
     [[nodiscard]] const std::string& lobbyError() const noexcept;
     [[nodiscard]] bool lobbyWaiting() const noexcept;
@@ -140,6 +150,8 @@ public:
     void lobbyCancelled();
     void lobbyFailed(std::string error);
     void connectionLost(std::string error);
+    void leaderboardLoaded(bool hasNextPage) noexcept;
+    void leaderboardFailed(std::string error);
     void matchmakingCancelled();
     void selectCallingCard(client::CallingCardId callingCard);
     void selectEmblem(client::EmblemId emblem);
@@ -156,6 +168,9 @@ private:
     MainMenuPage page_{MainMenuPage::Main};
     std::size_t selectedIndex_{0};
     std::uint32_t leaderboardOffset_{0};
+    LeaderboardLoadState leaderboardLoadState_{LeaderboardLoadState::Idle};
+    std::string leaderboardError_;
+    bool leaderboardHasNextPage_{false};
     std::string lobbyCode_;
     std::string lobbyError_;
     bool lobbyWaiting_{false};

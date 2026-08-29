@@ -518,6 +518,13 @@ function(basilisk_add_game_executable target)
 endfunction()
 
 basilisk_add_game_executable(BasiliskGame)
+if(NOT EMSCRIPTEN)
+    target_compile_definitions(
+        BasiliskGame
+        PRIVATE
+            $<$<CONFIG:Release>:BASILISK_NATIVE_PRODUCTION_ENDPOINT=1>
+    )
+endif()
 if(APPLE)
     set(_basilisk_macos_icon
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/macos/BasiliskGame.icns")

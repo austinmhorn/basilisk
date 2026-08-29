@@ -52,6 +52,23 @@ std::string resultText(
 
 } // namespace
 
+std::optional<TrophyAwardPresentation> terminalTrophyAward(
+    client::MatchMode mode,
+    MatchStatus status,
+    std::optional<std::int64_t> startingTotal,
+    std::int64_t currentTotal,
+    bool alreadyPresented) noexcept {
+
+    if (!client::trophyEligible(mode) || status != MatchStatus::Completed ||
+        !startingTotal.has_value() || alreadyPresented) {
+        return std::nullopt;
+    }
+    return TrophyAwardPresentation{
+        currentTotal - *startingTotal,
+        currentTotal,
+    };
+}
+
 std::optional<LifecycleModalPresentation> lifecycleModalPresentation(
     const PlayerRoundSnapshot& viewedSnapshot,
     const client::ClientViewContext& viewContext,

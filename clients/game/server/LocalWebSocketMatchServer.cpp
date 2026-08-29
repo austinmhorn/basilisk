@@ -538,6 +538,39 @@ private:
             (void)socket.sendBinary(payload);
             return;
         }
+        if (type == network::WireMessageType::LeaderboardPageRequest) {
+            network::ClientCommand command;
+            if (!network::decodeClientCommand(bytes, command, error)) {
+                socket.close(1008, error);
+                return;
+            }
+            const auto* request =
+                std::get_if<network::LeaderboardPageRequest>(&command.payload);
+            if (request == nullptr || publicLeaderboard_ == nullptr) {
+                socket.close(1008, "Public leaderboard is not configured.");
+                return;
+            }
+            std::vector<PublicTrophyLeaderboardEntry> entries;
+            if (!publicLeaderboard_->leaderboardPage(
+                    request->offset, request->limit, entries, error)) {
+                socket.close(1011, error.empty()
+                    ? "Unable to read public leaderboard." : error);
+                return;
+            }
+            network::LeaderboardPageResponse response;
+            response.offset = request->offset;
+            response.entries = std::move(entries);
+            network::WireBytes responseBytes;
+            if (!network::encodeWire(response, responseBytes, error)) {
+                socket.close(1011, error);
+                return;
+            }
+            const std::string payload(
+                reinterpret_cast<const char*>(responseBytes.data()),
+                responseBytes.size());
+            (void)socket.sendBinary(payload);
+            return;
+        }
         if (type != network::WireMessageType::HostLobby &&
             type != network::WireMessageType::JoinLobby &&
             type != network::WireMessageType::CancelHostedLobby &&

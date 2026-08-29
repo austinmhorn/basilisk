@@ -133,6 +133,7 @@ struct LifecycleModalGeometry {
     const MapActionMenuState& mapActionMenu,
     MapActionMenuGeometry& mapActionMenuGeometry,
     LifecycleModalGeometry& lifecycleModalGeometry,
+    std::optional<TrophyAwardPresentation> trophyAward,
 #if defined(BASILISK_GAME_DEBUG)
     const debug::DebugMapTruth* debugMapTruth,
     const debug::DebugGameplayTruth* debugGameplayTruth,

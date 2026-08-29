@@ -19,10 +19,11 @@ using namespace basilisk::game::network;
 namespace {
 
 void configurableNetworkEndpointsPreserveDefaultsAndCustomValues() {
-    NetworkEndpointConfig config;
+    NetworkEndpointConfig config = clientNetworkEndpointConfig(
+        ClientEndpointDefault::LocalDevelopment);
     assert(config.bindAddress == "127.0.0.1");
     assert(config.serverPort == 8765);
-    assert(config.connectUrl == "ws://127.0.0.1:8765");
+    assert(config.connectUrl == kLocalWebSocketEndpoint);
     std::string error;
     assert(applyNetworkEndpointOption(
         "--bind", "0.0.0.0", config, error));
@@ -38,6 +39,23 @@ void configurableNetworkEndpointsPreserveDefaultsAndCustomValues() {
         "--connect", "wss://example.com/game", config, error));
     assert(config.connectUrl == "wss://example.com/game");
     assert(!applyNetworkEndpointOption("--connect", "", config, error));
+}
+
+void nativeProductionAndDevelopmentDefaultsRemainExplicit() {
+    auto production = clientNetworkEndpointConfig(
+        ClientEndpointDefault::Production);
+    assert(production.connectUrl == "wss://game.xiivestudio.com");
+    std::string error;
+    assert(applyNetworkEndpointOption(
+        "--connect", "ws://192.168.1.42:8765", production, error));
+    assert(production.connectUrl == "ws://192.168.1.42:8765");
+
+    auto development = clientNetworkEndpointConfig(
+        ClientEndpointDefault::LocalDevelopment);
+    assert(development.connectUrl == "ws://127.0.0.1:8765");
+    assert(applyNetworkEndpointOption(
+        "--connect", "wss://staging.example.test/game", development, error));
+    assert(development.connectUrl == "wss://staging.example.test/game");
 }
 
 template <typename T>
@@ -908,6 +926,7 @@ void protocolMismatchIsRejectedCleanly() {
 
 int main() {
     configurableNetworkEndpointsPreserveDefaultsAndCustomValues();
+    nativeProductionAndDevelopmentDefaultsRemainExplicit();
     allServerFieldsRoundTripExactly();
     sixParticipantMetadataSeatsRoundTrip();
     everyClientCommandRoundTrips();

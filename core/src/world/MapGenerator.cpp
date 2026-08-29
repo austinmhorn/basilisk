@@ -129,7 +129,7 @@ bool nonBlockedCavesRemainConnected(
     return visited.size() == remaining;
 }
 
-WorldGraph generateTopology(
+std::optional<WorldGraph> generateTopology(
     const ProceduralMapConfig& config,
     RandomGenerator& rng) {
 
@@ -182,7 +182,7 @@ WorldGraph generateTopology(
             ++parentIndex;
         }
         if (parentIndex >= branchParents.size()) {
-            throw std::runtime_error("Unable to attach requested dead-end branches.");
+            return std::nullopt;
         }
 
         world.connect(branchParents[parentIndex], branch);
@@ -206,7 +206,7 @@ WorldGraph generateTopology(
     }
 
     if (added < config.extraConnections) {
-        throw std::runtime_error("Unable to add requested extra map connections.");
+        return std::nullopt;
     }
 
     return world;
@@ -361,7 +361,7 @@ std::optional<std::pair<std::vector<CaveId>, CaveId>> chooseMultiHunterPlacement
         rng.range(0, static_cast<int>(placements.size()) - 1))];
 }
 
-void placePits(
+bool placePits(
     MatchState& state,
     const ProceduralMapConfig& config,
     RandomGenerator& rng,
@@ -403,12 +403,10 @@ void placePits(
         reserved.insert(cave);
     }
 
-    if (state.pits.size() != config.pitCount) {
-        throw std::runtime_error("Unable to place requested Pit count with quality constraints.");
-    }
+    return state.pits.size() == config.pitCount;
 }
 
-void placeJackals(
+bool placeJackals(
     MatchState& state,
     const ProceduralMapConfig& config,
     RandomGenerator& rng,
@@ -447,12 +445,10 @@ void placeJackals(
         reserved.insert(cave);
     }
 
-    if (state.jackals.size() != count) {
-        throw std::runtime_error("Unable to place requested Jackal count with quality constraints.");
-    }
+    return state.jackals.size() == count;
 }
 
-MatchState populateMatch(
+std::optional<MatchState> populateMatch(
     WorldGraph world,
     MapSeed mapSeed,
     MatchSeed matchSeed,
@@ -474,21 +470,18 @@ MatchState populateMatch(
     std::optional<CaveId> basiliskSpawn;
     if (roster.size() == 2) {
         const auto pair = chooseHunterSpawns(state.world, config, spawnRng);
-        if (!pair.has_value()) throw std::runtime_error("No valid hunter spawn pair found.");
+        if (!pair.has_value()) return std::nullopt;
         hunterSpawns = {pair->first, pair->second};
         basiliskSpawn = chooseBasiliskSpawn(
             state.world, hunterSpawns, config, spawnRng);
     } else {
         auto placement = chooseMultiHunterPlacement(
             state.world, roster.size(), config, spawnRng);
-        if (!placement.has_value())
-            throw std::runtime_error("No fair multi-hunter placement found.");
+        if (!placement.has_value()) return std::nullopt;
         hunterSpawns = std::move(placement->first);
         basiliskSpawn = placement->second;
     }
-    if (!basiliskSpawn.has_value()) {
-        throw std::runtime_error("No fair Basilisk spawn found.");
-    }
+    if (!basiliskSpawn.has_value()) return std::nullopt;
 
     for (std::size_t index = 0; index < roster.size(); ++index) {
         PlayerState player;
@@ -503,8 +496,9 @@ MatchState populateMatch(
     std::unordered_set<CaveId> reserved(hunterSpawns.begin(), hunterSpawns.end());
     reserved.insert(state.basilisk.cave);
 
-    placePits(state, config, hazardRng, reserved);
-    placeJackals(state, config, aiRng, reserved);
+    if (!placePits(state, config, hazardRng, reserved) ||
+        !placeJackals(state, config, aiRng, reserved))
+        return std::nullopt;
 
     return state;
 }
@@ -544,29 +538,29 @@ MatchState MapGenerator::generate(
         const auto attemptSeed = mapSeed + static_cast<MapSeed>(attempt);
         RandomGenerator topologyRng{derivedSeed(attemptSeed, kTopologySalt)};
 
-        try {
-            auto world = generateTopology(config, topologyRng);
-            if (!validateTopology(world, config)) continue;
+        // Rejected candidates are normal during bounded procedural search.
+        // Keep that path exception-free so Emscripten builds without C++
+        // exception catching can advance to the next deterministic attempt.
+        auto world = generateTopology(config, topologyRng);
+        if (!world.has_value() || !validateTopology(*world, config)) continue;
 
-            RandomGenerator spawnRng{derivedSeed(matchSeed ^ attemptSeed, kSpawnSalt)};
-            RandomGenerator hazardRng{derivedSeed(matchSeed ^ attemptSeed, kHazardSalt)};
-            RandomGenerator aiRng{derivedSeed(matchSeed ^ attemptSeed, kAiSalt)};
+        RandomGenerator spawnRng{derivedSeed(matchSeed ^ attemptSeed, kSpawnSalt)};
+        RandomGenerator hazardRng{derivedSeed(matchSeed ^ attemptSeed, kHazardSalt)};
+        RandomGenerator aiRng{derivedSeed(matchSeed ^ attemptSeed, kAiSalt)};
 
-            auto state = populateMatch(
-                std::move(world),
-                mapSeed,
-                matchSeed,
-                rules,
-                config,
-                spawnRng,
-                hazardRng,
-                aiRng,
-                roster);
+        auto state = populateMatch(
+            std::move(*world),
+            mapSeed,
+            matchSeed,
+            rules,
+            config,
+            spawnRng,
+            hazardRng,
+            aiRng,
+            roster);
 
-            if (validateFairness(state, config)) return state;
-        } catch (const std::runtime_error&) {
-            // Deterministically try the next topology candidate.
-        }
+        if (state.has_value() && validateFairness(*state, config))
+            return std::move(*state);
     }
 
     throw std::runtime_error("Unable to generate a valid procedural map within attempt limit.");

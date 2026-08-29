@@ -84,6 +84,11 @@ struct AppState {
     bool cancelLobbyWhenHosted{false};
     bool enterOnlineAfterAuthentication{false};
     std::string serverUrl{"ws://127.0.0.1:8765"};
+    bool awaitingEligibleMatchStart{false};
+    std::optional<std::int64_t> trophyMatchStartTotal;
+    std::optional<basilisk::game::TrophyAwardPresentation> trophyAward;
+    bool trophyAwardPresented{false};
+    std::optional<std::int64_t> lastKnownTrophyTotal;
 
     std::unique_ptr<basilisk::game::ClientSessionController> ownedSession;
     basilisk::game::ClientSessionController* session{nullptr};
@@ -117,6 +122,13 @@ struct AppState {
 
 bool localGameplayActive(const AppState& state) noexcept {
     return state.localAiDriver != nullptr || state.localSandboxDriver != nullptr;
+}
+
+void resetTrophyAwardPresentation(AppState& state) {
+    state.awaitingEligibleMatchStart = false;
+    state.trophyMatchStartTotal.reset();
+    state.trophyAward.reset();
+    state.trophyAwardPresented = false;
 }
 
 std::string bundledFontDirectory() {
@@ -204,6 +216,7 @@ SDL_AppResult handleMainMenuResult(
         return SDL_APP_CONTINUE;
     }
     if (result == basilisk::game::MainMenuResult::StartAiGame) {
+        resetTrophyAwardPresentation(state);
         const Uint64 entropy = SDL_GetPerformanceCounter() ^ SDL_GetTicksNS();
         auto local = basilisk::game::LocalAiGameSessionAdapter::create(
             basilisk::MapSeed{entropy}, basilisk::MatchSeed{entropy ^ 0xA17EULL},
@@ -228,6 +241,7 @@ SDL_AppResult handleMainMenuResult(
         return SDL_APP_CONTINUE;
     }
     if (result == basilisk::game::MainMenuResult::StartSandbox) {
+        resetTrophyAwardPresentation(state);
         const Uint64 entropy = SDL_GetPerformanceCounter() ^ SDL_GetTicksNS();
         auto config = state.mainMenu.sandboxConfig();
         config.mapSeed = basilisk::MapSeed{entropy};
@@ -267,6 +281,7 @@ SDL_AppResult handleMainMenuResult(
         state.authenticatedSessionToken.reset();
         state.authenticatedProfile.reset();
         state.confirmedCosmeticLoadout.reset();
+        state.lastKnownTrophyTotal.reset();
         state.authScreen = basilisk::game::AuthScreenState{};
         state.mainMenu = basilisk::game::MainMenuState{};
         state.handledLobbyResponseRevision =
@@ -281,11 +296,13 @@ SDL_AppResult handleMainMenuResult(
         return SDL_APP_CONTINUE;
     }
     if (result == basilisk::game::MainMenuResult::RequestLeaderboard &&
-        state.networkSession != nullptr && state.session != nullptr) {
+        state.networkSession != nullptr) {
         if (!state.networkSession->requestLeaderboard(
                 state.mainMenu.leaderboardOffset(),
                 basilisk::game::MainMenuState::leaderboardPageSize)) {
             SDL_Log("Leaderboard request could not be sent");
+            state.mainMenu.leaderboardFailed(
+                "Unable to load the leaderboard.");
         }
     }
     if (result == basilisk::game::MainMenuResult::RequestHostLobby &&
@@ -413,6 +430,7 @@ bool pointerInRenderCoordinates(
 }
 
 SDL_AppResult finishGameplayQuit(AppState& state) {
+    resetTrophyAwardPresentation(state);
     state.pauseMenu.close();
     if (state.localAiDriver != nullptr || state.localSandboxDriver != nullptr) {
         state.localAiDriver.reset();
@@ -472,7 +490,13 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
 
     std::optional<std::string> connectUrl;
     std::optional<std::string> connectToken;
-    basilisk::game::NetworkEndpointConfig endpointConfig;
+#if defined(BASILISK_NATIVE_PRODUCTION_ENDPOINT)
+    auto endpointConfig = basilisk::game::clientNetworkEndpointConfig(
+        basilisk::game::ClientEndpointDefault::Production);
+#else
+    auto endpointConfig = basilisk::game::clientNetworkEndpointConfig(
+        basilisk::game::ClientEndpointDefault::LocalDevelopment);
+#endif
     for (int index = 1; index < argc; ++index) {
         if (argv == nullptr || argv[index] == nullptr) continue;
         const std::string_view argument{argv[index]};
@@ -1411,6 +1435,18 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 
     if (state->networkSession != nullptr) {
         state->networkSession->pump();
+        if (state->mainMenu.page() ==
+                basilisk::game::MainMenuPage::Leaderboards &&
+            state->mainMenu.leaderboardLoadState() ==
+                basilisk::game::LeaderboardLoadState::Loading) {
+            const auto& page = state->networkSession->leaderboardPage();
+            if (page.has_value() &&
+                page->offset == state->mainMenu.leaderboardOffset()) {
+                state->mainMenu.leaderboardLoaded(
+                    page->entries.size() ==
+                    basilisk::game::MainMenuState::leaderboardPageSize);
+            }
+        }
         if (!localGameplayActive(*state))
             state->session = state->networkSession->controller();
         if (state->networkSession->lobbyResponseRevision() !=
@@ -1433,6 +1469,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     basilisk::game::network::LobbyMatchAssigned>(
                         &response.payload)) {
                 state->mainMenu.lobbyAssigned(assigned->lobbyCode);
+                state->awaitingEligibleMatchStart = true;
                 (void)SDL_StopTextInput(state->window);
             } else if (std::holds_alternative<
                            basilisk::game::network::LobbyCancelled>(
@@ -1463,6 +1500,23 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         }
         if (state->view == AppView::MainMenu &&
             basilisk::game::hasAuthoritativeGameplaySession(state->session)) {
+            state->trophyAward.reset();
+            state->trophyAwardPresented = false;
+            const auto* restoredSnapshot =
+                state->session->displayedSnapshot();
+            const bool activeEligibleMatch =
+                state->session->matchMode() ==
+                    basilisk::client::MatchMode::Online &&
+                restoredSnapshot != nullptr &&
+                restoredSnapshot->matchStatus == basilisk::MatchStatus::Active;
+            if ((state->awaitingEligibleMatchStart || activeEligibleMatch) &&
+                state->session->matchMode() ==
+                    basilisk::client::MatchMode::Online) {
+                state->trophyMatchStartTotal = state->session->trophyTotal();
+            } else {
+                state->trophyMatchStartTotal.reset();
+            }
+            state->awaitingEligibleMatchStart = false;
             state->view = AppView::Gameplay;
             state->screenShellEnabled = true;
         }
@@ -1606,9 +1660,12 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         } else if (state->view == AppView::MainMenu) {
             std::string menuError;
             const std::optional<std::int64_t> trophies =
-                state->networkSession == nullptr || state->session == nullptr
+                state->networkSession == nullptr
                 ? std::nullopt
-                : std::optional<std::int64_t>{state->session->trophyTotal()};
+                : (state->session == nullptr
+                    ? state->lastKnownTrophyTotal
+                    : std::optional<std::int64_t>{
+                        state->session->trophyTotal()});
             static const std::optional<
                 basilisk::game::network::LeaderboardPageResponse>
                 noLeaderboard;
@@ -1634,6 +1691,21 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
           const basilisk::PlayerRoundSnapshot* snapshot = state->session == nullptr
               ? nullptr
               : state->session->displayedSnapshot();
+          if (snapshot != nullptr && state->session != nullptr) {
+              if (state->session->matchMode() ==
+                  basilisk::client::MatchMode::Online) {
+                  state->lastKnownTrophyTotal = state->session->trophyTotal();
+              }
+              const auto award = basilisk::game::terminalTrophyAward(
+                  state->session->matchMode(), snapshot->matchStatus,
+                  state->trophyMatchStartTotal,
+                  state->session->trophyTotal(),
+                  state->trophyAwardPresented);
+              if (award.has_value()) {
+                  state->trophyAward = award;
+                  state->trophyAwardPresented = true;
+              }
+          }
           const bool blockingLifecycle = snapshot != nullptr && state->session != nullptr &&
               basilisk::game::lifecycleModalPresentation(
                   *snapshot, state->session->viewContext(), state->session->profiles(),
@@ -1691,6 +1763,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                     state->mapActionMenu,
                     state->mapActionMenuGeometry,
                     state->lifecycleModalGeometry,
+                    state->trophyAward,
 #if defined(BASILISK_GAME_DEBUG)
                     state->debugMapProvider == nullptr
                         ? nullptr
