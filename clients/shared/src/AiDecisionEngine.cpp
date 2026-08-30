@@ -499,6 +499,14 @@ double shootTacticalAdjustment(
 
 } // namespace
 
+bool passesAiSafetyFilter(
+    const PlayerRoundSnapshot& snapshot,
+    const AvailableAction& action,
+    const AiConfig& config,
+    const AiKnowledgeState& knowledge) {
+    return passesHardSafetyFilter(snapshot, action, config, knowledge);
+}
+
 AiBehavior resolveBehavior(AiBehavior requested, AiSeed seed) {
     if (requested != AiBehavior::Random) return requested;
     constexpr AiBehavior choices[]{
@@ -539,7 +547,7 @@ AiDecisionEvaluation AiDecisionEngine::evaluate(
     double best = -std::numeric_limits<double>::infinity();
     for (std::size_t index = 0; index < snapshot.availableActions.size(); ++index) {
         const AvailableAction& action = snapshot.availableActions[index];
-        if (!passesHardSafetyFilter(snapshot, action, config, knowledge)) continue;
+        if (!passesAiSafetyFilter(snapshot, action, config, knowledge)) continue;
         const double score = baseUtility(action, snapshot) +
             behaviorUtility(action, snapshot, behavior) +
             awarenessAdjustment(action, snapshot, config, knowledge, careless) +

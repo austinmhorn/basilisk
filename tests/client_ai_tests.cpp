@@ -1,9 +1,11 @@
 #include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <stdexcept>
 
 #include "basilisk/client/ai/AiDecisionEngine.hpp"
 #include "basilisk/client/ai/AiKnowledgeState.hpp"
+#include "basilisk/client/ai/AiPolicy.hpp"
 #include "basilisk/client/ai/AiTurnScheduler.hpp"
 
 using namespace basilisk;
@@ -153,6 +155,56 @@ void hardSafetyFilterRemovesOnlyPlayerKnownPits() {
                     candidate.action.targetCave == CaveId{2};
             }));
     }
+}
+
+void sharedPolicyPreservesHeuristicChoicesAndOwnsSafetyValidation() {
+    auto warned = awarenessSnapshot(6, 1,
+        {TunnelView{1, CaveId{2}, true}, TunnelView{2, std::nullopt, false}},
+        {moveTo(2), moveThrough(2), searchAction()});
+    AiKnowledgeState knowledge;
+    knowledge.observe(warned);
+
+    AiDecisionEngine engine;
+    HeuristicPolicy policy;
+    for (const AiDifficulty difficulty : {
+            AiDifficulty::Easy, AiDifficulty::Medium, AiDifficulty::Hard}) {
+        for (const AiBehavior behavior : {
+                AiBehavior::Balanced, AiBehavior::Explorer,
+                AiBehavior::Aggressive, AiBehavior::ObjectiveFocused,
+                AiBehavior::Survivalist, AiBehavior::Opportunist}) {
+            for (std::uint64_t seed = 1; seed <= 20; ++seed) {
+                const AiConfig config{difficulty, behavior, 42, seed};
+                const auto direct = engine.choose(warned, config, knowledge);
+                const auto shared = choosePolicyAction(
+                    policy, warned, config, knowledge);
+                assert(direct.has_value() == shared.has_value());
+                if (direct) assert(same(*direct, *shared));
+            }
+        }
+    }
+
+    const AiConfig hard{AiDifficulty::Hard, AiBehavior::Aggressive, 42, 9};
+    const PolicyObservation observation = makePolicyObservation(
+        warned, knowledge, hard);
+    assert(std::none_of(observation.legalActions.begin(),
+        observation.legalActions.end(), [](const EncodedAction& action) {
+            return action.action.type == ActionType::Move &&
+                action.action.targetCave == CaveId{2};
+        }));
+    assert(std::any_of(observation.legalActions.begin(),
+        observation.legalActions.end(), [](const EncodedAction& action) {
+            return action.action.type == ActionType::Move &&
+                action.action.targetTunnel == TunnelId{2};
+        }));
+
+    bool rejected = false;
+    try {
+        (void)resolvePolicyDecision(observation,
+            PolicyDecision{observation.legalActions.size(), "invalid"}, hard);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    assert(rejected);
 }
 
 void hardSearchesOnlyWhenPitUncertaintyBlocksProgress() {
@@ -788,6 +840,7 @@ int main() {
     difficultyRespectsWarningsWithDeterministicMistakes();
     hardDeducesAndNeverChoosesConfirmedPit();
     hardSafetyFilterRemovesOnlyPlayerKnownPits();
+    sharedPolicyPreservesHeuristicChoicesAndOwnsSafetyValidation();
     hardSearchesOnlyWhenPitUncertaintyBlocksProgress();
     mediumBacktracksAndHardBreaksJackalOscillation();
     movementWithoutPlayerSafeJackalWarningCreatesNoPrediction();

@@ -14,6 +14,7 @@
 #include "basilisk/MatchState.hpp"
 #include "basilisk/client/MatchMode.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
+#include "basilisk/client/ai/AiPolicy.hpp"
 #include "basilisk/client/ai/AiTurnScheduler.hpp"
 #include "basilisk/client/ai/AiKnowledgeState.hpp"
 #include "basilisk/systems/MatchCoordinator.hpp"
@@ -227,7 +228,9 @@ private:
         if (snapshot == nullptr || snapshot->round != state_.round) return;
         decisionRound_ = state_.round;
         knowledge_.observe(*snapshot);
-        const auto evaluation = engine_.evaluate(*snapshot, config_, knowledge_);
+        const auto observation = client::ai::makePolicyObservation(
+            *snapshot, knowledge_, config_);
+        const auto [decision, evaluation] = policy_.evaluate(observation, config_);
 #if defined(BASILISK_GAME_DEBUG_BUILD)
         aiDecisionTrace_.clear();
         aiDecisionTrace_.push_back(
@@ -249,8 +252,9 @@ private:
         aiDecisionTrace_.push_back(scores.str());
 #endif
         if (!evaluation.actions.empty()) {
-            scheduler_.scheduleAction(evaluation.actions[evaluation.chosenIndex].action,
-                nowMs_, config_, state_.round);
+            const auto& selected = client::ai::resolvePolicyDecision(
+                observation, decision, config_);
+            scheduler_.scheduleAction(selected.action, nowMs_, config_, state_.round);
         }
     }
 
@@ -292,7 +296,7 @@ private:
     PlayerId human_{};
     PlayerId ai_{};
     client::ai::AiConfig config_;
-    client::ai::AiDecisionEngine engine_;
+    client::ai::HeuristicPolicy policy_;
     client::ai::AiKnowledgeState knowledge_;
     client::ai::AiTurnScheduler scheduler_;
     std::optional<RoundNumber> decisionRound_;

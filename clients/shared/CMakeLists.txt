@@ -41,6 +41,7 @@ target_compile_features(BasiliskClientNavigation PUBLIC cxx_std_20)
 add_library(BasiliskClientAI STATIC
     src/AiKnowledgeState.cpp
     src/AiDecisionEngine.cpp
+    src/AiPolicy.cpp
     src/AiTurnScheduler.cpp
 )
 add_library(Basilisk::ClientAI ALIAS BasiliskClientAI)

@@ -16,6 +16,7 @@
 #include "basilisk/client/MatchMode.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
 #include "basilisk/client/SandboxConfiguration.hpp"
+#include "basilisk/client/ai/AiPolicy.hpp"
 #include "basilisk/client/ai/AiKnowledgeState.hpp"
 #include "basilisk/client/ai/AiTurnScheduler.hpp"
 #include "basilisk/systems/MatchCoordinator.hpp"
@@ -75,7 +76,7 @@ PlayerFixedMapGeometry geometryFor(const MatchState& state,
 struct SandboxAgent {
     PlayerId player{};
     client::ai::AiConfig config;
-    client::ai::AiDecisionEngine engine;
+    client::ai::HeuristicPolicy policy;
     client::ai::AiKnowledgeState knowledge;
     client::ai::AiTurnScheduler scheduler;
     std::optional<RoundNumber> decisionRound;
@@ -235,13 +236,10 @@ private:
             const PlayerRoundSnapshot* snapshot = &snapshotEntry->second;
             agent.decisionRound = state_.round;
             agent.knowledge.observe(*snapshot);
-            const auto evaluation = agent.engine.evaluate(
-                *snapshot, agent.config, agent.knowledge);
-            if (!evaluation.actions.empty()) {
-                agent.scheduler.scheduleAction(
-                    evaluation.actions[evaluation.chosenIndex].action,
-                    nowMs_, agent.config, state_.round);
-            }
+            const auto action = client::ai::choosePolicyAction(
+                agent.policy, *snapshot, agent.config, agent.knowledge);
+            if (action) agent.scheduler.scheduleAction(
+                *action, nowMs_, agent.config, state_.round);
         }
     }
 

@@ -111,14 +111,21 @@ void trainingTransitionsAreSafeAndLinked() {
     bool foundTerminal = false;
     for (std::size_t index = 0; index < transitions.values.size(); ++index) {
         const auto& transition = transitions.values[index];
-        assert(transition.observation.legalActions.size() ==
+        assert(transition.observation.legalActions.size() <=
             transition.observation.sourceSnapshot.availableActions.size());
         for (std::size_t action = 0; action < transition.observation.legalActions.size(); ++action) {
-            assert(transition.observation.legalActions[action].legalIndex == action);
+            const std::size_t sourceIndex =
+                transition.observation.legalActions[action].legalIndex;
+            assert(sourceIndex <
+                transition.observation.sourceSnapshot.availableActions.size());
             assert(transition.observation.legalActions[action].action.type ==
-                transition.observation.sourceSnapshot.availableActions[action].type);
+                transition.observation.sourceSnapshot.availableActions[sourceIndex].type);
         }
-        assert(transition.chosenAction.legalIndex == transition.decision.legalActionIndex);
+        assert(transition.decision.legalActionIndex <
+            transition.observation.legalActions.size());
+        assert(transition.chosenAction.legalIndex ==
+            transition.observation.legalActions[
+                transition.decision.legalActionIndex].legalIndex);
         assert(transition.nextObservation.sourceSnapshot.round >=
             transition.observation.sourceSnapshot.round);
         const std::string json = transitionJson(transition);
@@ -138,7 +145,12 @@ void trainingTransitionsAreSafeAndLinked() {
     AgentDecision illegal;
     illegal.legalActionIndex = transitions.values.front().observation.legalActions.size();
     bool rejected = false;
-    try { (void)resolveDecision(transitions.values.front().observation, illegal); }
+    try {
+        const auto& transition = transitions.values.front();
+        (void)resolveDecision(transitions.values.front().observation, illegal,
+            {transition.config.difficulty, transition.resolvedBehavior,
+                transition.player, 0});
+    }
     catch (const std::runtime_error&) { rejected = true; }
     assert(rejected);
 }

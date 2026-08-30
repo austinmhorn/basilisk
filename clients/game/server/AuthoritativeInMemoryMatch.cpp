@@ -17,6 +17,7 @@
 #include "basilisk/systems/SnapshotSystem.hpp"
 #include "basilisk/world/MapGenerator.hpp"
 #include "basilisk/client/SandboxConfiguration.hpp"
+#include "basilisk/client/ai/AiPolicy.hpp"
 #include "basilisk/client/ai/AiKnowledgeState.hpp"
 #include "basilisk/client/ai/AiTurnScheduler.hpp"
 
@@ -93,7 +94,7 @@ PlayerFixedMapGeometry playerGeometry(
 
 struct NetworkAiAgent {
     client::ai::AiConfig config;
-    client::ai::AiDecisionEngine engine;
+    client::ai::HeuristicPolicy policy;
     client::ai::AiKnowledgeState knowledge;
     std::optional<RoundNumber> decisionRound;
     client::ai::AiTurnScheduler scheduler;
@@ -415,22 +416,20 @@ private:
             agent->decisionRound = match_.round;
             if (snapshot.availableActions.empty()) continue;
             agent->knowledge.observe(snapshot);
-            const auto evaluation = agent->engine.evaluate(
-                snapshot, agent->config, agent->knowledge);
-            if (evaluation.actions.empty()) continue;
-            const auto& selected =
-                evaluation.actions[evaluation.chosenIndex].action;
+            const auto selected = client::ai::choosePolicyAction(
+                agent->policy, snapshot, agent->config, agent->knowledge);
+            if (!selected) continue;
 
             PlayerAction action;
             action.player = agent->config.player;
-            action.type = selected.type;
-            action.targetCave = selected.targetCave;
-            action.targetTunnel = selected.targetTunnel;
-            action.targetItem = selected.targetItem;
-            action.contextualAction = selected.contextualAction;
+            action.type = selected->type;
+            action.targetCave = selected->targetCave;
+            action.targetTunnel = selected->targetTunnel;
+            action.targetItem = selected->targetItem;
+            action.contextualAction = selected->contextualAction;
             if (!coordinator_.submitAction(action)) continue;
 
-            agent->knowledge.recordDecision(selected);
+            agent->knowledge.recordDecision(*selected);
             const RoundNumber priorRound = match_.round;
             const auto priorClash = activeClashCopy();
             if (!coordinator_.lockAction(agent->config.player)) return;
