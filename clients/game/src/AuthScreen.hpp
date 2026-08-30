@@ -27,6 +27,11 @@ public:
     void backspace();
     void setError(std::string error);
     void setWaiting(bool waiting) noexcept { waiting_ = waiting; }
+    void setCredentials(
+        AuthMode mode,
+        std::string email,
+        std::string password,
+        std::string username = {});
     [[nodiscard]] bool request(network::AuthenticationRequest& request);
 
 private:

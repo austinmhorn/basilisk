@@ -41,6 +41,20 @@ void AuthScreenState::setError(std::string error) {
     waiting_ = false;
 }
 
+void AuthScreenState::setCredentials(
+    AuthMode mode,
+    std::string email,
+    std::string password,
+    std::string username) {
+    if (waiting_) return;
+    mode_ = mode;
+    field_ = AuthField::Email;
+    email_ = std::move(email);
+    password_ = std::move(password);
+    username_ = std::move(username);
+    error_.clear();
+}
+
 bool AuthScreenState::request(network::AuthenticationRequest& request) {
     if (email_.empty() || password_.empty()) {
         setError("Email and password are required.");

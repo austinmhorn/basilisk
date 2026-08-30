@@ -641,6 +641,30 @@ if(NOT EMSCRIPTEN)
 endif()
 
 if(EMSCRIPTEN)
+    target_sources(BasiliskGameRuntime PRIVATE src/BrowserPreGameBridge.cpp)
+    find_program(BASILISK_NPM_EXECUTABLE npm REQUIRED)
+    set(BASILISK_REACT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/web/frontend")
+    set(BASILISK_REACT_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/react-ui")
+    add_custom_command(
+        OUTPUT
+            "${BASILISK_REACT_BUILD_DIR}/basilisk-react.js"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${BASILISK_REACT_BUILD_DIR}"
+        COMMAND "${BASILISK_NPM_EXECUTABLE}" ci --ignore-scripts
+        COMMAND "${BASILISK_NPM_EXECUTABLE}" run build --
+            --outDir "${BASILISK_REACT_BUILD_DIR}"
+        WORKING_DIRECTORY "${BASILISK_REACT_SOURCE_DIR}"
+        DEPENDS
+            "${BASILISK_REACT_SOURCE_DIR}/package.json"
+            "${BASILISK_REACT_SOURCE_DIR}/package-lock.json"
+            "${BASILISK_REACT_SOURCE_DIR}/vite.config.js"
+            "${BASILISK_REACT_SOURCE_DIR}/src/bridge.js"
+            "${BASILISK_REACT_SOURCE_DIR}/src/main.jsx"
+            "${BASILISK_REACT_SOURCE_DIR}/src/styles.css"
+        COMMENT "Building optional Basilisk React pre-game prototype"
+        VERBATIM
+    )
+    add_custom_target(BasiliskReactUi DEPENDS
+        "${BASILISK_REACT_BUILD_DIR}/basilisk-react.js")
     set_target_properties(BasiliskGame PROPERTIES SUFFIX ".html")
     set_property(TARGET BasiliskGame APPEND PROPERTY LINK_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/web/network-arguments.js"
@@ -652,6 +676,7 @@ if(EMSCRIPTEN)
             "-sALLOW_MEMORY_GROWTH=1"
             "-sINITIAL_MEMORY=67108864"
             "-sMAXIMUM_MEMORY=536870912"
+            "-sEXPORTED_RUNTIME_METHODS=ccall"
             "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/web/network-arguments.js"
             "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
             "SHELL:--preload-file ${BASILISK_GAME_FONT_ASSET_DIR}@/assets/fonts"
@@ -683,7 +708,10 @@ if(EMSCRIPTEN)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE_DIR:BasiliskGame>/BasiliskGame.data"
             "${BASILISK_WEB_PACKAGE_DIR}/BasiliskGame.data"
-        DEPENDS BasiliskGame
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${BASILISK_REACT_BUILD_DIR}"
+            "${BASILISK_WEB_PACKAGE_DIR}/react"
+        DEPENDS BasiliskGame BasiliskReactUi
         COMMENT "Assembling deployable Basilisk WebAssembly package"
         VERBATIM
     )

@@ -145,6 +145,7 @@
     </style>
 </head>
 <body>
+    <div id="react-root"></div>
     <div id="loader" role="status" aria-live="polite">
         <div class="brand">BASILISK</div>
         <div class="spinner" aria-hidden="true"></div>
@@ -204,7 +205,9 @@
             runtimeReady = true;
             canvas.classList.add('ready');
             loader.classList.add('hidden');
-            canvas.focus({preventScroll: true});
+            window.dispatchEvent(new Event('basilisk:runtime-ready'));
+            if (!document.body.classList.contains('react-ui'))
+                canvas.focus({preventScroll: true});
         };
         const showFailure = (manualReload = false) => {
             loader.classList.remove('hidden');
@@ -260,6 +263,25 @@
             if (!runtimeReady) showFailure();
         });
 
+        const pendingBrowserActions = [];
+        let forwardBrowserAction = (detail) => pendingBrowserActions.push(detail);
+        window.addEventListener('basilisk:action', (event) =>
+            forwardBrowserAction(event.detail));
+        window.installBasiliskWasmBridge = (nativeCall) => {
+            forwardBrowserAction = ({action, arguments: args = []}) => {
+                if (action === '__request-state') {
+                    nativeCall(
+                        'basilisk_browser_ui_request_state', null, [], []);
+                    return;
+                }
+                const values = args.concat('', '', '', '').slice(0, 4);
+                nativeCall('basilisk_browser_ui_action', null,
+                    ['string', 'string', 'string', 'string', 'string'],
+                    [action, ...values]);
+            };
+            pendingBrowserActions.splice(0).forEach(forwardBrowserAction);
+        };
+
         var Module = {
             canvas,
             print: (...messages) => console.log(...messages),
@@ -279,12 +301,17 @@
                     this.setStatus(`Preparing... ${completed}/${this.totalDependencies}`);
                 }
             },
+            onRuntimeInitialized() {
+                window.dispatchEvent(new Event('basilisk:runtime-ready'));
+            },
             onAbort(reason) {
                 console.error('Basilisk runtime aborted:', reason);
                 handleFatalBrowserFailure('onAbort', reason);
             }
         };
+        window.Module = Module;
     </script>
+    <script src="react/basilisk-react.js?v=3"></script>
     {{{ SCRIPT }}}
 </body>
 </html>

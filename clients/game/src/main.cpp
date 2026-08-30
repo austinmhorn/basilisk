@@ -9,6 +9,7 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -16,6 +17,7 @@
 #include "ActionSelection.hpp"
 #include "AuthScreen.hpp"
 #include "AuthScreenRenderer.hpp"
+#include "BrowserPreGameBridge.hpp"
 #include "ClientLifecycle.hpp"
 #include "ClashQteRenderer.hpp"
 #include "ClientSessionController.hpp"
@@ -89,6 +91,7 @@ struct AppState {
     std::optional<basilisk::game::TrophyAwardPresentation> trophyAward;
     bool trophyAwardPresented{false};
     std::optional<std::int64_t> lastKnownTrophyTotal;
+    std::uint64_t gameplayExitRevision{0};
 
     std::unique_ptr<basilisk::game::ClientSessionController> ownedSession;
     basilisk::game::ClientSessionController* session{nullptr};
@@ -176,6 +179,13 @@ void finishStartupSessionRestoreAtMainMenu(AppState& state) {
     (void)SDL_StopTextInput(state.window);
 }
 
+void startSdlPreGameTextInput(SDL_Window* window) {
+#if defined(__EMSCRIPTEN__)
+    if (basilisk::game::browserPreGameBridge().enabled()) return;
+#endif
+    (void)SDL_StartTextInput(window);
+}
+
 bool beginOnlineAuthentication(
     AppState& state,
     bool enterOnlineAfterAuthentication,
@@ -212,7 +222,7 @@ SDL_AppResult handleMainMenuResult(
         if (!beginOnlineAuthentication(state, true)) {
             return SDL_APP_CONTINUE;
         }
-        (void)SDL_StartTextInput(state.window);
+        startSdlPreGameTextInput(state.window);
         return SDL_APP_CONTINUE;
     }
     if (result == basilisk::game::MainMenuResult::StartAiGame) {
@@ -292,7 +302,7 @@ SDL_AppResult handleMainMenuResult(
         state.storedSessionAttempted = true;
         state.restoringSession = false;
         state.view = AppView::Authentication;
-        (void)SDL_StartTextInput(state.window);
+        startSdlPreGameTextInput(state.window);
         return SDL_APP_CONTINUE;
     }
     if (result == basilisk::game::MainMenuResult::RequestLeaderboard &&
@@ -431,7 +441,17 @@ bool pointerInRenderCoordinates(
 
 SDL_AppResult finishGameplayQuit(AppState& state) {
     resetTrophyAwardPresentation(state);
+    ++state.gameplayExitRevision;
     state.pauseMenu.close();
+    state.mainMenu = basilisk::game::MainMenuState{};
+    if (state.confirmedCosmeticLoadout.has_value()) {
+        state.mainMenu.applyConfirmedCosmeticLoadout(
+            *state.confirmedCosmeticLoadout);
+    }
+    state.screenShellEnabled = false;
+    state.view = AppView::MainMenu;
+    state.mapActionMenu.dismiss();
+    state.actionSelection = basilisk::game::ActionSelectionState{};
     if (state.localAiDriver != nullptr || state.localSandboxDriver != nullptr) {
         state.localAiDriver.reset();
         state.localSandboxDriver.reset();
@@ -442,24 +462,11 @@ SDL_AppResult finishGameplayQuit(AppState& state) {
         state.ownedSession =
             std::make_unique<basilisk::game::ClientSessionController>();
         state.session = state.ownedSession.get();
-        state.screenShellEnabled = false;
-        state.view = AppView::MainMenu;
-        state.mapActionMenu.dismiss();
-        state.actionSelection = basilisk::game::ActionSelectionState{};
         return SDL_APP_CONTINUE;
     }
     if (state.networkSession == nullptr) return SDL_APP_SUCCESS;
     state.networkSession->clearGameplaySession();
     state.session = nullptr;
-    state.mainMenu = basilisk::game::MainMenuState{};
-    if (state.confirmedCosmeticLoadout.has_value()) {
-        state.mainMenu.applyConfirmedCosmeticLoadout(
-            *state.confirmedCosmeticLoadout);
-    }
-    state.screenShellEnabled = false;
-    state.view = AppView::MainMenu;
-    state.mapActionMenu.dismiss();
-    state.actionSelection = basilisk::game::ActionSelectionState{};
     return SDL_APP_CONTINUE;
 }
 
@@ -475,6 +482,191 @@ SDL_AppResult handlePauseResult(
     return SDL_APP_CONTINUE;
 }
 
+#if defined(__EMSCRIPTEN__)
+std::string jsonEscaped(std::string_view value) {
+    std::string result;
+    result.reserve(value.size() + 8);
+    for (const char character : value) {
+        switch (character) {
+            case '\\': result += "\\\\"; break;
+            case '"': result += "\\\""; break;
+            case '\n': result += "\\n"; break;
+            case '\r': result += "\\r"; break;
+            case '\t': result += "\\t"; break;
+            default: result += character; break;
+        }
+    }
+    return result;
+}
+
+const char* browserViewName(AppView view) {
+    switch (view) {
+        case AppView::Authentication: return "authentication";
+        case AppView::Gameplay: return "gameplay";
+        case AppView::MainMenu: return "menu";
+    }
+    return "menu";
+}
+
+bool parseUnsigned(std::string_view value, std::uint64_t& result) {
+    const auto parsed = std::from_chars(
+        value.data(), value.data() + value.size(), result);
+    return parsed.ec == std::errc{} &&
+        parsed.ptr == value.data() + value.size();
+}
+
+std::optional<basilisk::client::SandboxSessionConfig> browserSandboxConfig(
+    std::string_view encoded) {
+    std::array<std::uint64_t, 9> values{};
+    std::size_t index = 0;
+    while (index < values.size()) {
+        const std::size_t separator = encoded.find(',');
+        const std::string_view field = encoded.substr(0, separator);
+        if (!parseUnsigned(field, values[index++])) return std::nullopt;
+        if (separator == std::string_view::npos) break;
+        encoded.remove_prefix(separator + 1);
+    }
+    if (index != values.size() || encoded.find(',') != std::string_view::npos)
+        return std::nullopt;
+    auto config = basilisk::client::defaultSandboxSessionConfig(values[0]);
+    config.hunterCount = values[0];
+    config.humanPlayerCount = values[1];
+    config.caveCount = values[2];
+    config.jackalCount = values[3];
+    config.arrowSpawnIntervalRounds = static_cast<std::uint32_t>(values[4]);
+    config.startingArrows = static_cast<int>(values[5]);
+    config.maxArrows = static_cast<int>(values[6]);
+    config.aiDifficulty = static_cast<basilisk::client::ai::AiDifficulty>(values[7]);
+    config.aiBehavior = static_cast<basilisk::client::ai::AiBehavior>(values[8]);
+    return config;
+}
+
+void processBrowserPreGameCommand(
+    AppState& state,
+    const basilisk::game::BrowserPreGameCommand& command) {
+    const auto argument = [&](std::size_t index) -> std::string {
+        return index < command.arguments.size() ? command.arguments[index] : "";
+    };
+    const auto menuAction = [&](basilisk::game::MainMenuAction action) {
+        (void)handleMainMenuResult(state, state.mainMenu.activate(action));
+    };
+    if (command.action == "open-online") {
+        (void)handleMainMenuResult(
+            state, basilisk::game::MainMenuResult::RequestPlayOnline);
+    } else if (command.action == "authenticate") {
+        state.authScreen.setCredentials(
+            argument(2) == "register" ? basilisk::game::AuthMode::CreateAccount
+                                      : basilisk::game::AuthMode::SignIn,
+            argument(0), argument(1), argument(2) == "register" ? argument(3) : "");
+        submitAuthentication(state);
+    } else if (command.action == "find-match") {
+        menuAction(basilisk::game::MainMenuAction::FindGame);
+    } else if (command.action == "host-standard") {
+        menuAction(basilisk::game::MainMenuAction::HostGame);
+    } else if (command.action == "join-standard") {
+        (void)state.mainMenu.activate(basilisk::game::MainMenuAction::JoinGame);
+        state.mainMenu.appendLobbyCode(argument(0));
+        menuAction(basilisk::game::MainMenuAction::SubmitLobbyCode);
+    } else if (command.action == "host-sandbox") {
+        if (auto config = browserSandboxConfig(argument(0))) {
+            state.mainMenu.setSandboxConfig(*config);
+            menuAction(basilisk::game::MainMenuAction::CreateSandboxLobby);
+        }
+    } else if (command.action == "join-sandbox") {
+        (void)state.mainMenu.activate(basilisk::game::MainMenuAction::JoinSandboxGame);
+        state.mainMenu.appendLobbyCode(argument(0));
+        menuAction(basilisk::game::MainMenuAction::SubmitLobbyCode);
+    } else if (command.action == "toggle-ready") {
+        menuAction(basilisk::game::MainMenuAction::ToggleSandboxReady);
+    } else if (command.action == "start-sandbox-lobby") {
+        menuAction(basilisk::game::MainMenuAction::StartSandboxMatch);
+    } else if (command.action == "cancel-standard") {
+        (void)handleMainMenuResult(state, state.mainMenu.back());
+    } else if (command.action == "leave-lobby") {
+        (void)handleMainMenuResult(state, state.mainMenu.back());
+    } else if (command.action == "leaderboard") {
+        menuAction(basilisk::game::MainMenuAction::Leaderboards);
+    } else if (command.action == "cosmetic") {
+        requestCosmeticLoadout(state, {
+            basilisk::client::CallingCardId{argument(0)},
+            basilisk::client::EmblemId{argument(1)}});
+    } else if (command.action == "start-ai") {
+        std::uint64_t difficulty = 1;
+        std::uint64_t behavior = 0;
+        (void)parseUnsigned(argument(0), difficulty);
+        (void)parseUnsigned(argument(1), behavior);
+        state.mainMenu.setAiConfig(
+            static_cast<basilisk::client::ai::AiDifficulty>(difficulty),
+            static_cast<basilisk::client::ai::AiBehavior>(behavior));
+        (void)handleMainMenuResult(state, basilisk::game::MainMenuResult::StartAiGame);
+    } else if (command.action == "start-local-sandbox") {
+        if (auto config = browserSandboxConfig(argument(0))) {
+            config->humanPlayerCount = 1;
+            state.mainMenu.setSandboxConfig(*config);
+            (void)handleMainMenuResult(state, basilisk::game::MainMenuResult::StartSandbox);
+        }
+    } else if (command.action == "logout") {
+        (void)handleMainMenuResult(state, basilisk::game::MainMenuResult::Logout);
+    }
+}
+
+std::string browserPreGameStateJson(const AppState& state) {
+    std::ostringstream json;
+    json << "{\"view\":\"" << browserViewName(state.view) << "\""
+         << ",\"authenticated\":"
+         << (state.authenticatedProfile.has_value() ? "true" : "false")
+         << ",\"username\":\""
+         << jsonEscaped(state.authenticatedProfile.has_value()
+             ? state.authenticatedProfile->username.value : "") << "\""
+         << ",\"authWaiting\":" << (state.authScreen.waiting() ? "true" : "false")
+         << ",\"authError\":\"" << jsonEscaped(state.authScreen.error()) << "\""
+         << ",\"gameplayExitRevision\":" << state.gameplayExitRevision
+         << ",\"lobbyCode\":\"" << jsonEscaped(state.mainMenu.lobbyCode()) << "\""
+         << ",\"lobbyError\":\"" << jsonEscaped(state.mainMenu.lobbyError()) << "\""
+         << ",\"sandboxError\":\""
+         << jsonEscaped(state.mainMenu.sandboxValidationError()) << "\""
+         << ",\"lobbyWaiting\":" << (state.mainMenu.lobbyWaiting() ? "true" : "false")
+         << ",\"sandboxReady\":" << (state.mainMenu.sandboxLocalReady() ? "true" : "false")
+         << ",\"sandboxLaunchEligible\":"
+         << (state.mainMenu.sandboxLaunchEligible() ? "true" : "false")
+         << ",\"trophies\":" << state.lastKnownTrophyTotal.value_or(0)
+         << ",\"callingCard\":\""
+         << jsonEscaped(state.confirmedCosmeticLoadout.has_value()
+             ? state.confirmedCosmeticLoadout->callingCardId.value
+             : "arrow-right-black") << "\""
+         << ",\"emblem\":\""
+         << jsonEscaped(state.confirmedCosmeticLoadout.has_value()
+             ? state.confirmedCosmeticLoadout->emblemId.value
+             : "circle-black") << "\""
+         << ",\"leaderboard\":[";
+    bool first = true;
+    if (state.networkSession != nullptr &&
+        state.networkSession->leaderboardPage().has_value()) {
+        for (const auto& entry : state.networkSession->leaderboardPage()->entries) {
+            if (!first) json << ',';
+            first = false;
+            json << "{\"rank\":" << entry.rank << ",\"username\":\""
+                 << jsonEscaped(entry.username.value) << "\",\"trophies\":"
+                 << entry.trophyTotal << '}';
+        }
+    }
+    json << "],\"roster\":[";
+    first = true;
+    for (const auto& slot : state.mainMenu.sandboxLobbyRoster()) {
+        if (!first) json << ',';
+        first = false;
+        json << "{\"slot\":" << static_cast<int>(slot.slot)
+             << ",\"player\":" << slot.player
+             << ",\"kind\":" << static_cast<int>(slot.kind)
+             << ",\"occupied\":" << (slot.occupied ? "true" : "false")
+             << ",\"ready\":" << (slot.ready ? "true" : "false")
+             << ",\"name\":\"" << jsonEscaped(slot.publicName) << "\"}";
+    }
+    json << "]}";
+    return json.str();
+}
+#endif
+
 } // namespace
 
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
@@ -484,6 +676,16 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         return SDL_APP_FAILURE;
     }
     *appstate = state;
+#if defined(__EMSCRIPTEN__)
+    basilisk::game::browserPreGameBridge().setEnabled(
+        basilisk::game::browserPreGamePrototypeRequested());
+    basilisk::game::browserPreGameBridge().setCommandHandler(
+        [state](const basilisk::game::BrowserPreGameCommand& command) {
+            processBrowserPreGameCommand(*state, command);
+            basilisk::game::browserPreGameBridge().publish(
+                browserPreGameStateJson(*state));
+        });
+#endif
     state->ownedSession =
         std::make_unique<basilisk::game::ClientSessionController>();
     state->session = state->ownedSession.get();
@@ -649,6 +851,12 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         }
     }
 
+#if defined(__EMSCRIPTEN__)
+    if (!SDL_SetHint(SDL_HINT_EMSCRIPTEN_KEYBOARD_ELEMENT, "#canvas")) {
+        SDL_Log("Unable to bind browser keyboard input to the game canvas");
+        return SDL_APP_FAILURE;
+    }
+#endif
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return SDL_APP_FAILURE;
@@ -668,7 +876,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         (void)beginOnlineAuthentication(*state, false, true);
     }
     if (state->view == AppView::Authentication)
-        (void)SDL_StartTextInput(state->window);
+        startSdlPreGameTextInput(state->window);
 
     int logicalWidth = 0;
     int logicalHeight = 0;
@@ -803,7 +1011,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                         basilisk::game::MainMenuPage::JoinLobby ||
                     state->mainMenu.page() ==
                         basilisk::game::MainMenuPage::JoinSandboxLobby)
-                    (void)SDL_StartTextInput(state->window);
+                    startSdlPreGameTextInput(state->window);
                 return handleMainMenuResult(*state, result);
             }
             if (event->key.key == SDLK_ESCAPE) {
@@ -854,7 +1062,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                         basilisk::game::MainMenuPage::JoinLobby ||
                     state->mainMenu.page() ==
                         basilisk::game::MainMenuPage::JoinSandboxLobby)
-                    (void)SDL_StartTextInput(state->window);
+                    startSdlPreGameTextInput(state->window);
                 return handleMainMenuResult(*state, result);
             }
         }
@@ -874,7 +1082,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 
     if (state != nullptr && state->session != nullptr &&
         state->session->activeClash().has_value()) {
-        (void)SDL_StartTextInput(state->window);
+        startSdlPreGameTextInput(state->window);
         if (event->type == SDL_EVENT_TEXT_INPUT) {
             if (state->clashInput.size() + std::char_traits<char>::length(event->text.text) <= 64)
                 state->clashInput += event->text.text;
@@ -1422,6 +1630,13 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 SDL_AppResult SDL_AppIterate(void* appstate) {
     auto* state = static_cast<AppState*>(appstate);
 
+#if defined(__EMSCRIPTEN__)
+    for (const auto& command :
+         basilisk::game::browserPreGameBridge().drain()) {
+        processBrowserPreGameCommand(*state, command);
+    }
+#endif
+
     if (state->localAiDriver != nullptr) {
         const Uint64 now = SDL_GetTicks();
         state->localAiDriver->advance(now - state->localAiLastTick);
@@ -1640,6 +1855,11 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             state->networkFailureLogged = true;
         }
     }
+
+#if defined(__EMSCRIPTEN__)
+    basilisk::game::browserPreGameBridge().publish(
+        browserPreGameStateJson(*state));
+#endif
 
     SDL_SetRenderDrawColor(
         state->renderer, 12, 16, state->backgroundBlue, SDL_ALPHA_OPAQUE);
@@ -1901,6 +2121,9 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 
 void SDL_AppQuit(void* appstate, SDL_AppResult) {
     auto* state = static_cast<AppState*>(appstate);
+#if defined(__EMSCRIPTEN__)
+    basilisk::game::browserPreGameBridge().reset();
+#endif
     if (state != nullptr) {
         state->svgTextures.reset();
         state->textRenderer.reset();

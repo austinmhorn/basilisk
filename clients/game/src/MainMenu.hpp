@@ -158,6 +158,9 @@ public:
     void applyConfirmedCosmeticLoadout(
         const client::AccountCosmeticLoadout& loadout);
     void setSandboxConfig(client::SandboxSessionConfig config);
+    void setAiConfig(
+        client::ai::AiDifficulty difficulty,
+        client::ai::AiBehavior behavior) noexcept;
     void sandboxLobbyUpdated(network::SandboxLobbyUpdated update);
     void sandboxLobbyClosed(std::string message);
 

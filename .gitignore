@@ -5,6 +5,8 @@
 /build/
 /build-game/
 /build-web/
+/clients/game/web/frontend/node_modules/
+/clients/game/web/frontend/dist/
 
 # Visual debug client snapshots
 /basilisk_debug_state.json

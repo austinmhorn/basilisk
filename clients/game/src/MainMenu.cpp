@@ -641,6 +641,13 @@ void MainMenuState::setSandboxConfig(client::SandboxSessionConfig config) {
     sandboxValidationError_.clear();
 }
 
+void MainMenuState::setAiConfig(
+    client::ai::AiDifficulty difficulty,
+    client::ai::AiBehavior behavior) noexcept {
+    aiDifficulty_ = difficulty;
+    aiBehavior_ = behavior;
+}
+
 void MainMenuState::setPage(MainMenuPage page) noexcept {
     page_ = page;
     selectedIndex_ = 0;
