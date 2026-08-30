@@ -188,9 +188,12 @@ void shadowTelemetryIsDeterministicAndPublicSafe() {
             MatchOutcome::BasiliskKilled)].decisions == 2);
         assert(telemetry->summary().find("decisions=2") != std::string::npos);
     }
-    std::ifstream input(outputPath);
     std::stringstream contents;
-    contents << input.rdbuf();
+    {
+        std::ifstream input(outputPath);
+        assert(input.is_open());
+        contents << input.rdbuf();
+    }
     const std::string serialized = contents.str();
     assert(serialized.find("\"kind\":\"decision\"") != std::string::npos);
     assert(serialized.find("\"kind\":\"outcome\"") != std::string::npos);
