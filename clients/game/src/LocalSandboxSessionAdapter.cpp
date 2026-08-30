@@ -76,20 +76,26 @@ PlayerFixedMapGeometry geometryFor(const MatchState& state,
 struct SandboxAgent {
     PlayerId player{};
     client::ai::AiConfig config;
-    client::ai::HeuristicPolicy policy;
+    client::ai::RuntimeAiPolicy policy;
     client::ai::AiKnowledgeState knowledge;
     client::ai::AiTurnScheduler scheduler;
     std::optional<RoundNumber> decisionRound;
+
+    SandboxAgent(client::ai::AiConfig value,
+        const client::ai::RuntimeAiPolicyConfig& policyConfig)
+        : player(value.player), config(value), policy(policyConfig) {}
 };
 
 class LocalSandboxMatchState {
 public:
     LocalSandboxMatchState(MatchState state, PlayerId human,
-        std::vector<client::ai::AiConfig> configs)
-        : state_(std::move(state)), coordinator_(state_), human_(human) {
+        std::vector<client::ai::AiConfig> configs,
+        client::ai::RuntimeAiPolicyConfig policy)
+        : state_(std::move(state)), coordinator_(state_), human_(human),
+          policyConfig_(policy) {
         agents_.reserve(configs.size());
         for (auto& config : configs)
-            agents_.push_back(SandboxAgent{config.player, config});
+            agents_.emplace_back(config, policy);
         const PlayerMapView physical = fullPhysicalMap(state_);
         layout_.update(physical);
         layout_.finalizeFullLayout(physical);
@@ -236,10 +242,13 @@ private:
             const PlayerRoundSnapshot* snapshot = &snapshotEntry->second;
             agent.decisionRound = state_.round;
             agent.knowledge.observe(*snapshot);
-            const auto action = client::ai::choosePolicyAction(
-                agent.policy, *snapshot, agent.config, agent.knowledge);
-            if (action) agent.scheduler.scheduleAction(
-                *action, nowMs_, agent.config, state_.round);
+            const auto observation = client::ai::makePolicyObservation(
+                *snapshot, agent.knowledge, agent.config);
+            if (observation.legalActions.empty()) continue;
+            const auto selection = agent.policy.select(observation, agent.config);
+            const auto& action = client::ai::resolvePolicyDecision(
+                observation, selection.authoritative, agent.config).action;
+            agent.scheduler.scheduleAction(action, nowMs_, agent.config, state_.round);
         }
     }
 
@@ -338,6 +347,13 @@ private:
 
     void publish(const std::vector<GameEvent>& events) {
         if (controller_ == nullptr) return;
+        if (!outcomeReported_ && state_.result.status == MatchStatus::Completed &&
+            policyConfig_.mode == client::ai::RuntimeAiPolicyMode::Shadow &&
+            policyConfig_.telemetry != nullptr) {
+            policyConfig_.telemetry->recordOutcome(policyConfig_.context,
+                state_.result.outcome, state_.result.winner);
+            outcomeReported_ = true;
+        }
         refreshView();
         for (const PlayerState& player : state_.players) {
             PlayerRoundSnapshot snapshot = SnapshotSystem::buildForPlayer(
@@ -355,9 +371,11 @@ private:
     MatchCoordinator coordinator_;
     PlayerMapLayout layout_;
     PlayerId human_{};
+    client::ai::RuntimeAiPolicyConfig policyConfig_;
     std::vector<SandboxAgent> agents_;
     std::map<PlayerId, PlayerRoundSnapshot> aiSnapshots_;
     std::uint64_t nowMs_{};
+    bool outcomeReported_{};
     ClientSessionController* controller_{nullptr};
 };
 
@@ -394,7 +412,8 @@ private:
 } // namespace
 
 LocalSandboxSession LocalSandboxSessionAdapter::create(
-    const client::SandboxSessionConfig& config) {
+    const client::SandboxSessionConfig& config,
+    client::ai::RuntimeAiPolicyConfig policy) {
     if (validateSandboxSessionConfig(config).has_value() ||
         config.humanPlayerCount != 1)
         return {};
@@ -432,8 +451,10 @@ LocalSandboxSession LocalSandboxSessionAdapter::create(
     PublicMatchMetadata metadata = PublicMatchMetadataSystem::build(match);
     const client::ClientViewContext view{
         human, human, client::ClientViewMode::Playing, std::nullopt};
+    policy.context = "local-sandbox-" + std::to_string(config.mapSeed) + "-" +
+        std::to_string(config.matchSeed);
     auto state = std::make_shared<LocalSandboxMatchState>(
-        std::move(match), human, configs);
+        std::move(match), human, configs, std::move(policy));
     auto session = std::make_unique<ClientSessionController>(
         std::move(metadata), std::move(profiles), view,
         std::make_unique<SandboxActionSink>(state),

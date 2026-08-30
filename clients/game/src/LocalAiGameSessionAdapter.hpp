@@ -5,7 +5,7 @@
 
 #include "ClientSessionController.hpp"
 #include "basilisk/Types.hpp"
-#include "basilisk/client/ai/AiDecisionEngine.hpp"
+#include "basilisk/client/ai/RuntimeAiPolicy.hpp"
 
 #if defined(BASILISK_GAME_DEBUG_BUILD)
 #include "DebugMapProvider.hpp"
@@ -35,7 +35,8 @@ public:
         MatchSeed matchSeed,
         client::ai::AiDifficulty difficulty,
         client::ai::AiBehavior behavior,
-        client::ai::AiSeed aiSeed);
+        client::ai::AiSeed aiSeed,
+        client::ai::RuntimeAiPolicyConfig policy = {});
 };
 
 } // namespace basilisk::game

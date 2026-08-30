@@ -83,6 +83,7 @@ public:
         std::uint16_t port,
         std::string bindAddress,
         int webSocketPingIntervalSeconds,
+        client::ai::RuntimeAiPolicyConfig aiPolicy,
         std::map<std::string, PlayerId> tokens,
         std::shared_ptr<SQLiteAccountAuth> authentication,
         std::map<AccountIdentity, PlayerId> authenticatedAccounts
@@ -99,6 +100,7 @@ public:
           trophyLedger_(std::move(trophyLedger)),
           publicLeaderboard_(std::move(publicLeaderboard)),
           publicProfiles_(std::move(publicProfiles)),
+          aiPolicy_(std::move(aiPolicy)),
           server_(
               port,
               std::move(bindAddress),
@@ -746,7 +748,8 @@ private:
                 player, seed});
         }
         auto match = AuthoritativeInMemoryMatch::createSandbox(
-            assignment.config, std::move(profiles), std::move(aiConfigs), error);
+            assignment.config, std::move(profiles), std::move(aiConfigs), error,
+            aiPolicy_);
         if (match == nullptr) return false;
         const std::string matchId = "sandbox-" +
             std::to_string(++nextMatchId_) + "-" + std::to_string(random_());
@@ -1043,6 +1046,7 @@ private:
     std::shared_ptr<TrophyLedger> trophyLedger_;
     std::shared_ptr<PublicTrophyReadModel> publicLeaderboard_;
     std::shared_ptr<PublicAccountProfileStore> publicProfiles_;
+    client::ai::RuntimeAiPolicyConfig aiPolicy_;
     ix::WebSocketServer server_;
     std::map<std::string, PlayerId> tokens_;
     std::shared_ptr<SQLiteAccountAuth> authentication_;
@@ -1198,6 +1202,7 @@ std::unique_ptr<LocalWebSocketMatchServer> LocalWebSocketMatchServer::start(
         std::move(publicProfiles),
         config.port, std::move(config.bindAddress),
         config.webSocketPingIntervalSeconds,
+        std::move(config.aiPolicy),
         std::map<std::string, PlayerId>{
             {std::move(config.p1Token), PlayerId{1}},
             {std::move(config.p2Token), PlayerId{2}},

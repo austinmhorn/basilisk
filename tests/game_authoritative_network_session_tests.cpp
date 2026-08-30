@@ -658,9 +658,12 @@ void sandboxLaunchPreservesSlotsAndRunsServerAi() {
         aiPlayers.push_back({client::ai::AiDifficulty::Medium,
             client::ai::AiBehavior::Balanced, PlayerId{slot},
             client::ai::AiSeed{1000 + slot}});
+    auto telemetry = std::make_shared<client::ai::AiShadowTelemetry>();
     std::string error;
     auto host = AuthoritativeInMemoryMatch::createSandbox(
-        config, sandboxProfiles, aiPlayers, error);
+        config, sandboxProfiles, aiPlayers, error,
+        {client::ai::RuntimeAiPolicyMode::Shadow, BASILISK_TEST_LEARNED_MODEL,
+            "server-sandbox-shadow", telemetry});
     assert(host != nullptr);
     ConnectedClient p1 = connectClient(*host, PlayerId{1});
     ConnectedClient p2 = connectClient(*host, PlayerId{2});
@@ -683,10 +686,38 @@ void sandboxLaunchPreservesSlotsAndRunsServerAi() {
     }
     assert(host->authoritativeRound() == RoundNumber{2});
     assert(host->resolvedRoundCount() == 1);
+    assert(telemetry->aggregate().decisions >= 3);
     p1.ingestUpdates();
     p2.ingestUpdates();
     p3.ingestUpdates();
     assert(p1.session->controller().displayedSnapshot()->round == RoundNumber{2});
+
+    auto learnedConfig = client::defaultSandboxSessionConfig(3);
+    learnedConfig.humanPlayerCount = 2;
+    learnedConfig.caveCount = 30;
+    learnedConfig.jackalCount = 0;
+    learnedConfig.mapSeed = MapSeed{30303};
+    std::vector<client::PublicPlayerProfile> learnedProfiles;
+    for (std::uint32_t slot = 1; slot <= 3; ++slot)
+        learnedProfiles.push_back({PlayerId{slot},
+            "Learned Hunter " + std::to_string(slot), {"arrow-right-black"},
+            {"circle-black"}});
+    std::vector<client::ai::AiConfig> learnedAgents{{
+        client::ai::AiDifficulty::Hard, client::ai::AiBehavior::Balanced,
+        PlayerId{3}, client::ai::AiSeed{3003}}};
+    auto learnedHost = AuthoritativeInMemoryMatch::createSandbox(learnedConfig,
+        learnedProfiles, learnedAgents, error,
+        {client::ai::RuntimeAiPolicyMode::Learned, BASILISK_TEST_LEARNED_MODEL,
+            "server-sandbox-learned", {}});
+    assert(learnedHost != nullptr && error.empty());
+    ConnectedClient learnedP1 = connectClient(*learnedHost, PlayerId{1});
+    ConnectedClient learnedP2 = connectClient(*learnedHost, PlayerId{2});
+    for (ConnectedClient* client : {&learnedP1, &learnedP2}) {
+        const auto* snapshot = client->session->controller().displayedSnapshot();
+        assert(client->session->controller().submitAndLock(
+            actionOfType(*snapshot, ActionType::Search)));
+    }
+    assert(learnedHost->authoritativeRound() == RoundNumber{2});
 }
 
 void mixedOnlineSandboxRoundsRemainExactAndPlayerSafe() {

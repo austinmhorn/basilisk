@@ -51,6 +51,7 @@ int main(int argc, char** argv) {
     std::optional<std::string> p2Account;
     std::optional<std::string> p1Username;
     std::optional<std::string> p2Username;
+    std::optional<std::string> aiShadowOutput;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument{argv[index]};
         if (argument != "--bind" && argument != "--port" &&
@@ -59,7 +60,9 @@ int main(int argc, char** argv) {
             argument != "--trophy-db" && argument != "--match-id" &&
             argument != "--auth-db" &&
             argument != "--p1-account" && argument != "--p2-account" &&
-            argument != "--p1-username" && argument != "--p2-username") {
+            argument != "--p1-username" && argument != "--p2-username" &&
+            argument != "--ai-policy" && argument != "--ai-model" &&
+            argument != "--ai-shadow-output") {
             std::fprintf(stderr, "Unknown argument: %s\n", argv[index]);
             return 2;
         }
@@ -87,6 +90,17 @@ int main(int argc, char** argv) {
         else if (argument == "--p2-account") p2Account = argv[index];
         else if (argument == "--p1-username") p1Username = argv[index];
         else if (argument == "--p2-username") p2Username = argv[index];
+        else if (argument == "--ai-policy") {
+            const auto mode = basilisk::client::ai::parseRuntimeAiPolicyMode(argv[index]);
+            if (!mode) {
+                std::fprintf(stderr,
+                    "--ai-policy must be heuristic, learned, or shadow\n");
+                return 2;
+            }
+            config.aiPolicy.mode = *mode;
+        }
+        else if (argument == "--ai-model") config.aiPolicy.modelPath = argv[index];
+        else if (argument == "--ai-shadow-output") aiShadowOutput = argv[index];
         else {
             std::uint64_t value = 0;
             if (!parseUnsigned(argv[index], value)) {
@@ -95,6 +109,16 @@ int main(int argc, char** argv) {
                 return 2;
             }
             config.mapSeed = static_cast<basilisk::MapSeed>(value);
+        }
+    }
+    if (aiShadowOutput.has_value()) {
+        try {
+            config.aiPolicy.telemetry =
+                std::make_shared<basilisk::client::ai::AiShadowTelemetry>(
+                    *aiShadowOutput);
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "%s\n", error.what());
+            return 2;
         }
     }
     const bool fixedTrophyScoringRequested = trophyMatch.has_value() ||

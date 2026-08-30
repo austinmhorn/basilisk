@@ -16,7 +16,7 @@
 #include "basilisk/Types.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
 #include "basilisk/client/SandboxConfiguration.hpp"
-#include "basilisk/client/ai/AiDecisionEngine.hpp"
+#include "basilisk/client/ai/RuntimeAiPolicy.hpp"
 
 namespace basilisk::game::server {
 
@@ -68,7 +68,8 @@ public:
         const client::SandboxSessionConfig& config,
         std::vector<client::PublicPlayerProfile> profiles,
         std::vector<client::ai::AiConfig> aiPlayers,
-        std::string& error);
+        std::string& error,
+        client::ai::RuntimeAiPolicyConfig policy = {});
 
     [[nodiscard]] std::shared_ptr<InMemoryMatchEndpoint> connect(
         PlayerId authenticatedPlayer,

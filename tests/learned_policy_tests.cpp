@@ -5,8 +5,10 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <sstream>
 
 #include "basilisk/client/ai/LearnedPolicy.hpp"
+#include "basilisk/client/ai/RuntimeAiPolicy.hpp"
 
 using namespace basilisk;
 using namespace basilisk::client::ai;
@@ -116,11 +118,110 @@ void directLoaderRejectsCorruptWeights() {
     std::filesystem::remove(corrupt);
 }
 
+void runtimePolicyModesPreserveAuthorityAndFallback() {
+    auto safe = snapshot();
+    AiKnowledgeState knowledge;
+    knowledge.observe(safe);
+    const AiConfig config{AiDifficulty::Hard, AiBehavior::Balanced, 7, 991};
+    const auto observation = makePolicyObservation(safe, knowledge, config);
+
+    RuntimeAiPolicy defaultPolicy;
+    const auto heuristic = defaultPolicy.select(observation, config);
+    assert(defaultPolicy.mode() == RuntimeAiPolicyMode::Heuristic);
+    assert(!heuristic.learned.has_value());
+
+    auto telemetry = std::make_shared<AiShadowTelemetry>();
+    RuntimeAiPolicy shadow{{RuntimeAiPolicyMode::Shadow,
+        BASILISK_TEST_LEARNED_MODEL, "runtime-shadow", telemetry}};
+    const auto shadowed = shadow.select(observation, config);
+    assert(shadow.learnedModelLoaded());
+    assert(shadowed.learned.has_value());
+    assert(shadowed.authoritative.legalActionIndex ==
+        heuristic.authoritative.legalActionIndex);
+    assert(resolvePolicyDecision(observation, shadowed.authoritative, config).legalIndex ==
+        resolvePolicyDecision(observation, heuristic.authoritative, config).legalIndex);
+    const auto aggregate = telemetry->aggregate();
+    assert(aggregate.decisions == 1);
+    assert(aggregate.byDifficulty[static_cast<std::size_t>(AiDifficulty::Hard)].decisions == 1);
+    assert(aggregate.byBehavior[static_cast<std::size_t>(AiBehavior::Balanced)].decisions == 1);
+    assert(telemetry->lastRecord()->round == safe.round);
+    assert(telemetry->lastRecord()->player == safe.player);
+
+    RuntimeAiPolicy learned{{RuntimeAiPolicyMode::Learned,
+        BASILISK_TEST_LEARNED_MODEL, "runtime-learned", {}}};
+    const auto selected = learned.select(observation, config);
+    assert(selected.learned.has_value());
+    assert(selected.authoritative.legalActionIndex ==
+        selected.learned->legalActionIndex);
+    (void)resolvePolicyDecision(observation, selected.authoritative, config);
+
+    RuntimeAiPolicy missing{{RuntimeAiPolicyMode::Learned,
+        std::string{BASILISK_TEST_LEARNED_MODEL} + ".missing", "fallback", {}}};
+    const auto fallback = missing.select(observation, config);
+    assert(fallback.learnedFallback);
+    assert(fallback.authoritative.legalActionIndex ==
+        heuristic.authoritative.legalActionIndex);
+}
+
+void shadowTelemetryIsDeterministicAndPublicSafe() {
+    const auto outputPath = std::filesystem::temp_directory_path() /
+        "basilisk-shadow-policy-test.jsonl";
+    {
+        auto telemetry = std::make_shared<AiShadowTelemetry>(outputPath.string());
+        RuntimeAiPolicy policy{{RuntimeAiPolicyMode::Shadow,
+            BASILISK_TEST_LEARNED_MODEL, "shadow-episode", telemetry}};
+        auto safe = snapshot();
+        AiKnowledgeState knowledge;
+        knowledge.observe(safe);
+        const AiConfig config{AiDifficulty::Hard, AiBehavior::ObjectiveFocused, 7, 991};
+        const auto observation = makePolicyObservation(safe, knowledge, config);
+        const auto first = policy.select(observation, config);
+        const auto second = policy.select(observation, config);
+        assert(first.authoritative.legalActionIndex == second.authoritative.legalActionIndex);
+        assert(first.learned->legalActionIndex == second.learned->legalActionIndex);
+        telemetry->recordOutcome("shadow-episode", MatchOutcome::BasiliskKilled,
+            PlayerId{7});
+        const auto aggregate = telemetry->aggregate();
+        assert(aggregate.decisions == 2);
+        assert(aggregate.outcomes == 1);
+        assert(aggregate.byOutcome[static_cast<std::size_t>(
+            MatchOutcome::BasiliskKilled)].decisions == 2);
+        assert(telemetry->summary().find("decisions=2") != std::string::npos);
+    }
+    std::ifstream input(outputPath);
+    std::stringstream contents;
+    contents << input.rdbuf();
+    const std::string serialized = contents.str();
+    assert(serialized.find("\"kind\":\"decision\"") != std::string::npos);
+    assert(serialized.find("\"kind\":\"outcome\"") != std::string::npos);
+    assert(serialized.find("inventory") == std::string::npos);
+    assert(serialized.find("health") == std::string::npos);
+    assert(serialized.find("targetCave") == std::string::npos);
+    assert(serialized.find("pending") == std::string::npos);
+    std::filesystem::remove(outputPath);
+
+    auto fallbackTelemetry = std::make_shared<AiShadowTelemetry>();
+    RuntimeAiPolicy fallback{{RuntimeAiPolicyMode::Shadow,
+        std::string{BASILISK_TEST_LEARNED_MODEL} + ".missing", "missing",
+        fallbackTelemetry}};
+    auto safe = snapshot();
+    AiKnowledgeState knowledge;
+    knowledge.observe(safe);
+    const AiConfig config{AiDifficulty::Medium, AiBehavior::Explorer, 7, 992};
+    const auto observation = makePolicyObservation(safe, knowledge, config);
+    (void)fallback.select(observation, config);
+    const auto aggregate = fallbackTelemetry->aggregate();
+    assert(aggregate.fallbacks == 1);
+    assert(aggregate.modelErrors == 1);
+}
+
 } // namespace
 
 int main() {
     modelValidationAndDeterministicInference();
     incompatibleAndCorruptModelsFallBackToHeuristic();
     directLoaderRejectsCorruptWeights();
+    runtimePolicyModesPreserveAuthorityAndFallback();
+    shadowTelemetryIsDeterministicAndPublicSafe();
     std::cout << "Basilisk learned policy tests passed.\n";
 }

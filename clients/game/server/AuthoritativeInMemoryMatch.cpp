@@ -17,7 +17,7 @@
 #include "basilisk/systems/SnapshotSystem.hpp"
 #include "basilisk/world/MapGenerator.hpp"
 #include "basilisk/client/SandboxConfiguration.hpp"
-#include "basilisk/client/ai/AiPolicy.hpp"
+#include "basilisk/client/ai/RuntimeAiPolicy.hpp"
 #include "basilisk/client/ai/AiKnowledgeState.hpp"
 #include "basilisk/client/ai/AiTurnScheduler.hpp"
 
@@ -94,11 +94,15 @@ PlayerFixedMapGeometry playerGeometry(
 
 struct NetworkAiAgent {
     client::ai::AiConfig config;
-    client::ai::HeuristicPolicy policy;
+    client::ai::RuntimeAiPolicy policy;
     client::ai::AiKnowledgeState knowledge;
     std::optional<RoundNumber> decisionRound;
     client::ai::AiTurnScheduler scheduler;
     std::optional<ClashId> scheduledClash;
+
+    NetworkAiAgent(client::ai::AiConfig value,
+        const client::ai::RuntimeAiPolicyConfig& policyConfig)
+        : config(value), policy(policyConfig) {}
 };
 
 class AuthoritativeInMemoryMatchState {
@@ -109,18 +113,18 @@ public:
         std::optional<TrophyScoringContext> trophyScoring,
         std::shared_ptr<PublicTrophyReadModel> leaderboard,
         client::MatchMode mode,
-        std::vector<client::ai::AiConfig> aiConfigs = {})
+        std::vector<client::ai::AiConfig> aiConfigs = {},
+        client::ai::RuntimeAiPolicyConfig aiPolicy = {})
         : match_(std::move(match)),
           coordinator_(match_),
           metadata_(PublicMatchMetadataSystem::build(match_)),
           profiles_(std::move(profiles)),
           mode_(mode),
           trophyScoring_(std::move(trophyScoring)),
-          leaderboard_(std::move(leaderboard)) {
+          leaderboard_(std::move(leaderboard)), aiPolicyConfig_(aiPolicy) {
 
         for (auto& config : aiConfigs)
-            aiAgents_.push_back({
-                std::move(config), {}, {}, std::nullopt, {}, std::nullopt});
+            aiAgents_.emplace_back(std::move(config), aiPolicy);
 
         const PlayerMapView physicalMap = fullPhysicalMap(match_);
         fullLayout_.update(physicalMap);
@@ -308,6 +312,14 @@ private:
         const bool publishSnapshot =
             match_.round != priorRound || !events.empty();
 
+        if (!aiOutcomeReported_ && match_.result.status == MatchStatus::Completed &&
+            aiPolicyConfig_.mode == client::ai::RuntimeAiPolicyMode::Shadow &&
+            aiPolicyConfig_.telemetry != nullptr) {
+            aiPolicyConfig_.telemetry->recordOutcome(aiPolicyConfig_.context,
+                match_.result.outcome, match_.result.winner);
+            aiOutcomeReported_ = true;
+        }
+
         if (!resolvedClash && !startedClash && !publishSnapshot) return;
 
         refreshContexts();
@@ -416,20 +428,23 @@ private:
             agent->decisionRound = match_.round;
             if (snapshot.availableActions.empty()) continue;
             agent->knowledge.observe(snapshot);
-            const auto selected = client::ai::choosePolicyAction(
-                agent->policy, snapshot, agent->config, agent->knowledge);
-            if (!selected) continue;
+            const auto observation = client::ai::makePolicyObservation(
+                snapshot, agent->knowledge, agent->config);
+            if (observation.legalActions.empty()) continue;
+            const auto selection = agent->policy.select(observation, agent->config);
+            const auto& selected = client::ai::resolvePolicyDecision(
+                observation, selection.authoritative, agent->config).action;
 
             PlayerAction action;
             action.player = agent->config.player;
-            action.type = selected->type;
-            action.targetCave = selected->targetCave;
-            action.targetTunnel = selected->targetTunnel;
-            action.targetItem = selected->targetItem;
-            action.contextualAction = selected->contextualAction;
+            action.type = selected.type;
+            action.targetCave = selected.targetCave;
+            action.targetTunnel = selected.targetTunnel;
+            action.targetItem = selected.targetItem;
+            action.contextualAction = selected.contextualAction;
             if (!coordinator_.submitAction(action)) continue;
 
-            agent->knowledge.recordDecision(*selected);
+            agent->knowledge.recordDecision(selected);
             const RoundNumber priorRound = match_.round;
             const auto priorClash = activeClashCopy();
             if (!coordinator_.lockAction(agent->config.player)) return;
@@ -732,8 +747,10 @@ private:
     bool trophyScoringFinalized_{false};
     std::optional<std::string> trophyScoringError_;
     std::vector<NetworkAiAgent> aiAgents_;
+    client::ai::RuntimeAiPolicyConfig aiPolicyConfig_;
     std::map<PlayerId, PlayerRoundSnapshot> aiSnapshots_;
     std::uint64_t nowMs_{0};
+    bool aiOutcomeReported_{false};
 };
 
 InMemoryMatchEndpoint::InMemoryMatchEndpoint(
@@ -841,7 +858,8 @@ AuthoritativeInMemoryMatch::createSandbox(
     const client::SandboxSessionConfig& config,
     std::vector<client::PublicPlayerProfile> profiles,
     std::vector<client::ai::AiConfig> aiPlayers,
-    std::string& error) {
+    std::string& error,
+    client::ai::RuntimeAiPolicyConfig policy) {
     if (const auto invalid = client::validateOnlineSandboxSessionConfig(config)) {
         error = std::string{*invalid};
         return nullptr;
@@ -874,9 +892,11 @@ AuthoritativeInMemoryMatch::createSandbox(
         error = "AI policies must uniquely match the configured Sandbox AI slots.";
         return nullptr;
     }
+    policy.context = "server-sandbox-" + std::to_string(config.mapSeed) + "-" +
+        std::to_string(config.matchSeed);
     auto state = std::make_shared<AuthoritativeInMemoryMatchState>(
         std::move(match), std::move(profiles), std::nullopt, nullptr,
-        client::MatchMode::Sandbox, std::move(aiPlayers));
+        client::MatchMode::Sandbox, std::move(aiPlayers), std::move(policy));
     error.clear();
     return std::unique_ptr<AuthoritativeInMemoryMatch>(
         new AuthoritativeInMemoryMatch(std::move(state)));

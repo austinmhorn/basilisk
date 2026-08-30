@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <set>
 
@@ -203,4 +204,17 @@ int main() {
     custom.caveCount = 40;
     custom.jackalCount = 5;
     assert(LocalSandboxSessionAdapter::create(custom).session == nullptr);
+
+    auto telemetry = std::make_shared<client::ai::AiShadowTelemetry>();
+    const auto shadowConfig = configFor(3, MapSeed{1}, MatchSeed{424242},
+        client::ai::AiDifficulty::Hard, client::ai::AiBehavior::Balanced,
+        client::ai::AiSeed{99});
+    auto shadow = LocalSandboxSessionAdapter::create(shadowConfig,
+        {client::ai::RuntimeAiPolicyMode::Shadow, BASILISK_TEST_LEARNED_MODEL,
+            "local-sandbox-shadow", telemetry});
+    const PlayerId shadowHuman = shadow.session->viewContext().localPlayer;
+    assert(shadow.session->submitAndLock(
+        searchAction(*shadow.session->snapshotFor(shadowHuman))));
+    advanceUntilNextRound(shadow, shadowHuman);
+    assert(telemetry->aggregate().decisions >= 2);
 }

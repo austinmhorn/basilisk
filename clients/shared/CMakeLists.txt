@@ -43,6 +43,7 @@ add_library(BasiliskClientAI STATIC
     src/AiDecisionEngine.cpp
     src/AiPolicy.cpp
     src/LearnedPolicy.cpp
+    src/RuntimeAiPolicy.cpp
     src/AiTurnScheduler.cpp
 )
 add_library(Basilisk::ClientAI ALIAS BasiliskClientAI)
