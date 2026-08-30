@@ -41,8 +41,9 @@ basilisk::sim::BenchmarkSuite suite(std::string_view value) {
 }
 basilisk::sim::PolicyKind policy(std::string_view value) {
     if (value == "heuristic") return basilisk::sim::PolicyKind::Heuristic;
+    if (value == "learned") return basilisk::sim::PolicyKind::Learned;
     if (value == "random") return basilisk::sim::PolicyKind::Random;
-    throw std::invalid_argument("policy must be heuristic or random");
+    throw std::invalid_argument("policy must be heuristic, learned, or random");
 }
 
 class JsonlTransitionSink final : public basilisk::sim::TransitionSink {
@@ -74,7 +75,8 @@ int main(int argc, char** argv) {
                 std::cout << "Usage: BasiliskAiSim [--matches N] [--seed N] [--output episodes.jsonl]\n"
                     "  [--p1-difficulty easy|medium|hard] [--p1-behavior balanced|explorer|aggressive|objective|survivalist|opportunist|random]\n"
                     "  [--p2-difficulty easy|medium|hard] [--p2-behavior ...]\n"
-                    "  [--p1-policy heuristic|random] [--p2-policy heuristic|random]\n"
+                    "  [--p1-policy heuristic|learned|random] [--p2-policy heuristic|learned|random]\n"
+                    "  [--p1-model policy.model] [--p2-model policy.model]\n"
                     "  [--transitions-output transitions.jsonl]\n"
                     "Benchmark: BasiliskAiSim --benchmark difficulty|hard-behaviors|all\n"
                     "  [--matches-per-orientation N] [--seed N] [--benchmark-output results.csv]\n";
@@ -96,6 +98,8 @@ int main(int argc, char** argv) {
             else if (option == "--p2-behavior") config.p2.behavior = behavior(value);
             else if (option == "--p1-policy") config.p1Policy = policy(value);
             else if (option == "--p2-policy") config.p2Policy = policy(value);
+            else if (option == "--p1-model") config.p1ModelPath = value;
+            else if (option == "--p2-model") config.p2ModelPath = value;
             else throw std::invalid_argument("unknown option: " + std::string(option));
         }
         if (benchmarkSuite) {

@@ -9,6 +9,7 @@
 
 #include "basilisk/MatchState.hpp"
 #include "basilisk/client/ai/AiKnowledgeState.hpp"
+#include "basilisk/client/ai/LearnedPolicy.hpp"
 #include "basilisk/systems/MatchCoordinator.hpp"
 #include "basilisk/systems/SnapshotSystem.hpp"
 #include "basilisk/world/MapGenerator.hpp"
@@ -218,6 +219,7 @@ EpisodeTelemetry runEpisode(const SimulationConfig& config, std::uint64_t episod
     std::unordered_map<PlayerId, Agent> agents;
     const AgentSpec specs[] = {config.p1, config.p2};
     const PolicyKind policyKinds[] = {config.p1Policy, config.p2Policy};
+    const std::string* modelPaths[] = {&config.p1ModelPath, &config.p2ModelPath};
     if (state.players.size() != 2) throw std::runtime_error("AI simulation currently requires two generated hunters");
     for (std::size_t index = 0; index < state.players.size(); ++index) {
         const PlayerId id = state.players[index].id;
@@ -226,6 +228,8 @@ EpisodeTelemetry runEpisode(const SimulationConfig& config, std::uint64_t episod
         std::unique_ptr<AgentPolicy> policy;
         if (policyKinds[index] == PolicyKind::Random)
             policy = std::make_unique<RandomPolicy>(mix(aiSeed ^ 0x504f4c494359ULL));
+        else if (policyKinds[index] == PolicyKind::Learned)
+            policy = std::make_unique<client::ai::LearnedPolicy>(*modelPaths[index]);
         else policy = std::make_unique<HeuristicPolicy>();
         Agent agent;
         agent.requested = specs[index];
@@ -391,7 +395,9 @@ std::string episodeJson(const EpisodeTelemetry& episode) {
 }
 
 const char* policyName(PolicyKind policy) noexcept {
-    return policy == PolicyKind::Random ? "random" : "heuristic";
+    if (policy == PolicyKind::Random) return "random";
+    if (policy == PolicyKind::Learned) return "learned";
+    return "heuristic";
 }
 
 std::string observationJson(const AgentObservation& observation) {

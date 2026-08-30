@@ -177,6 +177,41 @@ void randomPolicyAndTransitionStreamsAreDeterministic() {
     assert(counting.count > 0);
 }
 
+void learnedPolicyRunsDeterministicallyThroughSimulator() {
+    SimulationConfig config;
+    config.seed = 24680;
+    config.p1Policy = PolicyKind::Learned;
+    config.p1ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    config.p2Policy = PolicyKind::Heuristic;
+    CollectingTransitions first;
+    config.transitionSink = &first;
+    const auto firstEpisode = runEpisode(config, 0);
+    CollectingTransitions second;
+    config.transitionSink = &second;
+    const auto secondEpisode = runEpisode(config, 0);
+    assert(episodeJson(firstEpisode) == episodeJson(secondEpisode));
+    assert(firstEpisode.status == MatchStatus::Completed);
+    assert(first.values.size() == second.values.size());
+    bool sawLearned = false;
+    for (std::size_t index = 0; index < first.values.size(); ++index) {
+        assert(transitionJson(first.values[index]) == transitionJson(second.values[index]));
+        if (first.values[index].player == 1) {
+            sawLearned = true;
+            assert(first.values[index].policy == PolicyKind::Learned);
+            assert(first.values[index].decision.policyMetadata == "learned-linear-v1");
+        }
+    }
+    assert(sawLearned);
+
+    SimulationConfig fallback = config;
+    fallback.transitionSink = nullptr;
+    fallback.p1ModelPath = "/model/that/does/not/exist";
+    SimulationConfig heuristic = fallback;
+    heuristic.p1Policy = PolicyKind::Heuristic;
+    assert(episodeJson(runEpisode(fallback, 1)) ==
+        episodeJson(runEpisode(heuristic, 1)));
+}
+
 } // namespace
 
 int main() {
@@ -186,5 +221,6 @@ int main() {
     benchmarkAccountingAndDeterminism();
     trainingTransitionsAreSafeAndLinked();
     randomPolicyAndTransitionStreamsAreDeterministic();
+    learnedPolicyRunsDeterministicallyThroughSimulator();
     std::cout << "AI simulation tests passed\n";
 }

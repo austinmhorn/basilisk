@@ -22,7 +22,7 @@ inline constexpr int kAiObservationSchemaVersion =
     client::ai::kAiObservationSchemaVersion;
 inline constexpr int kAiActionSchemaVersion = client::ai::kAiActionSchemaVersion;
 
-enum class PolicyKind { Heuristic, Random };
+enum class PolicyKind { Heuristic, Learned, Random };
 
 struct AgentSpec {
     client::ai::AiDifficulty difficulty{client::ai::AiDifficulty::Hard};
@@ -150,6 +150,8 @@ struct SimulationConfig {
     AgentSpec p2;
     PolicyKind p1Policy{PolicyKind::Heuristic};
     PolicyKind p2Policy{PolicyKind::Heuristic};
+    std::string p1ModelPath;
+    std::string p2ModelPath;
     TransitionSink* transitionSink{nullptr};
 };
 
