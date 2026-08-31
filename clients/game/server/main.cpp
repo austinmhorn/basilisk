@@ -62,7 +62,9 @@ int main(int argc, char** argv) {
             argument != "--p1-account" && argument != "--p2-account" &&
             argument != "--p1-username" && argument != "--p2-username" &&
             argument != "--ai-policy" && argument != "--ai-model" &&
-            argument != "--ai-shadow-output") {
+            argument != "--ai-shadow-output" &&
+            argument != "--ai-canary-percent" &&
+            argument != "--ai-canary-difficulties") {
             std::fprintf(stderr, "Unknown argument: %s\n", argv[index]);
             return 2;
         }
@@ -94,13 +96,32 @@ int main(int argc, char** argv) {
             const auto mode = basilisk::client::ai::parseRuntimeAiPolicyMode(argv[index]);
             if (!mode) {
                 std::fprintf(stderr,
-                    "--ai-policy must be heuristic, learned, or shadow\n");
+                    "--ai-policy must be heuristic, learned, shadow, or canary\n");
                 return 2;
             }
             config.aiPolicy.mode = *mode;
         }
         else if (argument == "--ai-model") config.aiPolicy.modelPath = argv[index];
         else if (argument == "--ai-shadow-output") aiShadowOutput = argv[index];
+        else if (argument == "--ai-canary-percent") {
+            std::uint64_t value = 0;
+            if (!parseUnsigned(argv[index], value) || value > 100) {
+                std::fprintf(stderr,
+                    "--ai-canary-percent must be between 0 and 100\n");
+                return 2;
+            }
+            config.aiPolicy.canaryPercent = static_cast<std::uint8_t>(value);
+        }
+        else if (argument == "--ai-canary-difficulties") {
+            const auto difficulties =
+                basilisk::client::ai::parseRuntimeAiCanaryDifficulties(argv[index]);
+            if (!difficulties) {
+                std::fprintf(stderr,
+                    "--ai-canary-difficulties must be a comma-separated subset of easy,medium,hard\n");
+                return 2;
+            }
+            config.aiPolicy.canaryDifficulties = *difficulties;
+        }
         else {
             std::uint64_t value = 0;
             if (!parseUnsigned(argv[index], value)) {

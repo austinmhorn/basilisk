@@ -506,7 +506,9 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         const std::string_view argument{argv[index]};
         if (argument != "--connect" && argument != "--token" &&
             argument != "--ai-policy" && argument != "--ai-model" &&
-            argument != "--ai-shadow-output") continue;
+            argument != "--ai-shadow-output" &&
+            argument != "--ai-canary-percent" &&
+            argument != "--ai-canary-difficulties") continue;
         if (index + 1 >= argc || argv[index + 1] == nullptr) {
             SDL_Log("%s requires a value", argv[index]);
             return SDL_APP_FAILURE;
@@ -525,12 +527,31 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
             const auto mode = basilisk::client::ai::parseRuntimeAiPolicyMode(
                 argv[++index]);
             if (!mode) {
-                SDL_Log("--ai-policy must be heuristic, learned, or shadow");
+                SDL_Log("--ai-policy must be heuristic, learned, shadow, or canary");
                 return SDL_APP_FAILURE;
             }
             state->aiPolicy.mode = *mode;
         } else if (argument == "--ai-model") {
             state->aiPolicy.modelPath = argv[++index];
+        } else if (argument == "--ai-canary-percent") {
+            const std::string_view value{argv[++index]};
+            unsigned percent = 0;
+            const auto parsed = std::from_chars(
+                value.data(), value.data() + value.size(), percent);
+            if (parsed.ec != std::errc{} ||
+                parsed.ptr != value.data() + value.size() || percent > 100) {
+                SDL_Log("--ai-canary-percent must be between 0 and 100");
+                return SDL_APP_FAILURE;
+            }
+            state->aiPolicy.canaryPercent = static_cast<std::uint8_t>(percent);
+        } else if (argument == "--ai-canary-difficulties") {
+            const auto difficulties =
+                basilisk::client::ai::parseRuntimeAiCanaryDifficulties(argv[++index]);
+            if (!difficulties) {
+                SDL_Log("--ai-canary-difficulties must be a comma-separated subset of easy,medium,hard");
+                return SDL_APP_FAILURE;
+            }
+            state->aiPolicy.canaryDifficulties = *difficulties;
         } else {
             aiShadowOutput = argv[++index];
         }

@@ -1,5 +1,8 @@
 #include <cassert>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <stdexcept>
 #include <vector>
@@ -198,7 +201,7 @@ void learnedPolicyRunsDeterministicallyThroughSimulator() {
         if (first.values[index].player == 1) {
             sawLearned = true;
             assert(first.values[index].policy == PolicyKind::Learned);
-            assert(first.values[index].decision.policyMetadata == "learned-linear-v1");
+            assert(first.values[index].decision.policyMetadata == "learned-linear-v2");
         }
     }
     assert(sawLearned);
@@ -212,6 +215,34 @@ void learnedPolicyRunsDeterministicallyThroughSimulator() {
         episodeJson(runEpisode(heuristic, 1)));
 }
 
+void canaryPolicyUsesRuntimeEligibilityAndTelemetry() {
+    const auto outputPath = std::filesystem::temp_directory_path() /
+        "basilisk-ai-sim-canary.jsonl";
+    SimulationConfig config;
+    config.seed = 717;
+    config.p1Policy = PolicyKind::Canary;
+    config.p2Policy = PolicyKind::Canary;
+    config.p1ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    config.p2ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    config.canaryPercent = 100;
+    config.p1.difficulty = client::ai::AiDifficulty::Easy;
+    config.p2.difficulty = client::ai::AiDifficulty::Hard;
+    {
+        config.canaryTelemetry = std::make_shared<client::ai::AiShadowTelemetry>(
+            outputPath.string());
+        assert(runEpisode(config, 0).status == MatchStatus::Completed);
+    }
+    std::ifstream input(outputPath);
+    std::stringstream contents;
+    contents << input.rdbuf();
+    input.close();
+    const auto text = contents.str();
+    assert(text.find("\"authoritativePolicy\":\"heuristic\"") != std::string::npos);
+    assert(text.find("\"authoritativePolicy\":\"learned\"") != std::string::npos);
+    assert(text.find("\"kind\":\"canary-outcome\"") != std::string::npos);
+    std::filesystem::remove(outputPath);
+}
+
 } // namespace
 
 int main() {
@@ -222,5 +253,6 @@ int main() {
     trainingTransitionsAreSafeAndLinked();
     randomPolicyAndTransitionStreamsAreDeterministic();
     learnedPolicyRunsDeterministicallyThroughSimulator();
+    canaryPolicyUsesRuntimeEligibilityAndTelemetry();
     std::cout << "AI simulation tests passed\n";
 }

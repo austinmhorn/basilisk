@@ -75,7 +75,7 @@ void modelValidationAndDeterministicInference() {
     const PolicyDecision first = policy.select(observation, config);
     const PolicyDecision second = policy.select(observation, config);
     assert(first.legalActionIndex == second.legalActionIndex);
-    assert(first.policyMetadata == "learned-linear-v1");
+    assert(first.policyMetadata == "learned-linear-v2");
     const auto& selected = resolvePolicyDecision(observation, first, config);
     assert(selected.legalIndex < safe.availableActions.size());
     assert(sameAction(selected.action, safe.availableActions[selected.legalIndex]));
@@ -218,6 +218,109 @@ void shadowTelemetryIsDeterministicAndPublicSafe() {
     assert(aggregate.modelErrors == 1);
 }
 
+void canaryAssignmentAndCompatibilityAreDeterministic() {
+    assert(parseRuntimeAiCanaryDifficulties("medium,hard") ==
+        kDefaultCanaryDifficulties);
+    assert(parseRuntimeAiCanaryDifficulties("easy") == kCanaryEasy);
+    assert(!parseRuntimeAiCanaryDifficulties("medium,unknown"));
+    assert(!runtimeAiCanaryDifficultyEligible(
+        kDefaultCanaryDifficulties, AiDifficulty::Easy));
+    assert(runtimeAiCanaryDifficultyEligible(
+        kDefaultCanaryDifficulties, AiDifficulty::Medium));
+    assert(runtimeAiCanaryDifficultyEligible(
+        kDefaultCanaryDifficulties, AiDifficulty::Hard));
+    for (PlayerId player = 1; player <= 32; ++player) {
+        assert(!runtimeAiCanaryAssigned("stable-match", player, 0));
+        assert(runtimeAiCanaryAssigned("stable-match", player, 100));
+        assert(runtimeAiCanaryAssigned("stable-match", player, 37) ==
+            runtimeAiCanaryAssigned("stable-match", player, 37));
+    }
+    bool assigned = false;
+    bool unassigned = false;
+    for (PlayerId player = 1; player <= 100; ++player) {
+        assigned |= runtimeAiCanaryAssigned("mixed-match", player, 50);
+        unassigned |= !runtimeAiCanaryAssigned("mixed-match", player, 50);
+    }
+    assert(assigned && unassigned);
+
+    auto safe = snapshot();
+    AiKnowledgeState knowledge;
+    knowledge.observe(safe);
+    AiConfig config{AiDifficulty::Hard, AiBehavior::Balanced, 7, 991};
+    const auto observation = makePolicyObservation(safe, knowledge, config);
+    RuntimeAiPolicy heuristic;
+    const auto expected = heuristic.select(observation, config);
+
+    RuntimeAiPolicy zero{{RuntimeAiPolicyMode::Canary,
+        BASILISK_TEST_LEARNED_MODEL, "zero", {}, 0}};
+    const auto zeroResult = zero.select(observation, config);
+    assert(!zeroResult.canaryAssigned && !zeroResult.learned.has_value());
+    assert(zeroResult.authoritative.legalActionIndex ==
+        expected.authoritative.legalActionIndex);
+
+    RuntimeAiPolicy all{{RuntimeAiPolicyMode::Canary,
+        BASILISK_TEST_LEARNED_MODEL, "all", {}, 100}};
+    const auto allResult = all.select(observation, config);
+    assert(allResult.canaryAssigned && allResult.learned.has_value());
+    assert(allResult.authoritative.legalActionIndex ==
+        allResult.learned->legalActionIndex);
+    (void)resolvePolicyDecision(observation, allResult.authoritative, config);
+
+    config.difficulty = AiDifficulty::Easy;
+    const auto easyResult = all.select(observation, config);
+    assert(!easyResult.canaryAssigned && !easyResult.learned.has_value());
+    assert(easyResult.authoritative.legalActionIndex ==
+        heuristic.select(observation, config).authoritative.legalActionIndex);
+    config.difficulty = AiDifficulty::Medium;
+    const auto mediumResult = all.select(observation, config);
+    assert(mediumResult.canaryAssigned && mediumResult.learned.has_value());
+
+    RuntimeAiPolicy bad{{RuntimeAiPolicyMode::Canary,
+        std::string{BASILISK_TEST_LEARNED_MODEL} + ".missing", "bad", {}, 100}};
+    const auto badResult = bad.select(observation, config);
+    assert(badResult.canaryAssigned && badResult.learnedFallback);
+    assert(badResult.authoritative.legalActionIndex ==
+        expected.authoritative.legalActionIndex);
+
+    LearnedPolicy old{BASILISK_TEST_LEARNED_MODEL_V1};
+    assert(!old.modelLoaded());
+    assert(old.select(observation, config).legalActionIndex ==
+        expected.authoritative.legalActionIndex);
+}
+
+void canaryTelemetryIsCohortAttributedAndPublicSafe() {
+    const auto outputPath = std::filesystem::temp_directory_path() /
+        "basilisk-canary-policy-test.jsonl";
+    {
+        auto telemetry = std::make_shared<AiShadowTelemetry>(outputPath.string());
+        RuntimeAiPolicy policy{{RuntimeAiPolicyMode::Canary,
+            BASILISK_TEST_LEARNED_MODEL, "canary-episode", telemetry, 100}};
+        auto safe = snapshot();
+        AiKnowledgeState knowledge;
+        knowledge.observe(safe);
+        const AiConfig config{AiDifficulty::Hard, AiBehavior::Survivalist, 7, 991};
+        (void)policy.select(makePolicyObservation(safe, knowledge, config), config);
+        telemetry->recordCanaryOutcome("canary-episode",
+            MatchOutcome::BasiliskKilled, PlayerId{7});
+    }
+    std::stringstream contents;
+    {
+        std::ifstream input(outputPath);
+        assert(input.is_open());
+        contents << input.rdbuf();
+    }
+    const std::string serialized = contents.str();
+    assert(serialized.find("\"kind\":\"canary-decision\"") != std::string::npos);
+    assert(serialized.find("\"authoritativePolicy\":\"learned\"") !=
+        std::string::npos);
+    assert(serialized.find("\"kind\":\"canary-outcome\"") != std::string::npos);
+    assert(serialized.find("inventory") == std::string::npos);
+    assert(serialized.find("health") == std::string::npos);
+    assert(serialized.find("targetCave") == std::string::npos);
+    assert(serialized.find("pending") == std::string::npos);
+    std::filesystem::remove(outputPath);
+}
+
 } // namespace
 
 int main() {
@@ -226,5 +329,7 @@ int main() {
     directLoaderRejectsCorruptWeights();
     runtimePolicyModesPreserveAuthorityAndFallback();
     shadowTelemetryIsDeterministicAndPublicSafe();
+    canaryAssignmentAndCompatibilityAreDeterministic();
+    canaryTelemetryIsCohortAttributedAndPublicSafe();
     std::cout << "Basilisk learned policy tests passed.\n";
 }

@@ -43,7 +43,8 @@ basilisk::sim::PolicyKind policy(std::string_view value) {
     if (value == "heuristic") return basilisk::sim::PolicyKind::Heuristic;
     if (value == "learned") return basilisk::sim::PolicyKind::Learned;
     if (value == "random") return basilisk::sim::PolicyKind::Random;
-    throw std::invalid_argument("policy must be heuristic, learned, or random");
+    if (value == "canary") return basilisk::sim::PolicyKind::Canary;
+    throw std::invalid_argument("policy must be heuristic, learned, random, or canary");
 }
 
 class JsonlTransitionSink final : public basilisk::sim::TransitionSink {
@@ -67,6 +68,7 @@ int main(int argc, char** argv) {
         std::string outputPath;
         std::string transitionsOutput;
         std::string benchmarkOutput;
+        std::string canaryTelemetryOutput;
         std::optional<basilisk::sim::BenchmarkSuite> benchmarkSuite;
         std::uint64_t matchesPerOrientation = 2000;
         for (int i = 1; i < argc; ++i) {
@@ -75,8 +77,10 @@ int main(int argc, char** argv) {
                 std::cout << "Usage: BasiliskAiSim [--matches N] [--seed N] [--output episodes.jsonl]\n"
                     "  [--p1-difficulty easy|medium|hard] [--p1-behavior balanced|explorer|aggressive|objective|survivalist|opportunist|random]\n"
                     "  [--p2-difficulty easy|medium|hard] [--p2-behavior ...]\n"
-                    "  [--p1-policy heuristic|learned|random] [--p2-policy heuristic|learned|random]\n"
+                    "  [--p1-policy heuristic|learned|random|canary] [--p2-policy heuristic|learned|random|canary]\n"
                     "  [--p1-model policy.model] [--p2-model policy.model]\n"
+                    "  [--ai-canary-percent 0-100] [--ai-canary-difficulties medium,hard]\n"
+                    "  [--ai-canary-telemetry canary.jsonl]\n"
                     "  [--transitions-output transitions.jsonl]\n"
                     "Benchmark: BasiliskAiSim --benchmark difficulty|hard-behaviors|all\n"
                     "  [--matches-per-orientation N] [--seed N] [--benchmark-output results.csv]\n";
@@ -100,6 +104,19 @@ int main(int argc, char** argv) {
             else if (option == "--p2-policy") config.p2Policy = policy(value);
             else if (option == "--p1-model") config.p1ModelPath = value;
             else if (option == "--p2-model") config.p2ModelPath = value;
+            else if (option == "--ai-canary-percent") {
+                const auto percent = number(value, option);
+                if (percent > 100) throw std::invalid_argument(
+                    "--ai-canary-percent must be between 0 and 100");
+                config.canaryPercent = static_cast<std::uint8_t>(percent);
+            }
+            else if (option == "--ai-canary-difficulties") {
+                const auto difficulties = parseRuntimeAiCanaryDifficulties(value);
+                if (!difficulties) throw std::invalid_argument(
+                    "--ai-canary-difficulties must be a comma-separated subset of easy,medium,hard");
+                config.canaryDifficulties = *difficulties;
+            }
+            else if (option == "--ai-canary-telemetry") canaryTelemetryOutput = value;
             else throw std::invalid_argument("unknown option: " + std::string(option));
         }
         if (benchmarkSuite) {
@@ -134,6 +151,8 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (config.matches == 0) throw std::invalid_argument("--matches must be greater than zero");
+        if (!canaryTelemetryOutput.empty())
+            config.canaryTelemetry = std::make_shared<AiShadowTelemetry>(canaryTelemetryOutput);
         std::unique_ptr<JsonlTransitionSink> transitionSink;
         if (!transitionsOutput.empty()) {
             transitionSink = std::make_unique<JsonlTransitionSink>(transitionsOutput);

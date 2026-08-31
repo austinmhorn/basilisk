@@ -10,8 +10,8 @@
 
 namespace basilisk::client::ai {
 
-inline constexpr int kLearnedPolicyModelVersion = 1;
-inline constexpr int kLearnedPolicyFeatureSchemaVersion = 1;
+inline constexpr int kLearnedPolicyModelVersion = 2;
+inline constexpr int kLearnedPolicyFeatureSchemaVersion = 2;
 inline constexpr std::size_t kLearnedPolicyFeatureCount = 128;
 
 struct LearnedPolicyModel {

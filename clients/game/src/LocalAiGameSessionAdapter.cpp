@@ -281,10 +281,14 @@ private:
     void publish(const std::vector<GameEvent>& events) {
         if (controller_ == nullptr) return;
         if (!outcomeReported_ && state_.result.status == MatchStatus::Completed &&
-            policyConfig_.mode == client::ai::RuntimeAiPolicyMode::Shadow &&
+            (policyConfig_.mode == client::ai::RuntimeAiPolicyMode::Shadow ||
+             policyConfig_.mode == client::ai::RuntimeAiPolicyMode::Canary) &&
             policyConfig_.telemetry != nullptr) {
-            policyConfig_.telemetry->recordOutcome(policyConfig_.context,
-                state_.result.outcome, state_.result.winner);
+            if (policyConfig_.mode == client::ai::RuntimeAiPolicyMode::Shadow)
+                policyConfig_.telemetry->recordOutcome(policyConfig_.context,
+                    state_.result.outcome, state_.result.winner);
+            else policyConfig_.telemetry->recordCanaryOutcome(policyConfig_.context,
+                    state_.result.outcome, state_.result.winner);
             outcomeReported_ = true;
         }
         refreshView();

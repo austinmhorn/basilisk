@@ -15,12 +15,22 @@
 
 namespace basilisk::client::ai {
 
-enum class RuntimeAiPolicyMode { Heuristic, Learned, Shadow };
+enum class RuntimeAiPolicyMode { Heuristic, Learned, Shadow, Canary };
+
+inline constexpr std::uint8_t kCanaryEasy = 1U << 0;
+inline constexpr std::uint8_t kCanaryMedium = 1U << 1;
+inline constexpr std::uint8_t kCanaryHard = 1U << 2;
+inline constexpr std::uint8_t kDefaultCanaryDifficulties =
+    kCanaryMedium | kCanaryHard;
 
 [[nodiscard]] std::optional<RuntimeAiPolicyMode> parseRuntimeAiPolicyMode(
     std::string_view value) noexcept;
 [[nodiscard]] const char* runtimeAiPolicyModeName(
     RuntimeAiPolicyMode mode) noexcept;
+[[nodiscard]] std::optional<std::uint8_t> parseRuntimeAiCanaryDifficulties(
+    std::string_view value) noexcept;
+[[nodiscard]] bool runtimeAiCanaryDifficultyEligible(
+    std::uint8_t mask, AiDifficulty difficulty) noexcept;
 
 struct ShadowTelemetryRecord {
     std::string context;
@@ -64,6 +74,10 @@ public:
     void record(const ShadowTelemetryRecord& record);
     void recordOutcome(
         std::string context, MatchOutcome outcome, std::optional<PlayerId> winner);
+    void recordCanaryDecision(const ShadowTelemetryRecord& record,
+        bool assigned, bool authoritativeLearned, bool safetyViolation = false);
+    void recordCanaryOutcome(std::string context, MatchOutcome outcome,
+        std::optional<PlayerId> winner, bool completed = true, bool stalled = false);
     [[nodiscard]] ShadowTelemetryAggregate aggregate() const;
     [[nodiscard]] std::optional<ShadowTelemetryRecord> lastRecord() const;
     [[nodiscard]] std::string summary() const;
@@ -85,6 +99,8 @@ struct RuntimeAiPolicyConfig {
     std::string modelPath;
     std::string context{"ai-match"};
     std::shared_ptr<AiShadowTelemetry> telemetry;
+    std::uint8_t canaryPercent{};
+    std::uint8_t canaryDifficulties{kDefaultCanaryDifficulties};
 };
 
 struct RuntimeAiPolicySelection {
@@ -92,7 +108,11 @@ struct RuntimeAiPolicySelection {
     AiDecisionEvaluation heuristicEvaluation;
     std::optional<PolicyDecision> learned;
     bool learnedFallback{};
+    bool canaryAssigned{};
 };
+
+[[nodiscard]] bool runtimeAiCanaryAssigned(
+    std::string_view context, PlayerId player, std::uint8_t percent) noexcept;
 
 class RuntimeAiPolicy final {
 public:

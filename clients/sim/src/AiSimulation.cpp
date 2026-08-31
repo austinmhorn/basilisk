@@ -143,6 +143,18 @@ struct Agent {
     std::optional<Pending> pending;
 };
 
+class CanaryPolicy final : public AgentPolicy {
+public:
+    explicit CanaryPolicy(client::ai::RuntimeAiPolicyConfig config)
+        : policy_(std::move(config)) {}
+    AgentDecision select(const AgentObservation& observation,
+        const client::ai::AiConfig& config) override {
+        return policy_.select(observation, config).authoritative;
+    }
+private:
+    client::ai::RuntimeAiPolicy policy_;
+};
+
 AgentObservation makeObservation(const PlayerRoundSnapshot& snapshot,
     const client::ai::AiKnowledgeState& knowledge,
     const std::optional<EncodedAction>& previousAction,
@@ -220,6 +232,8 @@ EpisodeTelemetry runEpisode(const SimulationConfig& config, std::uint64_t episod
     const AgentSpec specs[] = {config.p1, config.p2};
     const PolicyKind policyKinds[] = {config.p1Policy, config.p2Policy};
     const std::string* modelPaths[] = {&config.p1ModelPath, &config.p2ModelPath};
+    const std::string context = "sim-" + std::to_string(episode.mapSeed) + "-" +
+        std::to_string(episode.matchSeed);
     if (state.players.size() != 2) throw std::runtime_error("AI simulation currently requires two generated hunters");
     for (std::size_t index = 0; index < state.players.size(); ++index) {
         const PlayerId id = state.players[index].id;
@@ -230,6 +244,10 @@ EpisodeTelemetry runEpisode(const SimulationConfig& config, std::uint64_t episod
             policy = std::make_unique<RandomPolicy>(mix(aiSeed ^ 0x504f4c494359ULL));
         else if (policyKinds[index] == PolicyKind::Learned)
             policy = std::make_unique<client::ai::LearnedPolicy>(*modelPaths[index]);
+        else if (policyKinds[index] == PolicyKind::Canary)
+            policy = std::make_unique<CanaryPolicy>(client::ai::RuntimeAiPolicyConfig{
+                client::ai::RuntimeAiPolicyMode::Canary, *modelPaths[index], context,
+                config.canaryTelemetry, config.canaryPercent, config.canaryDifficulties});
         else policy = std::make_unique<HeuristicPolicy>();
         Agent agent;
         agent.requested = specs[index];
@@ -337,6 +355,11 @@ EpisodeTelemetry runEpisode(const SimulationConfig& config, std::uint64_t episod
         metrics.health = player == state.players.end() ? 0 : player->health;
         metrics.arrows = player == state.players.end() ? 0 : player->arrows;
     }
+    if (config.canaryTelemetry != nullptr &&
+        (config.p1Policy == PolicyKind::Canary || config.p2Policy == PolicyKind::Canary))
+        config.canaryTelemetry->recordCanaryOutcome(context, state.result.outcome,
+            state.result.winner, state.result.status == MatchStatus::Completed,
+            state.result.status != MatchStatus::Completed);
     return episode;
 }
 
@@ -397,6 +420,7 @@ std::string episodeJson(const EpisodeTelemetry& episode) {
 const char* policyName(PolicyKind policy) noexcept {
     if (policy == PolicyKind::Random) return "random";
     if (policy == PolicyKind::Learned) return "learned";
+    if (policy == PolicyKind::Canary) return "canary";
     return "heuristic";
 }
 

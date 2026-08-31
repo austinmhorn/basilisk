@@ -313,10 +313,14 @@ private:
             match_.round != priorRound || !events.empty();
 
         if (!aiOutcomeReported_ && match_.result.status == MatchStatus::Completed &&
-            aiPolicyConfig_.mode == client::ai::RuntimeAiPolicyMode::Shadow &&
+            (aiPolicyConfig_.mode == client::ai::RuntimeAiPolicyMode::Shadow ||
+             aiPolicyConfig_.mode == client::ai::RuntimeAiPolicyMode::Canary) &&
             aiPolicyConfig_.telemetry != nullptr) {
-            aiPolicyConfig_.telemetry->recordOutcome(aiPolicyConfig_.context,
-                match_.result.outcome, match_.result.winner);
+            if (aiPolicyConfig_.mode == client::ai::RuntimeAiPolicyMode::Shadow)
+                aiPolicyConfig_.telemetry->recordOutcome(aiPolicyConfig_.context,
+                    match_.result.outcome, match_.result.winner);
+            else aiPolicyConfig_.telemetry->recordCanaryOutcome(aiPolicyConfig_.context,
+                    match_.result.outcome, match_.result.winner);
             aiOutcomeReported_ = true;
         }
 

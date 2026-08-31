@@ -12,6 +12,7 @@
 #include "basilisk/Event.hpp"
 #include "basilisk/MatchResult.hpp"
 #include "basilisk/client/ai/AiPolicy.hpp"
+#include "basilisk/client/ai/RuntimeAiPolicy.hpp"
 #include "basilisk/Random.hpp"
 
 namespace basilisk::sim {
@@ -22,7 +23,7 @@ inline constexpr int kAiObservationSchemaVersion =
     client::ai::kAiObservationSchemaVersion;
 inline constexpr int kAiActionSchemaVersion = client::ai::kAiActionSchemaVersion;
 
-enum class PolicyKind { Heuristic, Learned, Random };
+enum class PolicyKind { Heuristic, Learned, Random, Canary };
 
 struct AgentSpec {
     client::ai::AiDifficulty difficulty{client::ai::AiDifficulty::Hard};
@@ -152,6 +153,9 @@ struct SimulationConfig {
     PolicyKind p2Policy{PolicyKind::Heuristic};
     std::string p1ModelPath;
     std::string p2ModelPath;
+    std::uint8_t canaryPercent{};
+    std::uint8_t canaryDifficulties{client::ai::kDefaultCanaryDifficulties};
+    std::shared_ptr<client::ai::AiShadowTelemetry> canaryTelemetry;
     TransitionSink* transitionSink{nullptr};
 };
 

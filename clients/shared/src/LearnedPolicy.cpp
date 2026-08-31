@@ -66,6 +66,8 @@ std::array<double, kLearnedPolicyFeatureCount> encodeLearnedPolicyFeatures(
     add(result, "type=" + type);
     add(result, integerToken("difficulty=", config.difficulty) + "|type=" + type);
     add(result, integerToken("behavior=", config.behavior) + "|type=" + type);
+    add(result, integerToken("difficulty=", config.difficulty) + "|" +
+        integerToken("behavior=", config.behavior) + "|type=" + type);
 
     const auto& snapshot = observation.sourceSnapshot;
     addStateAction(result, "health_ratio", type,
@@ -85,6 +87,13 @@ std::array<double, kLearnedPolicyFeatureCount> encodeLearnedPolicyFeatures(
                 observation.legalActions.begin(), encodedPosition)) /
                 static_cast<double>(observation.legalActions.size() - 1)
             : 0.0);
+    add(result, integerToken("legal_count=",
+        std::min<std::size_t>(observation.legalActions.size(), 8)) + "|type=" + type);
+    const int arrowBand = snapshot.arrows <= 2 ? snapshot.arrows : 3;
+    add(result, integerToken("arrow_band=", arrowBand) + "|type=" + type);
+    const int healthBand = snapshot.maxHealth > 0
+        ? std::clamp(snapshot.health * 4 / snapshot.maxHealth, 0, 3) : 0;
+    add(result, integerToken("health_band=", healthBand) + "|type=" + type);
 
     const auto& knowledge = observation.knowledge;
     if (knowledge.pitWarning) addStateAction(result, "pit_warning", type);
@@ -100,6 +109,10 @@ std::array<double, kLearnedPolicyFeatureCount> encodeLearnedPolicyFeatures(
         std::min(1.0, static_cast<double>(knowledge.unresolvedPitCandidates) / 6.0));
     addStateAction(result, "repeated_searches", type,
         std::min(1.0, static_cast<double>(knowledge.repeatedSearches) / 5.0));
+    add(result, integerToken("basilisk_candidate_band=",
+        std::min<std::size_t>(knowledge.basiliskCandidateCount, 7)) + "|type=" + type);
+    add(result, integerToken("repeated_search_band=",
+        std::min<std::size_t>(knowledge.repeatedSearches, 5)) + "|type=" + type);
 
     if (snapshot.recoverableRivalSigilAvailable)
         addStateAction(result, "recoverable_sigil", type);
@@ -115,6 +128,8 @@ std::array<double, kLearnedPolicyFeatureCount> encodeLearnedPolicyFeatures(
         if (cave != snapshot.map.caves.end()) {
             add(result, "target_known|type=" + type);
             if (cave->surveyed) add(result, "target_surveyed|type=" + type);
+            addStateAction(result, "target_degree", type,
+                std::min(1.0, static_cast<double>(cave->exits.size()) / 6.0));
         }
         if (observation.knowledgeState.isConfirmedPit(*action.targetCave))
             add(result, "target_confirmed_pit|type=" + type);
@@ -197,7 +212,7 @@ PolicyDecision LearnedPolicy::select(
             best = index;
         }
     }
-    return {best, "learned-linear-v1"};
+    return {best, "learned-linear-v2"};
 }
 
 } // namespace basilisk::client::ai

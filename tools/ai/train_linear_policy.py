@@ -7,10 +7,10 @@ import math
 import random
 from pathlib import Path
 
-MODEL_VERSION = 1
+MODEL_VERSION = 2
 OBSERVATION_SCHEMA = 1
 ACTION_SCHEMA = 1
-FEATURE_SCHEMA = 1
+FEATURE_SCHEMA = 2
 FEATURE_COUNT = 128
 
 DIFFICULTY = {"EASY": 0, "MEDIUM": 1, "HARD": 2}
@@ -24,16 +24,16 @@ BEHAVIOR = {
 }
 
 
-def feature_index(name: str) -> int:
+def feature_index(name: str, feature_count=FEATURE_COUNT) -> int:
     value = 14695981039346656037
     for byte in name.encode("utf-8"):
         value ^= byte
         value = (value * 1099511628211) & 0xFFFFFFFFFFFFFFFF
-    return value % FEATURE_COUNT
+    return value % feature_count
 
 
 def add(values, name, amount=1.0):
-    values[feature_index(name)] += amount
+    values[feature_index(name, len(values))] += amount
 
 
 def add_state_action(values, state, action_type, amount=1.0):
@@ -44,13 +44,16 @@ def ratio(value, maximum):
     return max(0.0, min(1.0, value / maximum)) if maximum > 0 else 0.0
 
 
-def encode(observation, action, difficulty, behavior, position):
-    values = [0.0] * FEATURE_COUNT
+def encode(observation, action, difficulty, behavior, position,
+           feature_schema=FEATURE_SCHEMA, feature_count=FEATURE_COUNT):
+    values = [0.0] * feature_count
     action_type = action["type"]
     add(values, "bias")
     add(values, f"type={action_type}")
     add(values, f"difficulty={difficulty}|type={action_type}")
     add(values, f"behavior={behavior}|type={action_type}")
+    if feature_schema >= 2:
+        add(values, f"difficulty={difficulty}|behavior={behavior}|type={action_type}")
     add_state_action(values, "health_ratio", action_type,
                      ratio(observation["health"], observation["maxHealth"]))
     add_state_action(values, "arrows_ratio", action_type,
@@ -60,6 +63,12 @@ def encode(observation, action, difficulty, behavior, position):
     actions = observation["legalActions"]
     add_state_action(values, "legal_position", action_type,
                      position / (len(actions) - 1) if len(actions) > 1 else 0.0)
+    if feature_schema >= 2:
+        add(values, f"legal_count={min(len(actions), 8)}|type={action_type}")
+        add(values, f"arrow_band={min(observation['arrows'], 3)}|type={action_type}")
+        health_band = min(3, max(0, observation["health"] * 4 //
+                                 observation["maxHealth"])) if observation["maxHealth"] else 0
+        add(values, f"health_band={health_band}|type={action_type}")
 
     knowledge = observation["knowledge"]
     for json_name, feature_name in (
@@ -77,6 +86,9 @@ def encode(observation, action, difficulty, behavior, position):
                      min(1.0, knowledge["unresolvedPitCandidates"] / 6.0))
     add_state_action(values, "repeated_searches", action_type,
                      min(1.0, knowledge["repeatedSearches"] / 5.0))
+    if feature_schema >= 2:
+        add(values, f"basilisk_candidate_band={min(knowledge['basiliskCandidateCount'], 7)}|type={action_type}")
+        add(values, f"repeated_search_band={min(knowledge['repeatedSearches'], 5)}|type={action_type}")
 
     objective = observation["objective"]
     if objective["recoverableSigil"]:
@@ -95,6 +107,9 @@ def encode(observation, action, difficulty, behavior, position):
             add(values, f"target_known|type={action_type}")
             if cave["surveyed"]:
                 add(values, f"target_surveyed|type={action_type}")
+            if feature_schema >= 2:
+                add_state_action(values, "target_degree", action_type,
+                                 min(1.0, len(cave["exits"]) / 6.0))
             if cave["confirmedPit"]:
                 add(values, f"target_confirmed_pit|type={action_type}")
             if cave["pitCandidate"]:
@@ -113,29 +128,32 @@ def encode(observation, action, difficulty, behavior, position):
     return values
 
 
-def read_examples(path):
+def read_examples(paths, feature_schema=FEATURE_SCHEMA, feature_count=FEATURE_COUNT):
     examples = []
-    with Path(path).open(encoding="utf-8") as source:
-        for line_number, line in enumerate(source, 1):
-            record = json.loads(line)
-            if record.get("schemaVersion") != 1:
-                raise ValueError(f"line {line_number}: incompatible transition schema")
-            observation = record["observation"]
-            if observation.get("schemaVersion") != OBSERVATION_SCHEMA:
-                raise ValueError(f"line {line_number}: incompatible observation schema")
-            actions = observation["legalActions"]
-            if not actions:
-                continue
-            if any(action.get("schemaVersion") != ACTION_SCHEMA for action in actions):
-                raise ValueError(f"line {line_number}: incompatible action schema")
-            chosen = record["decision"]["legalActionIndex"]
-            if chosen < 0 or chosen >= len(actions):
-                raise ValueError(f"line {line_number}: chosen action is not legal")
-            difficulty = DIFFICULTY[record["difficulty"]]
-            behavior = BEHAVIOR[record["resolvedBehavior"]]
-            features = [encode(observation, action, difficulty, behavior, index)
-                        for index, action in enumerate(actions)]
-            examples.append((features, chosen))
+    for path in paths:
+        with Path(path).open(encoding="utf-8") as source:
+            for line_number, line in enumerate(source, 1):
+                record = json.loads(line)
+                if record.get("schemaVersion") != 1:
+                    raise ValueError(f"{path}:{line_number}: incompatible transition schema")
+                observation = record["observation"]
+                if observation.get("schemaVersion") != OBSERVATION_SCHEMA:
+                    raise ValueError(f"{path}:{line_number}: incompatible observation schema")
+                actions = observation["legalActions"]
+                if not actions:
+                    continue
+                if any(action.get("schemaVersion") != ACTION_SCHEMA for action in actions):
+                    raise ValueError(f"{path}:{line_number}: incompatible action schema")
+                chosen = record["decision"]["legalActionIndex"]
+                if chosen < 0 or chosen >= len(actions):
+                    raise ValueError(f"{path}:{line_number}: chosen action is not legal")
+                difficulty = DIFFICULTY[record["difficulty"]]
+                behavior = BEHAVIOR[record["resolvedBehavior"]]
+                features = [encode(observation, action, difficulty, behavior, index,
+                                   feature_schema, feature_count)
+                            for index, action in enumerate(actions)]
+                examples.append((features, chosen,
+                    [action["type"] for action in actions]))
     if not examples:
         raise ValueError("transition dataset contained no decisions")
     return examples
@@ -147,14 +165,15 @@ def score(weights, features):
 
 def accuracy(weights, examples):
     correct = 0
-    for candidates, chosen in examples:
+    for candidates, chosen, _ in examples:
         predicted = max(range(len(candidates)), key=lambda index: score(weights, candidates[index]))
         correct += predicted == chosen
     return correct / len(examples)
 
 
-def train(examples, epochs, learning_rate, regularization, seed):
-    weights = [0.0] * FEATURE_COUNT
+def train(examples, epochs, learning_rate, regularization, seed,
+          type_target_weight, initial_weights=None):
+    weights = list(initial_weights) if initial_weights is not None else [0.0] * FEATURE_COUNT
     order = list(range(len(examples)))
     rng = random.Random(seed)
     for epoch in range(epochs):
@@ -162,17 +181,25 @@ def train(examples, epochs, learning_rate, regularization, seed):
         rate = learning_rate / (1.0 + epoch * 0.15)
         shrink = max(0.0, 1.0 - rate * regularization)
         for example_index in order:
-            candidates, chosen = examples[example_index]
+            candidates, chosen, action_types = examples[example_index]
             scores = [score(weights, candidate) for candidate in candidates]
             peak = max(scores)
             probabilities = [math.exp(value - peak) for value in scores]
             total = sum(probabilities)
             probabilities = [value / total for value in probabilities]
-            weights = [weight * shrink for weight in weights]
-            for feature in range(FEATURE_COUNT):
-                expected = sum(probabilities[index] * candidates[index][feature]
-                               for index in range(len(candidates)))
-                weights[feature] += rate * (candidates[chosen][feature] - expected)
+            same_type = [index for index, value in enumerate(action_types)
+                         if value == action_types[chosen]]
+            gradient = [0.0] * FEATURE_COUNT
+            for feature, value in enumerate(candidates[chosen]):
+                gradient[feature] += (1.0 - type_target_weight) * value
+            for target in same_type:
+                for feature, value in enumerate(candidates[target]):
+                    gradient[feature] += type_target_weight * value / len(same_type)
+            for probability, candidate in zip(probabilities, candidates):
+                for feature, value in enumerate(candidate):
+                    gradient[feature] -= probability * value
+            for feature, value in enumerate(gradient):
+                weights[feature] = weights[feature] * shrink + rate * value
     return weights
 
 
@@ -185,20 +212,34 @@ def write_model(path, weights):
         output.write("\n")
 
 
+def read_initial_model(path):
+    tokens = Path(path).read_text(encoding="utf-8").split()
+    if len(tokens) < 6 or tokens[0] != "BASILISK_LINEAR_POLICY":
+        raise ValueError("initial model header is invalid")
+    count = int(tokens[5])
+    weights = [float(value) for value in tokens[6:]]
+    if count != FEATURE_COUNT or len(weights) != FEATURE_COUNT:
+        raise ValueError("initial model feature count is incompatible")
+    return weights
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", required=True)
+    parser.add_argument("--input", required=True, action="append")
     parser.add_argument("--output", required=True)
-    parser.add_argument("--validation-input")
+    parser.add_argument("--validation-input", action="append")
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--epochs", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=0.03)
     parser.add_argument("--regularization", type=float, default=0.0001)
+    parser.add_argument("--type-target-weight", type=float, default=0.25)
+    parser.add_argument("--initial-model")
     args = parser.parse_args()
     examples = read_examples(args.input)
     validation = read_examples(args.validation_input) if args.validation_input else None
+    initial = read_initial_model(args.initial_model) if args.initial_model else None
     weights = train(examples, args.epochs, args.learning_rate,
-                    args.regularization, args.seed)
+                    args.regularization, args.seed, args.type_target_weight, initial)
     write_model(args.output, weights)
     message = f"examples={len(examples)} imitation_accuracy={accuracy(weights, examples):.6f}"
     if validation is not None:
