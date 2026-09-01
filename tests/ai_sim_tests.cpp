@@ -232,6 +232,7 @@ void canaryPolicyUsesRuntimeEligibilityAndTelemetry() {
             outputPath.string());
         assert(runEpisode(config, 0).status == MatchStatus::Completed);
     }
+    config.canaryTelemetry.reset();
     std::ifstream input(outputPath);
     std::stringstream contents;
     contents << input.rdbuf();
