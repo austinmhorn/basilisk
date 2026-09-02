@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <sstream>
@@ -75,10 +76,24 @@ void modelValidationAndDeterministicInference() {
     const PolicyDecision first = policy.select(observation, config);
     const PolicyDecision second = policy.select(observation, config);
     assert(first.legalActionIndex == second.legalActionIndex);
-    assert(first.policyMetadata == "learned-linear-v2");
+    assert(first.policyMetadata.starts_with("learned-linear-v3:"));
     const auto& selected = resolvePolicyDecision(observation, first, config);
     assert(selected.legalIndex < safe.availableActions.size());
     assert(sameAction(selected.action, safe.availableActions[selected.legalIndex]));
+    HeuristicPolicy planner;
+    const auto [plannerDecision, plannerEvaluation] = planner.evaluate(
+        observation, config);
+    const ActionType selectedType = selected.action.type;
+    std::size_t bestTarget = first.legalActionIndex;
+    double bestTargetUtility = -std::numeric_limits<double>::infinity();
+    for (std::size_t index = 0; index < plannerEvaluation.actions.size(); ++index) {
+        if (plannerEvaluation.actions[index].action.type == selectedType &&
+            plannerEvaluation.actions[index].utility > bestTargetUtility) {
+            bestTarget = index;
+            bestTargetUtility = plannerEvaluation.actions[index].utility;
+        }
+    }
+    assert(first.legalActionIndex == bestTarget);
 }
 
 void incompatibleAndCorruptModelsFallBackToHeuristic() {
@@ -285,6 +300,10 @@ void canaryAssignmentAndCompatibilityAreDeterministic() {
     LearnedPolicy old{BASILISK_TEST_LEARNED_MODEL_V1};
     assert(!old.modelLoaded());
     assert(old.select(observation, config).legalActionIndex ==
+        expected.authoritative.legalActionIndex);
+    LearnedPolicy v2{BASILISK_TEST_LEARNED_MODEL_V2};
+    assert(!v2.modelLoaded());
+    assert(v2.select(observation, config).legalActionIndex ==
         expected.authoritative.legalActionIndex);
 }
 

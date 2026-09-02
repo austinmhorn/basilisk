@@ -201,7 +201,8 @@ void learnedPolicyRunsDeterministicallyThroughSimulator() {
         if (first.values[index].player == 1) {
             sawLearned = true;
             assert(first.values[index].policy == PolicyKind::Learned);
-            assert(first.values[index].decision.policyMetadata == "learned-linear-v2");
+            assert(first.values[index].decision.policyMetadata.starts_with(
+                "learned-linear-v3:"));
         }
     }
     assert(sawLearned);

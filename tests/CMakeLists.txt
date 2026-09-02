@@ -148,7 +148,8 @@ if(TARGET BasiliskClientAI)
     add_executable(BasiliskLearnedPolicyTests learned_policy_tests.cpp)
     target_link_libraries(BasiliskLearnedPolicyTests PRIVATE Basilisk::ClientAI)
     target_compile_definitions(BasiliskLearnedPolicyTests PRIVATE
-        BASILISK_TEST_LEARNED_MODEL="${CMAKE_SOURCE_DIR}/clients/shared/models/heuristic-imitation-v2.model"
+        BASILISK_TEST_LEARNED_MODEL="${CMAKE_SOURCE_DIR}/clients/shared/models/heuristic-imitation-v3.model"
+        BASILISK_TEST_LEARNED_MODEL_V2="${CMAKE_SOURCE_DIR}/clients/shared/models/heuristic-imitation-v2.model"
         BASILISK_TEST_LEARNED_MODEL_V1="${CMAKE_SOURCE_DIR}/clients/shared/models/heuristic-imitation-v1.model")
     add_test(NAME BasiliskLearnedPolicyTests COMMAND BasiliskLearnedPolicyTests)
 
@@ -156,7 +157,7 @@ if(TARGET BasiliskClientAI)
     target_link_libraries(BasiliskGameLocalAiSessionTests PRIVATE
         Basilisk::GameLocalSession Basilisk::ClientAI)
     target_compile_definitions(BasiliskGameLocalAiSessionTests PRIVATE
-        BASILISK_TEST_LEARNED_MODEL="${CMAKE_SOURCE_DIR}/clients/shared/models/heuristic-imitation-v2.model")
+        BASILISK_TEST_LEARNED_MODEL="${CMAKE_SOURCE_DIR}/clients/shared/models/heuristic-imitation-v3.model")
     target_compile_features(BasiliskGameLocalAiSessionTests PRIVATE cxx_std_20)
     add_test(NAME BasiliskGameLocalAiSessionTests COMMAND BasiliskGameLocalAiSessionTests)
 
@@ -165,7 +166,7 @@ if(TARGET BasiliskClientAI)
     target_link_libraries(BasiliskGameLocalSandboxSessionTests PRIVATE
         Basilisk::GameLocalSession Basilisk::ClientAI)
     target_compile_definitions(BasiliskGameLocalSandboxSessionTests PRIVATE
-        BASILISK_TEST_LEARNED_MODEL="${CMAKE_SOURCE_DIR}/clients/shared/models/heuristic-imitation-v2.model")
+        BASILISK_TEST_LEARNED_MODEL="${CMAKE_SOURCE_DIR}/clients/shared/models/heuristic-imitation-v3.model")
     target_compile_features(BasiliskGameLocalSandboxSessionTests PRIVATE cxx_std_20)
     add_test(NAME BasiliskGameLocalSandboxSessionTests
         COMMAND BasiliskGameLocalSandboxSessionTests)
@@ -175,7 +176,7 @@ if(TARGET BasiliskAiSimulation)
     add_executable(BasiliskAiSimulationTests ai_sim_tests.cpp)
     target_link_libraries(BasiliskAiSimulationTests PRIVATE Basilisk::AiSimulation)
     target_compile_definitions(BasiliskAiSimulationTests PRIVATE
-        BASILISK_TEST_LEARNED_MODEL="${CMAKE_SOURCE_DIR}/clients/shared/models/heuristic-imitation-v2.model")
+        BASILISK_TEST_LEARNED_MODEL="${CMAKE_SOURCE_DIR}/clients/shared/models/heuristic-imitation-v3.model")
     add_test(NAME BasiliskAiSimulationTests COMMAND BasiliskAiSimulationTests)
 
     add_executable(BasiliskSandboxStressTests sandbox_stress_tests.cpp)
@@ -243,7 +244,7 @@ if(TARGET BasiliskAuthoritativeNetworkSession)
             Basilisk::AuthoritativeNetworkSession
     )
     target_compile_definitions(BasiliskAuthoritativeNetworkSessionTests PRIVATE
-        BASILISK_TEST_LEARNED_MODEL="${CMAKE_SOURCE_DIR}/clients/shared/models/heuristic-imitation-v2.model")
+        BASILISK_TEST_LEARNED_MODEL="${CMAKE_SOURCE_DIR}/clients/shared/models/heuristic-imitation-v3.model")
     add_test(
         NAME BasiliskAuthoritativeNetworkSessionTests
         COMMAND BasiliskAuthoritativeNetworkSessionTests

@@ -7,11 +7,11 @@ import math
 import random
 from pathlib import Path
 
-MODEL_VERSION = 2
+MODEL_VERSION = 3
 OBSERVATION_SCHEMA = 1
 ACTION_SCHEMA = 1
-FEATURE_SCHEMA = 2
-FEATURE_COUNT = 128
+FEATURE_SCHEMA = 3
+FEATURE_COUNT = 512
 
 DIFFICULTY = {"EASY": 0, "MEDIUM": 1, "HARD": 2}
 BEHAVIOR = {
@@ -69,6 +69,9 @@ def encode(observation, action, difficulty, behavior, position,
         health_band = min(3, max(0, observation["health"] * 4 //
                                  observation["maxHealth"])) if observation["maxHealth"] else 0
         add(values, f"health_band={health_band}|type={action_type}")
+    if feature_schema >= 3:
+        add(values, f"legal_position_band={min(position, 11)}|type={action_type}")
+        add(values, f"round_band={min(observation['round'] // 20, 5)}|type={action_type}")
 
     knowledge = observation["knowledge"]
     for json_name, feature_name in (
@@ -89,6 +92,9 @@ def encode(observation, action, difficulty, behavior, position,
     if feature_schema >= 2:
         add(values, f"basilisk_candidate_band={min(knowledge['basiliskCandidateCount'], 7)}|type={action_type}")
         add(values, f"repeated_search_band={min(knowledge['repeatedSearches'], 5)}|type={action_type}")
+    if feature_schema >= 3:
+        adjacent_band = min(knowledge["basiliskCandidateCount"], 7) if knowledge["basiliskAdjacentWarning"] else 8
+        add(values, f"basilisk_adjacent_candidates={adjacent_band}|type={action_type}")
 
     objective = observation["objective"]
     if objective["recoverableSigil"]:
@@ -97,6 +103,16 @@ def encode(observation, action, difficulty, behavior, position,
         add_state_action(values, "has_sigil", action_type)
     if objective["extractionCave"] is not None:
         add_state_action(values, "known_extraction", action_type)
+    if feature_schema >= 3:
+        if objective["hasSigil"] and objective["extractionCave"] is not None:
+            add_state_action(values, "extracting", action_type)
+        if objective["recoverableSigil"] and action_type == "search":
+            add(values, "recoverable_sigil|search")
+        same_type_rank = sum(candidate["type"] == action_type
+                             for candidate in actions[:position])
+        add(values, f"type_rank={min(same_type_rank, 7)}|type={action_type}")
+        for candidate in actions:
+            add(values, f"available={candidate['type']}|type={action_type}")
 
     target_cave = action["targetCave"]
     if target_cave is not None:
@@ -116,6 +132,8 @@ def encode(observation, action, difficulty, behavior, position,
                 add(values, f"target_pit_candidate|type={action_type}")
         if knowledge["previousCave"] == target_cave:
             add(values, f"target_previous_cave|type={action_type}")
+        if feature_schema >= 3 and objective["extractionCave"] == target_cave:
+            add(values, f"target_extraction|type={action_type}")
     if action["targetTunnel"] is not None:
         add(values, f"target_tunnel|type={action_type}")
     if action["targetItem"] is not None:
@@ -125,6 +143,10 @@ def encode(observation, action, difficulty, behavior, position,
     previous = observation["previousAction"]
     if previous is not None:
         add(values, f"previous={previous['type']}|type={action_type}")
+        if feature_schema >= 3 and all(previous.get(field) == action.get(field)
+            for field in ("type", "targetCave", "targetTunnel", "targetItem",
+                          "contextualAction")):
+            add(values, f"repeat_exact_action|type={action_type}")
     return values
 
 
@@ -152,8 +174,19 @@ def read_examples(paths, feature_schema=FEATURE_SCHEMA, feature_count=FEATURE_CO
                 features = [encode(observation, action, difficulty, behavior, index,
                                    feature_schema, feature_count)
                             for index, action in enumerate(actions)]
+                weight = 1.0
+                if feature_schema >= 3:
+                    weight *= {0: 0.8, 1: 1.2, 2: 1.3}[difficulty]
+                    weight *= {"move": 1.0, "search": 1.3, "shoot": 3.0,
+                               "use_item": 1.5, "contextual": 4.0}[actions[chosen]["type"]]
+                    if observation["objective"]["hasSigil"] or observation["objective"]["recoverableSigil"]:
+                        weight *= 2.0
+                    if observation["knowledge"]["basiliskAdjacentWarning"]:
+                        weight *= 2.0
+                    if record.get("terminal"):
+                        weight *= 2.5
                 examples.append((features, chosen,
-                    [action["type"] for action in actions]))
+                    [action["type"] for action in actions], weight))
     if not examples:
         raise ValueError("transition dataset contained no decisions")
     return examples
@@ -165,7 +198,7 @@ def score(weights, features):
 
 def accuracy(weights, examples):
     correct = 0
-    for candidates, chosen, _ in examples:
+    for candidates, chosen, _, _ in examples:
         predicted = max(range(len(candidates)), key=lambda index: score(weights, candidates[index]))
         correct += predicted == chosen
     return correct / len(examples)
@@ -181,7 +214,7 @@ def train(examples, epochs, learning_rate, regularization, seed,
         rate = learning_rate / (1.0 + epoch * 0.15)
         shrink = max(0.0, 1.0 - rate * regularization)
         for example_index in order:
-            candidates, chosen, action_types = examples[example_index]
+            candidates, chosen, action_types, example_weight = examples[example_index]
             scores = [score(weights, candidate) for candidate in candidates]
             peak = max(scores)
             probabilities = [math.exp(value - peak) for value in scores]
@@ -199,7 +232,7 @@ def train(examples, epochs, learning_rate, regularization, seed,
                 for feature, value in enumerate(candidate):
                     gradient[feature] -= probability * value
             for feature, value in enumerate(gradient):
-                weights[feature] = weights[feature] * shrink + rate * value
+                weights[feature] = weights[feature] * shrink + rate * value * example_weight
     return weights
 
 

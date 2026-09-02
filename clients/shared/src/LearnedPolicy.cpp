@@ -13,6 +13,13 @@ namespace {
 
 constexpr std::string_view kModelMagic = "BASILISK_LINEAR_POLICY";
 
+bool sameAction(const AvailableAction& left, const AvailableAction& right) {
+    return left.type == right.type && left.targetCave == right.targetCave &&
+        left.targetTunnel == right.targetTunnel &&
+        left.targetItem == right.targetItem &&
+        left.contextualAction == right.contextualAction;
+}
+
 void add(std::array<double, kLearnedPolicyFeatureCount>& values,
     std::string_view name, double value = 1.0) {
     values[learnedPolicyFeatureIndex(name)] += value;
@@ -80,15 +87,22 @@ std::array<double, kLearnedPolicyFeatureCount> encodeLearnedPolicyFeatures(
         observation.legalActions.end(), [&](const EncodedAction& candidate) {
             return candidate.legalIndex == encoded.legalIndex;
         });
+    const std::size_t encodedPositionIndex = encodedPosition != observation.legalActions.end()
+        ? static_cast<std::size_t>(std::distance(
+            observation.legalActions.begin(), encodedPosition))
+        : observation.legalActions.size();
     addStateAction(result, "legal_position", type,
         observation.legalActions.size() > 1 &&
             encodedPosition != observation.legalActions.end()
-            ? static_cast<double>(std::distance(
-                observation.legalActions.begin(), encodedPosition)) /
+            ? static_cast<double>(encodedPositionIndex) /
                 static_cast<double>(observation.legalActions.size() - 1)
             : 0.0);
     add(result, integerToken("legal_count=",
         std::min<std::size_t>(observation.legalActions.size(), 8)) + "|type=" + type);
+    add(result, integerToken("legal_position_band=",
+        std::min<std::size_t>(encodedPositionIndex, 11)) + "|type=" + type);
+    add(result, integerToken("round_band=",
+        std::min<RoundNumber>(snapshot.round / 20, 5)) + "|type=" + type);
     const int arrowBand = snapshot.arrows <= 2 ? snapshot.arrows : 3;
     add(result, integerToken("arrow_band=", arrowBand) + "|type=" + type);
     const int healthBand = snapshot.maxHealth > 0
@@ -113,11 +127,30 @@ std::array<double, kLearnedPolicyFeatureCount> encodeLearnedPolicyFeatures(
         std::min<std::size_t>(knowledge.basiliskCandidateCount, 7)) + "|type=" + type);
     add(result, integerToken("repeated_search_band=",
         std::min<std::size_t>(knowledge.repeatedSearches, 5)) + "|type=" + type);
+    add(result, integerToken("basilisk_adjacent_candidates=",
+        knowledge.basiliskAdjacentWarning
+            ? std::min<std::size_t>(knowledge.basiliskCandidateCount, 7) : 8) +
+        "|type=" + type);
 
     if (snapshot.recoverableRivalSigilAvailable)
         addStateAction(result, "recoverable_sigil", type);
     if (snapshot.hasHunterSigil) addStateAction(result, "has_sigil", type);
     if (snapshot.extractionCave) addStateAction(result, "known_extraction", type);
+    if (snapshot.hasHunterSigil && snapshot.extractionCave)
+        addStateAction(result, "extracting", type);
+    if (snapshot.recoverableRivalSigilAvailable && type == "search")
+        add(result, "recoverable_sigil|search");
+
+    std::size_t sameTypeRank = 0;
+    for (std::size_t index = 0;
+         index < encodedPositionIndex && index < observation.legalActions.size(); ++index) {
+        const auto& candidate = observation.legalActions[index];
+        if (candidate.action.type == action.type) ++sameTypeRank;
+    }
+    add(result, integerToken("type_rank=", std::min<std::size_t>(sameTypeRank, 7)) +
+        "|type=" + type);
+    for (const auto& candidate : observation.legalActions)
+        add(result, "available=" + actionTypeToken(candidate.action.type) + "|type=" + type);
 
     if (action.targetCave) {
         add(result, "target_cave|type=" + type);
@@ -137,6 +170,8 @@ std::array<double, kLearnedPolicyFeatureCount> encodeLearnedPolicyFeatures(
             add(result, "target_pit_candidate|type=" + type);
         if (observation.knowledge.previousCave == action.targetCave)
             add(result, "target_previous_cave|type=" + type);
+        if (snapshot.extractionCave == action.targetCave)
+            add(result, "target_extraction|type=" + type);
     }
     if (action.targetTunnel) add(result, "target_tunnel|type=" + type);
     if (action.targetItem)
@@ -146,6 +181,8 @@ std::array<double, kLearnedPolicyFeatureCount> encodeLearnedPolicyFeatures(
     if (observation.previousAction) {
         add(result, "previous=" + actionTypeToken(
             observation.previousAction->action.type) + "|type=" + type);
+        if (sameAction(observation.previousAction->action, action))
+            add(result, "repeat_exact_action|type=" + type);
     }
     return result;
 }
@@ -199,6 +236,14 @@ PolicyDecision LearnedPolicy::select(
         return decision;
     }
     if (observation.legalActions.empty()) return {0, "learned:no-action"};
+    HeuristicPolicy planner;
+    auto [heuristicDecision, heuristicEvaluation] = planner.evaluate(observation, config);
+    if (config.difficulty == AiDifficulty::Hard &&
+        heuristicDecision.legalActionIndex < heuristicEvaluation.actions.size() &&
+        heuristicEvaluation.actions[heuristicDecision.legalActionIndex].utility >= 7000.0)
+        return {heuristicDecision.legalActionIndex,
+            "learned-linear-v3:terminal-objective"};
+
     std::size_t best = 0;
     double bestScore = -std::numeric_limits<double>::infinity();
     for (std::size_t index = 0; index < observation.legalActions.size(); ++index) {
@@ -212,7 +257,19 @@ PolicyDecision LearnedPolicy::select(
             best = index;
         }
     }
-    return {best, "learned-linear-v2"};
+    const ActionType selectedType = observation.legalActions[best].action.type;
+    std::size_t planned = best;
+    double plannedUtility = -std::numeric_limits<double>::infinity();
+    for (std::size_t index = 0;
+         index < observation.legalActions.size() && index < heuristicEvaluation.actions.size();
+         ++index) {
+        if (observation.legalActions[index].action.type == selectedType &&
+            heuristicEvaluation.actions[index].utility > plannedUtility) {
+            planned = index;
+            plannedUtility = heuristicEvaluation.actions[index].utility;
+        }
+    }
+    return {planned, "learned-linear-v3:planned-target"};
 }
 
 } // namespace basilisk::client::ai

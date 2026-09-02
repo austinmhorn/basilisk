@@ -60,6 +60,9 @@ def main():
               f"features={count} examples={examples} "
               f"imitation_accuracy={exact / examples:.6f} "
               f"action_type_agreement={action_type / examples:.6f}")
+        if version >= 3:
+            print(f"  runtime_hierarchical_exact={action_type / examples:.6f} "
+                  "(learned type + deterministic player-safe target planner)")
         for difficulty in ("easy", "medium", "hard"):
             count_value, exact_value, type_value = totals[difficulty]
             print(f"  {difficulty}: examples={count_value} "
