@@ -1,0 +1,11 @@
+/var/lib/basilisk/ai-canary.jsonl {
+    daily
+    maxsize 50M
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su basilisk basilisk
+}

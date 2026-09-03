@@ -69,7 +69,7 @@ struct ShadowTelemetryAggregate : ShadowTelemetryBucket {
 // runtime owner; no snapshots or authoritative state are serialized.
 class AiShadowTelemetry final {
 public:
-    explicit AiShadowTelemetry(std::string outputPath = {});
+    explicit AiShadowTelemetry(std::string outputPath = {}, bool append = false);
 
     void record(const ShadowTelemetryRecord& record);
     void recordOutcome(

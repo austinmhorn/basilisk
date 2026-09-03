@@ -340,6 +340,39 @@ void canaryTelemetryIsCohortAttributedAndPublicSafe() {
     std::filesystem::remove(outputPath);
 }
 
+void productionTelemetryAppendsAndOpenFailuresAreReported() {
+    const auto outputPath = std::filesystem::temp_directory_path() /
+        "basilisk-canary-append-test.jsonl";
+    std::filesystem::remove(outputPath);
+    {
+        AiShadowTelemetry telemetry{outputPath.string(), true};
+        telemetry.recordCanaryOutcome("first", MatchOutcome::Draw, std::nullopt);
+    }
+    {
+        AiShadowTelemetry telemetry{outputPath.string(), true};
+        telemetry.recordCanaryOutcome("second", MatchOutcome::Draw, std::nullopt);
+    }
+    std::stringstream contents;
+    {
+        std::ifstream input(outputPath);
+        assert(input.is_open());
+        contents << input.rdbuf();
+    }
+    assert(contents.str().find("\"context\":\"first\"") != std::string::npos);
+    assert(contents.str().find("\"context\":\"second\"") != std::string::npos);
+    std::filesystem::remove(outputPath);
+
+    bool rejected = false;
+    try {
+        AiShadowTelemetry unavailable{
+            (std::filesystem::temp_directory_path() /
+             "basilisk-missing-telemetry-parent" / "canary.jsonl").string(), true};
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    assert(rejected);
+}
+
 } // namespace
 
 int main() {
@@ -350,5 +383,6 @@ int main() {
     shadowTelemetryIsDeterministicAndPublicSafe();
     canaryAssignmentAndCompatibilityAreDeterministic();
     canaryTelemetryIsCohortAttributedAndPublicSafe();
+    productionTelemetryAppendsAndOpenFailuresAreReported();
     std::cout << "Basilisk learned policy tests passed.\n";
 }

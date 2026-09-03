@@ -92,9 +92,10 @@ bool runtimeAiCanaryAssigned(
     return hash % 100 < percent;
 }
 
-AiShadowTelemetry::AiShadowTelemetry(std::string outputPath) {
+AiShadowTelemetry::AiShadowTelemetry(std::string outputPath, bool append) {
     if (!outputPath.empty()) {
-        output_.open(outputPath, std::ios::out | std::ios::trunc);
+        output_.open(outputPath, std::ios::out |
+            (append ? std::ios::app : std::ios::trunc));
         if (!output_) throw std::runtime_error(
             "unable to open AI shadow telemetry output: " + outputPath);
     }
