@@ -245,6 +245,97 @@ void canaryPolicyUsesRuntimeEligibilityAndTelemetry() {
     std::filesystem::remove(outputPath);
 }
 
+void episode3077DoesNotRepeatTheKnownCaveOscillation() {
+    SimulationConfig config;
+    config.seed = 424242;
+    config.p1 = {client::ai::AiDifficulty::Hard,
+        client::ai::AiBehavior::Survivalist};
+    config.p2 = {client::ai::AiDifficulty::Hard,
+        client::ai::AiBehavior::Balanced};
+    config.p1Policy = PolicyKind::Learned;
+    config.p2Policy = PolicyKind::Learned;
+    config.p1ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    config.p2ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    CollectingTransitions transitions;
+    config.transitionSink = &transitions;
+    const EpisodeTelemetry episode = runEpisode(config, 3077);
+    assert(episode.status == MatchStatus::Completed);
+    assert(episode.rounds < 250);
+
+    std::vector<CaveId> p2Caves;
+    for (const Transition& transition : transitions.values) {
+        if (transition.player == 2)
+            p2Caves.push_back(transition.observation.sourceSnapshot.currentCave);
+    }
+    std::size_t fourTurnCycles = 0;
+    for (std::size_t index = 3; index < p2Caves.size(); ++index) {
+        if (p2Caves[index] == p2Caves[index - 2] &&
+            p2Caves[index - 1] == p2Caves[index - 3] &&
+            p2Caves[index] != p2Caves[index - 1]) ++fourTurnCycles;
+    }
+    assert(fourTurnCycles == 0);
+}
+
+void episode277TakesTheSafeUnknownTunnelAfterPitResolution() {
+    SimulationConfig config;
+    config.seed = 424242;
+    config.p1 = {client::ai::AiDifficulty::Hard,
+        client::ai::AiBehavior::Survivalist};
+    config.p2 = {client::ai::AiDifficulty::Hard,
+        client::ai::AiBehavior::Random};
+    config.p1Policy = PolicyKind::Learned;
+    config.p2Policy = PolicyKind::Learned;
+    config.p1ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    config.p2ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    CollectingTransitions transitions;
+    config.transitionSink = &transitions;
+    const EpisodeTelemetry episode = runEpisode(config, 277);
+    assert(episode.status == MatchStatus::Completed);
+    assert(episode.rounds < 100);
+
+    // Investigation can now happen earlier on another frontier. Protect the
+    // semantic Search -> resolved uncertainty -> safe unknown Move transition,
+    // not an obsolete round/cave itinerary (covered separately by unit tests).
+    bool exploredAfterInvestigation = false;
+    for (const auto& search : transitions.values) {
+        if (search.player != 1 || search.chosenAction.action.type != ActionType::Search ||
+            search.observation.knowledgeState.unresolvedPitCandidateCount() == 0) continue;
+        const auto next = std::ranges::find_if(transitions.values,
+            [&](const Transition& transition) {
+                return transition.player == search.player && transition.round == search.round + 1;
+            });
+        if (next != transitions.values.end() &&
+            next->observation.knowledgeState.unresolvedPitCandidateCount() == 0 &&
+            next->chosenAction.action.type == ActionType::Move &&
+            next->chosenAction.action.targetTunnel.has_value())
+            exploredAfterInvestigation = true;
+    }
+    assert(exploredAfterInvestigation);
+}
+
+void strategicStallCorpusCompletesWithoutLongTailLoops() {
+    SimulationConfig config;
+    config.seed = 424242;
+    config.p1 = {client::ai::AiDifficulty::Hard, client::ai::AiBehavior::Random};
+    config.p2 = {client::ai::AiDifficulty::Hard, client::ai::AiBehavior::Random};
+    config.p1Policy = PolicyKind::Learned;
+    config.p2Policy = PolicyKind::Learned;
+    config.p1ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    config.p2ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    for (const std::size_t episodeIndex : {8533U, 381U, 482U, 4499U, 4174U}) {
+        const EpisodeTelemetry episode = runEpisode(config, episodeIndex);
+        assert(episode.status == MatchStatus::Completed);
+        assert(episode.rounds < 100);
+    }
+    // Confirmed-but-unresolved Pit exits must not attract repeated routes,
+    // and an investigation followed by relocation must not trap the hunter.
+    for (const std::size_t episodeIndex : {6454U, 9338U, 1474U, 6231U, 9018U}) {
+        const EpisodeTelemetry episode = runEpisode(config, episodeIndex);
+        assert(episode.status == MatchStatus::Completed);
+        assert(episode.rounds < 150);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -256,5 +347,8 @@ int main() {
     randomPolicyAndTransitionStreamsAreDeterministic();
     learnedPolicyRunsDeterministicallyThroughSimulator();
     canaryPolicyUsesRuntimeEligibilityAndTelemetry();
+    episode3077DoesNotRepeatTheKnownCaveOscillation();
+    episode277TakesTheSafeUnknownTunnelAfterPitResolution();
+    strategicStallCorpusCompletesWithoutLongTailLoops();
     std::cout << "AI simulation tests passed\n";
 }

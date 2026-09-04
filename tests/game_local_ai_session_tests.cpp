@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <memory>
+#include <string>
 
 #include "LocalAiGameSessionAdapter.hpp"
 #include "basilisk/client/MatchMode.hpp"
@@ -35,6 +36,10 @@ void advanceOneRound(
 
     // The AI must not act before its deterministic think deadline.
     local.driver->advance(900);
+    if (local.session->activeClash()) {
+        const auto clash = *local.session->activeClash();
+        assert(local.session->submitClashResponse(std::string{clash.challengeWord}));
+    }
     assert(local.session->snapshotFor(human)->round == round + 1);
 
     // The consumed schedule cannot act a second time in the same round.

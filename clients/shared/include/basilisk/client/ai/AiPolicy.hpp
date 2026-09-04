@@ -44,6 +44,9 @@ struct PolicyObservation {
     PolicyKnowledgeFeatures knowledge;
     std::vector<EncodedAction> legalActions;
     std::optional<EncodedAction> previousAction;
+    // When set, the shared Medium/Hard strategic layer has narrowed
+    // legalActions to safe, non-stalled frontier progress before policy runs.
+    bool explorationPriorityApplied{};
 };
 
 struct PolicyDecision {

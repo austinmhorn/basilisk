@@ -178,7 +178,14 @@ void sharedPolicyPreservesHeuristicChoicesAndOwnsSafetyValidation() {
                 const auto shared = choosePolicyAction(
                     policy, warned, config, knowledge);
                 assert(direct.has_value() == shared.has_value());
-                if (direct) assert(same(*direct, *shared));
+                const auto policyObservation = makePolicyObservation(
+                    warned, knowledge, config);
+                if (policyObservation.explorationPriorityApplied) {
+                    assert(shared->type == ActionType::Move &&
+                        shared->targetTunnel == TunnelId{2});
+                } else if (direct) {
+                    assert(same(*direct, *shared));
+                }
             }
         }
     }
@@ -668,6 +675,15 @@ void hardExtractionUsesShortestKnownSafeRoute() {
     auto extraction = extractionSnapshot();
     AiKnowledgeState knowledge;
     knowledge.observe(extraction);
+    // The shared strategy layer constrains Medium/Hard, never Easy.
+    const auto easyObservation = makePolicyObservation(extraction, knowledge,
+        {AiDifficulty::Easy, AiBehavior::Explorer, 42, 808});
+    assert(!easyObservation.explorationPriorityApplied);
+    assert(easyObservation.legalActions.size() == extraction.availableActions.size());
+    const auto hardObservation = makePolicyObservation(extraction, knowledge, hard);
+    assert(hardObservation.explorationPriorityApplied);
+    assert(hardObservation.legalActions.size() == 1);
+    assert(hardObservation.legalActions.front().action.targetCave == CaveId{2});
     auto choice = engine.choose(extraction, hard, knowledge);
     assert(choice->type == ActionType::Move && choice->targetCave == CaveId{2});
 
@@ -824,6 +840,168 @@ void hardUnknownExtractionAdvancesDiscovery() {
     assert(explore->type == ActionType::Move && explore->targetTunnel == TunnelId{2});
 }
 
+PlayerRoundSnapshot explorationRouteSnapshot(
+    RoundNumber round, CaveId current, bool includeAlternate = true) {
+    PlayerRoundSnapshot result;
+    result.player = 42; result.round = round; result.alive = true;
+    result.health = 100; result.maxHealth = 100; result.arrows = 3; result.maxArrows = 5;
+    result.currentCave = current; result.map.currentCave = current;
+    result.map.caves = {
+        {1, {{1, CaveId{2}, false}, {2, CaveId{3}, false}}, false},
+        {2, {{1, CaveId{1}, false}, {3, CaveId{4}, false}}, false},
+        {3, {{2, CaveId{1}, false}, {4, CaveId{5}, false}}, false},
+        {4, {{3, CaveId{2}, false}}, true},
+        {5, {{4, CaveId{3}, false}}, true},
+    };
+    if (current == 1) {
+        result.availableActions = {moveTo(2), searchAction()};
+        if (includeAlternate) result.availableActions.insert(
+            result.availableActions.begin() + 1, moveTo(3));
+    }
+    return result;
+}
+
+void explorationPriorityBreaksStalledCyclesButAllowsRequiredBacktracking() {
+    const AiBehavior behaviors[] = {AiBehavior::Balanced, AiBehavior::Explorer,
+        AiBehavior::Aggressive, AiBehavior::ObjectiveFocused,
+        AiBehavior::Survivalist, AiBehavior::Opportunist, AiBehavior::Random};
+    for (const AiDifficulty difficulty : {AiDifficulty::Medium, AiDifficulty::Hard}) {
+        for (const AiBehavior behavior : behaviors) {
+            AiKnowledgeState knowledge;
+            knowledge.observe(explorationRouteSnapshot(1, 3));
+            knowledge.observe(explorationRouteSnapshot(2, 1));
+            knowledge.observe(explorationRouteSnapshot(3, 2));
+            const auto stalled = explorationRouteSnapshot(4, 1);
+            knowledge.observe(stalled); // recent no-progress suffix is 2 -> 1
+            const AiConfig config{difficulty, behavior, 42, 9001};
+            const auto observation = makePolicyObservation(stalled, knowledge, config);
+            assert(observation.explorationPriorityApplied);
+            assert(observation.legalActions.size() == 1);
+            assert(observation.legalActions.front().action.targetCave == CaveId{3});
+            HeuristicPolicy policy;
+            assert(choosePolicyAction(policy, stalled, config, knowledge)->targetCave ==
+                CaveId{3});
+            assert(choosePolicyAction(policy, stalled, config, knowledge)->targetCave ==
+                CaveId{3});
+
+            auto onlyBacktrack = explorationRouteSnapshot(4, 1, false);
+            const auto required = makePolicyObservation(onlyBacktrack, knowledge, config);
+            assert(required.explorationPriorityApplied);
+            assert(required.legalActions.size() == 1);
+            assert(required.legalActions.front().action.targetCave == CaveId{2});
+        }
+    }
+}
+
+void resolvedPitExitDoesNotBlacklistAnotherUnknownTunnel() {
+    auto unresolved = awarenessSnapshot(19, 23,
+        {TunnelView{1, std::nullopt, false}, TunnelView{2, CaveId{17}, false},
+         TunnelView{3, std::nullopt, false}},
+        {moveThrough(1), moveTo(17), moveThrough(3), searchAction()},
+        {PlayerObservation{ObservationType::PitNearby, 42}});
+    AiKnowledgeState knowledge;
+    knowledge.observe(unresolved);
+    assert(knowledge.isPitCandidateExit({23, 1}));
+    assert(knowledge.isPitCandidateExit({23, 3}));
+
+    auto resolved = unresolved;
+    resolved.round = 20;
+    resolved.map.caves.front().exits[2].strongColdDraft = true;
+    resolved.observations.push_back(PlayerObservation{
+        ObservationType::PitInvestigationSucceeded, 42, std::nullopt,
+        std::nullopt, 0, std::nullopt, std::nullopt, TunnelId{3}});
+    knowledge.observe(resolved);
+    assert(knowledge.isConfirmedPitExit({23, 3}));
+    assert(!knowledge.isPitCandidateExit({23, 1}));
+    const AiConfig hard{AiDifficulty::Hard, AiBehavior::Survivalist, 42, 277};
+    const auto observation = makePolicyObservation(resolved, knowledge, hard);
+    assert(observation.explorationPriorityApplied);
+    assert(observation.legalActions.size() == 1);
+    assert(observation.legalActions.front().action.targetTunnel == TunnelId{1});
+}
+
+void confirmedUnknownPitIsNotARouteFrontier() {
+    auto s = awarenessSnapshot(1, 1,
+        {TunnelView{1, CaveId{2}, false}, TunnelView{2, CaveId{3}, false}},
+        {moveTo(2), moveTo(3), searchAction()});
+    s.map.caves.push_back({2,
+        {{1, CaveId{1}, false}, {2, std::nullopt, false}}, false});
+    s.map.caves.push_back({3, {{1, CaveId{1}, false}}, false});
+    AiKnowledgeState knowledge;
+    knowledge.observe(s);
+    auto investigate = s;
+    investigate.round = 2;
+    investigate.currentCave = investigate.map.currentCave = 2;
+    investigate.observations = {{ObservationType::PitNearby, 42}};
+    knowledge.observe(investigate);
+    assert(knowledge.isConfirmedPitExit({2, 2}));
+    s.round = 3;
+    knowledge.observe(s);
+    for (auto difficulty : {AiDifficulty::Medium, AiDifficulty::Hard}) {
+        const auto observation = makePolicyObservation(s, knowledge,
+            {difficulty, AiBehavior::Explorer, 42, 1});
+        // No usable frontier exists: do not force another trip to Cave 2.
+        assert(!observation.explorationPriorityApplied);
+        assert(observation.legalActions.size() == s.availableActions.size());
+    }
+}
+
+void pitInvestigationKeepsItsSourceAfterRelocation() {
+    auto s = awarenessSnapshot(2, 3, {TunnelView{1, CaveId{1}, false}},
+        {moveTo(1), searchAction()},
+        {{ObservationType::PitInvestigationSucceeded, 42, CaveId{2},
+          std::nullopt, 0, std::nullopt, std::nullopt, TunnelId{1}}});
+    s.map.caves.push_back({2, {{1, CaveId{99}, false}}, false});
+    AiKnowledgeState knowledge;
+    knowledge.observe(s);
+    assert(knowledge.isConfirmedPitExit({2, 1}));
+    assert(knowledge.isConfirmedPit(99));
+    assert(!knowledge.isConfirmedPitExit({3, 1}));
+    assert(!knowledge.isConfirmedPit(1));
+    const auto observation = makePolicyObservation(s, knowledge,
+        {AiDifficulty::Hard, AiBehavior::Balanced, 42, 1});
+    assert(std::any_of(observation.legalActions.begin(), observation.legalActions.end(),
+        [](const EncodedAction& action) { return action.action.targetCave == CaveId{1}; }));
+}
+
+void stalledUncertainFrontierInvestigatesInsteadOfRetreating() {
+    auto s = awarenessSnapshot(1, 23,
+        {{1, std::nullopt, false}, {2, CaveId{17}, false},
+         {3, std::nullopt, false}},
+        {moveThrough(1), moveTo(17), moveThrough(3), searchAction()},
+        {{ObservationType::PitNearby, 42}});
+    AiKnowledgeState knowledge;
+    for (RoundNumber round = 1; round <= 6; ++round) {
+        s.round = round;
+        knowledge.observe(s);
+    }
+    assert(knowledge.unresolvedPitCandidateCount() > 0);
+    for (const auto difficulty : {AiDifficulty::Medium, AiDifficulty::Hard}) {
+        const auto observation = makePolicyObservation(s, knowledge,
+            {difficulty, AiBehavior::Aggressive, 42, 1});
+        assert(observation.legalActions.size() == 1);
+        assert(observation.legalActions.front().action.type == ActionType::Search);
+    }
+    const auto easy = makePolicyObservation(s, knowledge,
+        {AiDifficulty::Easy, AiBehavior::Aggressive, 42, 1});
+    assert(!easy.explorationPriorityApplied);
+    assert(easy.legalActions.size() == s.availableActions.size());
+    knowledge.recordDecision(searchAction());
+    ++s.round;
+    s.observations.push_back({ObservationType::PitInvestigationInconclusive, 42});
+    knowledge.observe(s);
+    const AiConfig hard{AiDifficulty::Hard, AiBehavior::Balanced, 42, 1};
+    assert(makePolicyObservation(s, knowledge, hard).legalActions.front().action.type ==
+        ActionType::Search);
+    // Resolving one exit leaves the other safe direct unknown move preferred.
+    ++s.round;
+    s.map.caves.front().exits[2].strongColdDraft = true;
+    knowledge.observe(s);
+    const auto resolved = makePolicyObservation(s, knowledge, hard);
+    assert(resolved.legalActions.size() == 1);
+    assert(resolved.legalActions.front().action.targetTunnel == TunnelId{1});
+}
+
 } // namespace
 
 int main() {
@@ -855,6 +1033,11 @@ int main() {
     hardExtractionUsesShortestKnownSafeRoute();
     hardLearnsBasiliskTargetsFromVisibleMisses();
     hardUnknownExtractionAdvancesDiscovery();
+    explorationPriorityBreaksStalledCyclesButAllowsRequiredBacktracking();
+    resolvedPitExitDoesNotBlacklistAnotherUnknownTunnel();
+    confirmedUnknownPitIsNotARouteFrontier();
+    pitInvestigationKeepsItsSourceAfterRelocation();
+    stalledUncertainFrontierInvestigatesInsteadOfRetreating();
 
     const AiConfig aggressive{AiDifficulty::Hard, AiBehavior::Aggressive, 42, 12345};
     assert(engine.choose(safe, aggressive)->type != ActionType::Shoot);

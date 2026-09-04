@@ -23,6 +23,15 @@ bool sameAction(const AvailableAction& left, const AvailableAction& right) {
         left.contextualAction == right.contextualAction;
 }
 
+AvailableAction moveTo(CaveId cave) {
+    AvailableAction action; action.type = ActionType::Move; action.targetCave = cave;
+    return action;
+}
+
+AvailableAction searchAction() {
+    AvailableAction action; action.type = ActionType::Search; return action;
+}
+
 PlayerRoundSnapshot snapshot() {
     PlayerRoundSnapshot result;
     result.player = 7;
@@ -118,6 +127,38 @@ void incompatibleAndCorruptModelsFallBackToHeuristic() {
     assert(missing.select(observation, config).legalActionIndex ==
         expected.legalActionIndex);
     std::filesystem::remove(incompatible);
+}
+
+void learnedPolicyCannotRestoreAStalledExplorationRoute() {
+    PlayerRoundSnapshot state;
+    state.player = 7; state.alive = true; state.health = 100; state.maxHealth = 100;
+    state.arrows = 3; state.maxArrows = 5;
+    state.map.caves = {
+        {1, {{1, CaveId{2}, false}, {2, CaveId{3}, false}}, false},
+        {2, {{1, CaveId{1}, false}, {3, CaveId{4}, false}}, false},
+        {3, {{2, CaveId{1}, false}, {4, CaveId{5}, false}}, false},
+        {4, {{3, CaveId{2}, false}}, true},
+        {5, {{4, CaveId{3}, false}}, true},
+    };
+    AiKnowledgeState knowledge;
+    for (const auto [round, cave] :
+        {std::pair<RoundNumber, CaveId>{1, 3}, {2, 1}, {3, 2}}) {
+        state.round = round; state.currentCave = cave; state.map.currentCave = cave;
+        state.availableActions.clear();
+        knowledge.observe(state);
+    }
+    state.round = 4; state.currentCave = 1; state.map.currentCave = 1;
+    state.availableActions = {moveTo(2), moveTo(3), searchAction()};
+    knowledge.observe(state);
+    const AiConfig config{AiDifficulty::Hard, AiBehavior::Aggressive, 7, 991};
+    const auto observation = makePolicyObservation(state, knowledge, config);
+    assert(observation.explorationPriorityApplied);
+    assert(observation.legalActions.size() == 1);
+    assert(observation.legalActions.front().action.targetCave == CaveId{3});
+    LearnedPolicy learned{BASILISK_TEST_LEARNED_MODEL};
+    const auto selected = resolvePolicyDecision(
+        observation, learned.select(observation, config), config);
+    assert(selected.action.targetCave == CaveId{3});
 }
 
 void directLoaderRejectsCorruptWeights() {
@@ -377,6 +418,7 @@ void productionTelemetryAppendsAndOpenFailuresAreReported() {
 
 int main() {
     modelValidationAndDeterministicInference();
+    learnedPolicyCannotRestoreAStalledExplorationRoute();
     incompatibleAndCorruptModelsFallBackToHeuristic();
     directLoaderRejectsCorruptWeights();
     runtimePolicyModesPreserveAuthorityAndFallback();
