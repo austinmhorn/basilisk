@@ -1,6 +1,8 @@
 #include <cassert>
 #include <algorithm>
 #include <cstddef>
+#include <memory>
+#include <string>
 
 #include "LocalAiGameSessionAdapter.hpp"
 #include "basilisk/client/MatchMode.hpp"
@@ -34,6 +36,10 @@ void advanceOneRound(
 
     // The AI must not act before its deterministic think deadline.
     local.driver->advance(900);
+    if (local.session->activeClash()) {
+        const auto clash = *local.session->activeClash();
+        assert(local.session->submitClashResponse(std::string{clash.challengeWord}));
+    }
     assert(local.session->snapshotFor(human)->round == round + 1);
 
     // The consumed schedule cannot act a second time in the same round.
@@ -113,4 +119,37 @@ int main() {
     const PlayerRoundSnapshot shootRound = *shooting.session->snapshotFor(shooter);
     advanceOneRound(shooting, shooter,
         actionOfType(shootRound, ActionType::Shoot));
+
+    // Shadow inference observes the same safe decision without changing the
+    // authoritative heuristic action or round outcome.
+    auto telemetry = std::make_shared<client::ai::AiShadowTelemetry>();
+    auto shadow = LocalAiGameSessionAdapter::create(
+        MapSeed{20260816}, MatchSeed{424242}, client::ai::AiDifficulty::Hard,
+        client::ai::AiBehavior::Balanced, client::ai::AiSeed{77},
+        {client::ai::RuntimeAiPolicyMode::Shadow, BASILISK_TEST_LEARNED_MODEL,
+            "local-ai-shadow", telemetry});
+    auto control = LocalAiGameSessionAdapter::create(
+        MapSeed{20260816}, MatchSeed{424242}, client::ai::AiDifficulty::Hard,
+        client::ai::AiBehavior::Balanced, client::ai::AiSeed{77});
+    const PlayerId shadowHuman = shadow.session->viewContext().localPlayer;
+    const PlayerId controlHuman = control.session->viewContext().localPlayer;
+    advanceOneRound(shadow, shadowHuman,
+        actionOfType(*shadow.session->snapshotFor(shadowHuman), ActionType::Search));
+    advanceOneRound(control, controlHuman,
+        actionOfType(*control.session->snapshotFor(controlHuman), ActionType::Search));
+    assert(telemetry->aggregate().decisions >= 1);
+    assert(shadow.session->snapshotFor(shadowHuman)->round ==
+        control.session->snapshotFor(controlHuman)->round);
+    assert(shadow.session->snapshotFor(shadowHuman)->currentCave ==
+        control.session->snapshotFor(controlHuman)->currentCave);
+
+    auto learned = LocalAiGameSessionAdapter::create(
+        MapSeed{20260816}, MatchSeed{424242}, client::ai::AiDifficulty::Hard,
+        client::ai::AiBehavior::Balanced, client::ai::AiSeed{77},
+        {client::ai::RuntimeAiPolicyMode::Learned, BASILISK_TEST_LEARNED_MODEL,
+            "local-ai-learned", {}});
+    const PlayerId learnedHuman = learned.session->viewContext().localPlayer;
+    advanceOneRound(learned, learnedHuman,
+        actionOfType(*learned.session->snapshotFor(learnedHuman), ActionType::Search));
+    assert(learned.session->snapshotFor(learnedHuman)->round == RoundNumber{2});
 }

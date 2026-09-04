@@ -41,6 +41,7 @@
 #include "WebSocketNetworkSession.hpp"
 #include "basilisk/ClientSnapshot.hpp"
 #include "basilisk/Random.hpp"
+#include "basilisk/client/ai/RuntimeAiPolicy.hpp"
 
 #if defined(BASILISK_GAME_DEBUG)
 #include "DebugInventoryMenu.hpp"
@@ -89,6 +90,7 @@ struct AppState {
     std::optional<basilisk::game::TrophyAwardPresentation> trophyAward;
     bool trophyAwardPresented{false};
     std::optional<std::int64_t> lastKnownTrophyTotal;
+    basilisk::client::ai::RuntimeAiPolicyConfig aiPolicy;
 
     std::unique_ptr<basilisk::game::ClientSessionController> ownedSession;
     basilisk::game::ClientSessionController* session{nullptr};
@@ -221,7 +223,7 @@ SDL_AppResult handleMainMenuResult(
         auto local = basilisk::game::LocalAiGameSessionAdapter::create(
             basilisk::MapSeed{entropy}, basilisk::MatchSeed{entropy ^ 0xA17EULL},
             state.mainMenu.aiDifficulty(), state.mainMenu.aiBehavior(),
-            basilisk::client::ai::AiSeed{entropy ^ 0xB451115CULL});
+            basilisk::client::ai::AiSeed{entropy ^ 0xB451115CULL}, state.aiPolicy);
         if (local.session == nullptr || local.driver == nullptr) {
             SDL_Log("Unable to create local AI match");
             return SDL_APP_CONTINUE;
@@ -248,7 +250,8 @@ SDL_AppResult handleMainMenuResult(
         config.matchSeed = basilisk::MatchSeed{entropy ^ 0x53414e44424f58ULL};
         config.aiSeed = basilisk::client::ai::AiSeed{
             entropy ^ 0x48554e54455253ULL};
-        auto local = basilisk::game::LocalSandboxSessionAdapter::create(config);
+        auto local = basilisk::game::LocalSandboxSessionAdapter::create(
+            config, state.aiPolicy);
         if (local.session == nullptr || local.driver == nullptr) {
             SDL_Log("Unable to create local Sandbox match");
             return SDL_APP_CONTINUE;
@@ -490,6 +493,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
 
     std::optional<std::string> connectUrl;
     std::optional<std::string> connectToken;
+    std::optional<std::string> aiShadowOutput;
 #if defined(BASILISK_NATIVE_PRODUCTION_ENDPOINT)
     auto endpointConfig = basilisk::game::clientNetworkEndpointConfig(
         basilisk::game::ClientEndpointDefault::Production);
@@ -500,7 +504,11 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
     for (int index = 1; index < argc; ++index) {
         if (argv == nullptr || argv[index] == nullptr) continue;
         const std::string_view argument{argv[index]};
-        if (argument != "--connect" && argument != "--token") continue;
+        if (argument != "--connect" && argument != "--token" &&
+            argument != "--ai-policy" && argument != "--ai-model" &&
+            argument != "--ai-shadow-output" &&
+            argument != "--ai-canary-percent" &&
+            argument != "--ai-canary-difficulties") continue;
         if (index + 1 >= argc || argv[index + 1] == nullptr) {
             SDL_Log("%s requires a value", argv[index]);
             return SDL_APP_FAILURE;
@@ -513,8 +521,50 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
                 return SDL_APP_FAILURE;
             }
             connectUrl = endpointConfig.connectUrl;
+        } else if (argument == "--token") {
+            connectToken = argv[++index];
+        } else if (argument == "--ai-policy") {
+            const auto mode = basilisk::client::ai::parseRuntimeAiPolicyMode(
+                argv[++index]);
+            if (!mode) {
+                SDL_Log("--ai-policy must be heuristic, learned, shadow, or canary");
+                return SDL_APP_FAILURE;
+            }
+            state->aiPolicy.mode = *mode;
+        } else if (argument == "--ai-model") {
+            state->aiPolicy.modelPath = argv[++index];
+        } else if (argument == "--ai-canary-percent") {
+            const std::string_view value{argv[++index]};
+            unsigned percent = 0;
+            const auto parsed = std::from_chars(
+                value.data(), value.data() + value.size(), percent);
+            if (parsed.ec != std::errc{} ||
+                parsed.ptr != value.data() + value.size() || percent > 100) {
+                SDL_Log("--ai-canary-percent must be between 0 and 100");
+                return SDL_APP_FAILURE;
+            }
+            state->aiPolicy.canaryPercent = static_cast<std::uint8_t>(percent);
+        } else if (argument == "--ai-canary-difficulties") {
+            const auto difficulties =
+                basilisk::client::ai::parseRuntimeAiCanaryDifficulties(argv[++index]);
+            if (!difficulties) {
+                SDL_Log("--ai-canary-difficulties must be a comma-separated subset of easy,medium,hard");
+                return SDL_APP_FAILURE;
+            }
+            state->aiPolicy.canaryDifficulties = *difficulties;
+        } else {
+            aiShadowOutput = argv[++index];
         }
-        else connectToken = argv[++index];
+    }
+    if (aiShadowOutput.has_value()) {
+        try {
+            state->aiPolicy.telemetry =
+                std::make_shared<basilisk::client::ai::AiShadowTelemetry>(
+                    *aiShadowOutput);
+        } catch (const std::exception& error) {
+            SDL_Log("%s", error.what());
+            return SDL_APP_FAILURE;
+        }
     }
     if (connectToken.has_value() && !connectUrl.has_value()) {
         SDL_Log("--token requires --connect");

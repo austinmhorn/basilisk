@@ -36,6 +36,19 @@ bool parseUnsigned(std::string_view text, std::uint64_t& value) {
     return result.ec == std::errc{} && result.ptr == text.data() + text.size();
 }
 
+std::string canaryDifficulties(std::uint8_t mask) {
+    using namespace basilisk::client::ai;
+    std::string result;
+    const auto append = [&](std::string_view name) {
+        if (!result.empty()) result += ',';
+        result += name;
+    };
+    if ((mask & kCanaryEasy) != 0) append("easy");
+    if ((mask & kCanaryMedium) != 0) append("medium");
+    if ((mask & kCanaryHard) != 0) append("hard");
+    return result;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -51,6 +64,7 @@ int main(int argc, char** argv) {
     std::optional<std::string> p2Account;
     std::optional<std::string> p1Username;
     std::optional<std::string> p2Username;
+    std::optional<std::string> aiShadowOutput;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument{argv[index]};
         if (argument != "--bind" && argument != "--port" &&
@@ -59,7 +73,11 @@ int main(int argc, char** argv) {
             argument != "--trophy-db" && argument != "--match-id" &&
             argument != "--auth-db" &&
             argument != "--p1-account" && argument != "--p2-account" &&
-            argument != "--p1-username" && argument != "--p2-username") {
+            argument != "--p1-username" && argument != "--p2-username" &&
+            argument != "--ai-policy" && argument != "--ai-model" &&
+            argument != "--ai-shadow-output" &&
+            argument != "--ai-canary-percent" &&
+            argument != "--ai-canary-difficulties") {
             std::fprintf(stderr, "Unknown argument: %s\n", argv[index]);
             return 2;
         }
@@ -87,6 +105,36 @@ int main(int argc, char** argv) {
         else if (argument == "--p2-account") p2Account = argv[index];
         else if (argument == "--p1-username") p1Username = argv[index];
         else if (argument == "--p2-username") p2Username = argv[index];
+        else if (argument == "--ai-policy") {
+            const auto mode = basilisk::client::ai::parseRuntimeAiPolicyMode(argv[index]);
+            if (!mode) {
+                std::fprintf(stderr,
+                    "--ai-policy must be heuristic, learned, shadow, or canary\n");
+                return 2;
+            }
+            config.aiPolicy.mode = *mode;
+        }
+        else if (argument == "--ai-model") config.aiPolicy.modelPath = argv[index];
+        else if (argument == "--ai-shadow-output") aiShadowOutput = argv[index];
+        else if (argument == "--ai-canary-percent") {
+            std::uint64_t value = 0;
+            if (!parseUnsigned(argv[index], value) || value > 100) {
+                std::fprintf(stderr,
+                    "--ai-canary-percent must be between 0 and 100\n");
+                return 2;
+            }
+            config.aiPolicy.canaryPercent = static_cast<std::uint8_t>(value);
+        }
+        else if (argument == "--ai-canary-difficulties") {
+            const auto difficulties =
+                basilisk::client::ai::parseRuntimeAiCanaryDifficulties(argv[index]);
+            if (!difficulties) {
+                std::fprintf(stderr,
+                    "--ai-canary-difficulties must be a comma-separated subset of easy,medium,hard\n");
+                return 2;
+            }
+            config.aiPolicy.canaryDifficulties = *difficulties;
+        }
         else {
             std::uint64_t value = 0;
             if (!parseUnsigned(argv[index], value)) {
@@ -97,6 +145,46 @@ int main(int argc, char** argv) {
             config.mapSeed = static_cast<basilisk::MapSeed>(value);
         }
     }
+    if (aiShadowOutput.has_value() &&
+        (config.aiPolicy.mode == basilisk::client::ai::RuntimeAiPolicyMode::Shadow ||
+         config.aiPolicy.mode == basilisk::client::ai::RuntimeAiPolicyMode::Canary)) {
+        try {
+            config.aiPolicy.telemetry =
+                std::make_shared<basilisk::client::ai::AiShadowTelemetry>(
+                    *aiShadowOutput, true);
+        } catch (const std::exception& error) {
+            std::fprintf(stderr,
+                "AI telemetry unavailable (%s); falling back to heuristic policy.\n",
+                error.what());
+            config.aiPolicy.mode =
+                basilisk::client::ai::RuntimeAiPolicyMode::Heuristic;
+            config.aiPolicy.canaryPercent = 0;
+        }
+    }
+
+    const bool modelRequired =
+        config.aiPolicy.mode == basilisk::client::ai::RuntimeAiPolicyMode::Learned ||
+        config.aiPolicy.mode == basilisk::client::ai::RuntimeAiPolicyMode::Shadow ||
+        (config.aiPolicy.mode == basilisk::client::ai::RuntimeAiPolicyMode::Canary &&
+         config.aiPolicy.canaryPercent > 0);
+    std::string modelStatus{"not-requested"};
+    if (modelRequired) {
+        const basilisk::client::ai::LearnedPolicy modelProbe{config.aiPolicy.modelPath};
+        modelStatus = modelProbe.modelLoaded() ? "loaded" : "heuristic-fallback";
+        if (!modelProbe.modelLoaded())
+            std::fprintf(stderr, "AI model unavailable (%s); learned decisions will use heuristic fallback.\n",
+                modelProbe.loadError().c_str());
+    }
+    std::printf(
+        "AI policy mode=%s model=%s model_status=%s canary_percent=%u "
+        "canary_difficulties=%s telemetry=%s\n",
+        basilisk::client::ai::runtimeAiPolicyModeName(config.aiPolicy.mode),
+        config.aiPolicy.modelPath.empty() ? "(none)" : config.aiPolicy.modelPath.c_str(),
+        modelStatus.c_str(), static_cast<unsigned>(config.aiPolicy.canaryPercent),
+        canaryDifficulties(config.aiPolicy.canaryDifficulties).c_str(),
+        config.aiPolicy.telemetry == nullptr || !aiShadowOutput.has_value()
+            ? "disabled" : aiShadowOutput->c_str());
+    std::fflush(stdout);
     const bool fixedTrophyScoringRequested = trophyMatch.has_value() ||
         p1Username.has_value() || p2Username.has_value();
     if ((p1Account.has_value() || p2Account.has_value()) &&

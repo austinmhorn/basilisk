@@ -1,5 +1,8 @@
 #include <cassert>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <stdexcept>
 #include <vector>
@@ -111,14 +114,21 @@ void trainingTransitionsAreSafeAndLinked() {
     bool foundTerminal = false;
     for (std::size_t index = 0; index < transitions.values.size(); ++index) {
         const auto& transition = transitions.values[index];
-        assert(transition.observation.legalActions.size() ==
+        assert(transition.observation.legalActions.size() <=
             transition.observation.sourceSnapshot.availableActions.size());
         for (std::size_t action = 0; action < transition.observation.legalActions.size(); ++action) {
-            assert(transition.observation.legalActions[action].legalIndex == action);
+            const std::size_t sourceIndex =
+                transition.observation.legalActions[action].legalIndex;
+            assert(sourceIndex <
+                transition.observation.sourceSnapshot.availableActions.size());
             assert(transition.observation.legalActions[action].action.type ==
-                transition.observation.sourceSnapshot.availableActions[action].type);
+                transition.observation.sourceSnapshot.availableActions[sourceIndex].type);
         }
-        assert(transition.chosenAction.legalIndex == transition.decision.legalActionIndex);
+        assert(transition.decision.legalActionIndex <
+            transition.observation.legalActions.size());
+        assert(transition.chosenAction.legalIndex ==
+            transition.observation.legalActions[
+                transition.decision.legalActionIndex].legalIndex);
         assert(transition.nextObservation.sourceSnapshot.round >=
             transition.observation.sourceSnapshot.round);
         const std::string json = transitionJson(transition);
@@ -138,7 +148,12 @@ void trainingTransitionsAreSafeAndLinked() {
     AgentDecision illegal;
     illegal.legalActionIndex = transitions.values.front().observation.legalActions.size();
     bool rejected = false;
-    try { (void)resolveDecision(transitions.values.front().observation, illegal); }
+    try {
+        const auto& transition = transitions.values.front();
+        (void)resolveDecision(transitions.values.front().observation, illegal,
+            {transition.config.difficulty, transition.resolvedBehavior,
+                transition.player, 0});
+    }
     catch (const std::runtime_error&) { rejected = true; }
     assert(rejected);
 }
@@ -165,6 +180,162 @@ void randomPolicyAndTransitionStreamsAreDeterministic() {
     assert(counting.count > 0);
 }
 
+void learnedPolicyRunsDeterministicallyThroughSimulator() {
+    SimulationConfig config;
+    config.seed = 24680;
+    config.p1Policy = PolicyKind::Learned;
+    config.p1ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    config.p2Policy = PolicyKind::Heuristic;
+    CollectingTransitions first;
+    config.transitionSink = &first;
+    const auto firstEpisode = runEpisode(config, 0);
+    CollectingTransitions second;
+    config.transitionSink = &second;
+    const auto secondEpisode = runEpisode(config, 0);
+    assert(episodeJson(firstEpisode) == episodeJson(secondEpisode));
+    assert(firstEpisode.status == MatchStatus::Completed);
+    assert(first.values.size() == second.values.size());
+    bool sawLearned = false;
+    for (std::size_t index = 0; index < first.values.size(); ++index) {
+        assert(transitionJson(first.values[index]) == transitionJson(second.values[index]));
+        if (first.values[index].player == 1) {
+            sawLearned = true;
+            assert(first.values[index].policy == PolicyKind::Learned);
+            assert(first.values[index].decision.policyMetadata.starts_with(
+                "learned-linear-v3:"));
+        }
+    }
+    assert(sawLearned);
+
+    SimulationConfig fallback = config;
+    fallback.transitionSink = nullptr;
+    fallback.p1ModelPath = "/model/that/does/not/exist";
+    SimulationConfig heuristic = fallback;
+    heuristic.p1Policy = PolicyKind::Heuristic;
+    assert(episodeJson(runEpisode(fallback, 1)) ==
+        episodeJson(runEpisode(heuristic, 1)));
+}
+
+void canaryPolicyUsesRuntimeEligibilityAndTelemetry() {
+    const auto outputPath = std::filesystem::temp_directory_path() /
+        "basilisk-ai-sim-canary.jsonl";
+    SimulationConfig config;
+    config.seed = 717;
+    config.p1Policy = PolicyKind::Canary;
+    config.p2Policy = PolicyKind::Canary;
+    config.p1ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    config.p2ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    config.canaryPercent = 100;
+    config.p1.difficulty = client::ai::AiDifficulty::Easy;
+    config.p2.difficulty = client::ai::AiDifficulty::Hard;
+    {
+        config.canaryTelemetry = std::make_shared<client::ai::AiShadowTelemetry>(
+            outputPath.string());
+        assert(runEpisode(config, 0).status == MatchStatus::Completed);
+    }
+    config.canaryTelemetry.reset();
+    std::ifstream input(outputPath);
+    std::stringstream contents;
+    contents << input.rdbuf();
+    input.close();
+    const auto text = contents.str();
+    assert(text.find("\"authoritativePolicy\":\"heuristic\"") != std::string::npos);
+    assert(text.find("\"authoritativePolicy\":\"learned\"") != std::string::npos);
+    assert(text.find("\"kind\":\"canary-outcome\"") != std::string::npos);
+    std::filesystem::remove(outputPath);
+}
+
+void episode3077DoesNotRepeatTheKnownCaveOscillation() {
+    SimulationConfig config;
+    config.seed = 424242;
+    config.p1 = {client::ai::AiDifficulty::Hard,
+        client::ai::AiBehavior::Survivalist};
+    config.p2 = {client::ai::AiDifficulty::Hard,
+        client::ai::AiBehavior::Balanced};
+    config.p1Policy = PolicyKind::Learned;
+    config.p2Policy = PolicyKind::Learned;
+    config.p1ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    config.p2ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    CollectingTransitions transitions;
+    config.transitionSink = &transitions;
+    const EpisodeTelemetry episode = runEpisode(config, 3077);
+    assert(episode.status == MatchStatus::Completed);
+    assert(episode.rounds < 250);
+
+    std::vector<CaveId> p2Caves;
+    for (const Transition& transition : transitions.values) {
+        if (transition.player == 2)
+            p2Caves.push_back(transition.observation.sourceSnapshot.currentCave);
+    }
+    std::size_t fourTurnCycles = 0;
+    for (std::size_t index = 3; index < p2Caves.size(); ++index) {
+        if (p2Caves[index] == p2Caves[index - 2] &&
+            p2Caves[index - 1] == p2Caves[index - 3] &&
+            p2Caves[index] != p2Caves[index - 1]) ++fourTurnCycles;
+    }
+    assert(fourTurnCycles == 0);
+}
+
+void episode277TakesTheSafeUnknownTunnelAfterPitResolution() {
+    SimulationConfig config;
+    config.seed = 424242;
+    config.p1 = {client::ai::AiDifficulty::Hard,
+        client::ai::AiBehavior::Survivalist};
+    config.p2 = {client::ai::AiDifficulty::Hard,
+        client::ai::AiBehavior::Random};
+    config.p1Policy = PolicyKind::Learned;
+    config.p2Policy = PolicyKind::Learned;
+    config.p1ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    config.p2ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    CollectingTransitions transitions;
+    config.transitionSink = &transitions;
+    const EpisodeTelemetry episode = runEpisode(config, 277);
+    assert(episode.status == MatchStatus::Completed);
+    assert(episode.rounds < 100);
+
+    // Investigation can now happen earlier on another frontier. Protect the
+    // semantic Search -> resolved uncertainty -> safe unknown Move transition,
+    // not an obsolete round/cave itinerary (covered separately by unit tests).
+    bool exploredAfterInvestigation = false;
+    for (const auto& search : transitions.values) {
+        if (search.player != 1 || search.chosenAction.action.type != ActionType::Search ||
+            search.observation.knowledgeState.unresolvedPitCandidateCount() == 0) continue;
+        const auto next = std::ranges::find_if(transitions.values,
+            [&](const Transition& transition) {
+                return transition.player == search.player && transition.round == search.round + 1;
+            });
+        if (next != transitions.values.end() &&
+            next->observation.knowledgeState.unresolvedPitCandidateCount() == 0 &&
+            next->chosenAction.action.type == ActionType::Move &&
+            next->chosenAction.action.targetTunnel.has_value())
+            exploredAfterInvestigation = true;
+    }
+    assert(exploredAfterInvestigation);
+}
+
+void strategicStallCorpusCompletesWithoutLongTailLoops() {
+    SimulationConfig config;
+    config.seed = 424242;
+    config.p1 = {client::ai::AiDifficulty::Hard, client::ai::AiBehavior::Random};
+    config.p2 = {client::ai::AiDifficulty::Hard, client::ai::AiBehavior::Random};
+    config.p1Policy = PolicyKind::Learned;
+    config.p2Policy = PolicyKind::Learned;
+    config.p1ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    config.p2ModelPath = BASILISK_TEST_LEARNED_MODEL;
+    for (const std::size_t episodeIndex : {8533U, 381U, 482U, 4499U, 4174U}) {
+        const EpisodeTelemetry episode = runEpisode(config, episodeIndex);
+        assert(episode.status == MatchStatus::Completed);
+        assert(episode.rounds < 100);
+    }
+    // Confirmed-but-unresolved Pit exits must not attract repeated routes,
+    // and an investigation followed by relocation must not trap the hunter.
+    for (const std::size_t episodeIndex : {6454U, 9338U, 1474U, 6231U, 9018U}) {
+        const EpisodeTelemetry episode = runEpisode(config, episodeIndex);
+        assert(episode.status == MatchStatus::Completed);
+        assert(episode.rounds < 150);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -174,5 +345,10 @@ int main() {
     benchmarkAccountingAndDeterminism();
     trainingTransitionsAreSafeAndLinked();
     randomPolicyAndTransitionStreamsAreDeterministic();
+    learnedPolicyRunsDeterministicallyThroughSimulator();
+    canaryPolicyUsesRuntimeEligibilityAndTelemetry();
+    episode3077DoesNotRepeatTheKnownCaveOscillation();
+    episode277TakesTheSafeUnknownTunnelAfterPitResolution();
+    strategicStallCorpusCompletesWithoutLongTailLoops();
     std::cout << "AI simulation tests passed\n";
 }

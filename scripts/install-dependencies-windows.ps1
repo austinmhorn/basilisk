@@ -67,9 +67,12 @@ Write-Step 'Verifying development tools...'
 & git --version
 if ($LASTEXITCODE -ne 0) { throw 'Git verification failed. Open a new PowerShell terminal and rerun the script.' }
 
-& cmake --version | Select-Object -First 1
-if ($LASTEXITCODE -ne 0) { throw 'CMake verification failed. Open a new PowerShell terminal and rerun the script.' }
-$cmakeVersionText = (& cmake --version | Select-Object -First 1) -replace '^cmake version\s+', ''
+$cmakeVersionOutput = & cmake --version
+$cmakeExitCode = $LASTEXITCODE
+if ($cmakeExitCode -ne 0) { throw 'CMake verification failed. Open a new PowerShell terminal and rerun the script.' }
+$cmakeVersionLine = $cmakeVersionOutput | Select-Object -First 1
+Write-Host $cmakeVersionLine
+$cmakeVersionText = $cmakeVersionLine -replace '^cmake version\s+', ''
 if ([Version]$cmakeVersionText -lt [Version]'3.25') {
     throw "CMake 3.25 or newer is required (found $cmakeVersionText). Upgrade Kitware.CMake with winget and rerun this script."
 }

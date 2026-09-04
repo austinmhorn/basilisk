@@ -6,6 +6,7 @@
 #include <optional>
 #include <set>
 #include <utility>
+#include <vector>
 
 #include "basilisk/ClientSnapshot.hpp"
 
@@ -28,6 +29,7 @@ public:
     [[nodiscard]] bool isPitCandidate(CaveId cave) const;
     [[nodiscard]] bool isConfirmedPit(CaveId cave) const;
     [[nodiscard]] bool isConfirmedPitExit(AiExitKey exit) const;
+    [[nodiscard]] bool isPitCandidateExit(AiExitKey exit) const;
     [[nodiscard]] bool isDisprovenBasiliskTarget(
         CaveId source, const AvailableAction& action) const;
     [[nodiscard]] bool isPreferredBasiliskTarget(
@@ -44,6 +46,11 @@ public:
     [[nodiscard]] std::size_t unresolvedPitCandidateCount() const noexcept;
     [[nodiscard]] std::size_t repeatedSearchCount() const noexcept;
     [[nodiscard]] std::uint64_t materialRevision() const noexcept;
+    [[nodiscard]] std::size_t explorationCyclePenalty(CaveId destination) const;
+    [[nodiscard]] std::size_t turnsSinceExplorationProgress() const noexcept;
+    [[nodiscard]] std::size_t explorationVisitCount(CaveId cave) const;
+    [[nodiscard]] std::size_t explorationTraversalCount(CaveId a, CaveId b) const;
+    [[nodiscard]] bool searchedWithoutExplorationProgress(CaveId cave) const;
 
 private:
     static std::uint64_t edgeKey(CaveId a, CaveId b);
@@ -51,6 +58,8 @@ private:
     void updatePitKnowledge(const PlayerRoundSnapshot& snapshot);
     void updateJackalKnowledge(const PlayerRoundSnapshot& snapshot);
     [[nodiscard]] std::uint64_t materialFingerprint(
+        const PlayerRoundSnapshot& snapshot) const;
+    [[nodiscard]] std::uint64_t explorationFingerprint(
         const PlayerRoundSnapshot& snapshot) const;
 
     std::optional<RoundNumber> lastRound_;
@@ -76,6 +85,13 @@ private:
     std::size_t unresolvedPitCandidates_{0};
     std::uint64_t materialRevision_{0};
     std::optional<std::uint64_t> lastMaterialFingerprint_;
+    std::optional<std::uint64_t> lastExplorationFingerprint_;
+    std::vector<CaveId> recentExplorationCaves_;
+    std::map<CaveId, std::size_t> explorationVisitCounts_;
+    std::map<std::uint64_t, std::size_t> explorationTraversalCounts_;
+    std::map<CaveId, std::uint64_t> searchExplorationRevisions_;
+    std::uint64_t explorationRevision_{0};
+    std::size_t turnsSinceExplorationProgress_{0};
     std::optional<std::uint64_t> lastSearchRevision_;
     std::size_t repeatedSearches_{0};
     bool recoverableSigilAvailable_{false};

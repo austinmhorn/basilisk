@@ -14,6 +14,7 @@
 #include "basilisk/MatchState.hpp"
 #include "basilisk/client/MatchMode.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
+#include "basilisk/client/ai/AiPolicy.hpp"
 #include "basilisk/client/ai/AiTurnScheduler.hpp"
 #include "basilisk/client/ai/AiKnowledgeState.hpp"
 #include "basilisk/systems/MatchCoordinator.hpp"
@@ -77,9 +78,9 @@ std::string debugActionName(const AvailableAction& action) {
 class LocalAiMatchState {
 public:
     LocalAiMatchState(MatchState state, PlayerId human, PlayerId ai,
-        client::ai::AiConfig config)
+        client::ai::AiConfig config, client::ai::RuntimeAiPolicyConfig policy)
         : state_(std::move(state)), coordinator_(state_), human_(human), ai_(ai),
-          config_(config) {
+          config_(config), policyConfig_(policy), policy_(std::move(policy)) {
         const PlayerMapView physical = fullPhysicalMap(state_);
         layout_.update(physical); layout_.finalizeFullLayout(physical);
     }
@@ -227,7 +228,11 @@ private:
         if (snapshot == nullptr || snapshot->round != state_.round) return;
         decisionRound_ = state_.round;
         knowledge_.observe(*snapshot);
-        const auto evaluation = engine_.evaluate(*snapshot, config_, knowledge_);
+        const auto observation = client::ai::makePolicyObservation(
+            *snapshot, knowledge_, config_);
+        auto selection = policy_.select(observation, config_);
+        const auto& decision = selection.authoritative;
+        const auto& evaluation = selection.heuristicEvaluation;
 #if defined(BASILISK_GAME_DEBUG_BUILD)
         aiDecisionTrace_.clear();
         aiDecisionTrace_.push_back(
@@ -249,8 +254,9 @@ private:
         aiDecisionTrace_.push_back(scores.str());
 #endif
         if (!evaluation.actions.empty()) {
-            scheduler_.scheduleAction(evaluation.actions[evaluation.chosenIndex].action,
-                nowMs_, config_, state_.round);
+            const auto& selected = client::ai::resolvePolicyDecision(
+                observation, decision, config_);
+            scheduler_.scheduleAction(selected.action, nowMs_, config_, state_.round);
         }
     }
 
@@ -274,6 +280,17 @@ private:
 
     void publish(const std::vector<GameEvent>& events) {
         if (controller_ == nullptr) return;
+        if (!outcomeReported_ && state_.result.status == MatchStatus::Completed &&
+            (policyConfig_.mode == client::ai::RuntimeAiPolicyMode::Shadow ||
+             policyConfig_.mode == client::ai::RuntimeAiPolicyMode::Canary) &&
+            policyConfig_.telemetry != nullptr) {
+            if (policyConfig_.mode == client::ai::RuntimeAiPolicyMode::Shadow)
+                policyConfig_.telemetry->recordOutcome(policyConfig_.context,
+                    state_.result.outcome, state_.result.winner);
+            else policyConfig_.telemetry->recordCanaryOutcome(policyConfig_.context,
+                    state_.result.outcome, state_.result.winner);
+            outcomeReported_ = true;
+        }
         refreshView();
         for (const PlayerState& player : state_.players) {
             PlayerRoundSnapshot snapshot = SnapshotSystem::buildForPlayer(
@@ -292,11 +309,13 @@ private:
     PlayerId human_{};
     PlayerId ai_{};
     client::ai::AiConfig config_;
-    client::ai::AiDecisionEngine engine_;
+    client::ai::RuntimeAiPolicyConfig policyConfig_;
+    client::ai::RuntimeAiPolicy policy_;
     client::ai::AiKnowledgeState knowledge_;
     client::ai::AiTurnScheduler scheduler_;
     std::optional<RoundNumber> decisionRound_;
     std::uint64_t nowMs_{};
+    bool outcomeReported_{};
     ClientSessionController* controller_{nullptr};
 #if defined(BASILISK_GAME_DEBUG_BUILD)
     std::vector<std::string> aiDecisionTrace_;
@@ -334,7 +353,7 @@ private:
 
 LocalAiSession LocalAiGameSessionAdapter::create(MapSeed mapSeed, MatchSeed matchSeed,
     client::ai::AiDifficulty difficulty, client::ai::AiBehavior behavior,
-    client::ai::AiSeed aiSeed) {
+    client::ai::AiSeed aiSeed, client::ai::RuntimeAiPolicyConfig policy) {
     MatchState match = MapGenerator::generate(mapSeed, matchSeed);
     if (match.players.size() < 2) return {};
     const PlayerId human = match.players[0].id;
@@ -348,8 +367,10 @@ LocalAiSession LocalAiGameSessionAdapter::create(MapSeed mapSeed, MatchSeed matc
     };
     const client::ClientViewContext view{
         human, human, client::ClientViewMode::Playing, std::nullopt};
+    policy.context = "local-ai-" + std::to_string(mapSeed) + "-" +
+        std::to_string(matchSeed);
     auto state = std::make_shared<LocalAiMatchState>(
-        std::move(match), human, ai, config);
+        std::move(match), human, ai, config, std::move(policy));
     auto session = std::make_unique<ClientSessionController>(
         std::move(metadata), std::move(profiles), view,
         std::make_unique<LocalAiActionSink>(state),

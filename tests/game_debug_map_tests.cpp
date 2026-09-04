@@ -413,11 +413,21 @@ void livingAiTruthNeverDisappearsAcrossRounds() {
 
         const PlayerRoundSnapshot* humanSnapshot = local.session->snapshotFor(human);
         assert(humanSnapshot != nullptr && humanSnapshot->alive);
+        if (humanSnapshot->matchStatus != MatchStatus::Active) break;
         const RoundNumber priorRound = humanSnapshot->round;
-        const auto action = std::ranges::find_if(humanSnapshot->availableActions,
+        auto action = std::ranges::find_if(humanSnapshot->availableActions,
             [](const AvailableAction& candidate) {
                 return candidate.type == ActionType::Search;
             });
+        if (action == humanSnapshot->availableActions.end()) {
+            action = std::ranges::find_if(humanSnapshot->availableActions,
+                [](const AvailableAction& candidate) {
+                    return candidate.type != ActionType::Move;
+                });
+        }
+        if (action == humanSnapshot->availableActions.end() &&
+            !humanSnapshot->availableActions.empty())
+            action = humanSnapshot->availableActions.begin();
         assert(action != humanSnapshot->availableActions.end());
         assert(local.session->submitAndLock(*action));
         local.driver->advance(901);

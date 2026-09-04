@@ -1,0 +1,430 @@
+#include <algorithm>
+#include <cassert>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <limits>
+#include <stdexcept>
+#include <string>
+#include <sstream>
+
+#include "basilisk/client/ai/LearnedPolicy.hpp"
+#include "basilisk/client/ai/RuntimeAiPolicy.hpp"
+
+using namespace basilisk;
+using namespace basilisk::client::ai;
+
+namespace {
+
+bool sameAction(const AvailableAction& left, const AvailableAction& right) {
+    return left.type == right.type && left.targetCave == right.targetCave &&
+        left.targetTunnel == right.targetTunnel &&
+        left.targetItem == right.targetItem &&
+        left.contextualAction == right.contextualAction;
+}
+
+AvailableAction moveTo(CaveId cave) {
+    AvailableAction action; action.type = ActionType::Move; action.targetCave = cave;
+    return action;
+}
+
+AvailableAction searchAction() {
+    AvailableAction action; action.type = ActionType::Search; return action;
+}
+
+PlayerRoundSnapshot snapshot() {
+    PlayerRoundSnapshot result;
+    result.player = 7;
+    result.round = 12;
+    result.health = 70;
+    result.maxHealth = 100;
+    result.arrows = 4;
+    result.maxArrows = 5;
+    result.alive = true;
+    result.currentCave = 1;
+    result.map.currentCave = 1;
+    result.map.caves.push_back(DiscoveredCaveView{1,
+        {TunnelView{1, CaveId{2}, true}, TunnelView{2, CaveId{3}, false}}, false});
+    AvailableAction pit;
+    pit.type = ActionType::Move;
+    pit.targetCave = 2;
+    AvailableAction safe;
+    safe.type = ActionType::Move;
+    safe.targetCave = 3;
+    AvailableAction search;
+    search.type = ActionType::Search;
+    result.availableActions = {pit, safe, search};
+    result.observations.push_back({ObservationType::PitNearby, result.player});
+    return result;
+}
+
+std::filesystem::path temporaryModel(std::string_view contents) {
+    static unsigned counter = 0;
+    const auto path = std::filesystem::temp_directory_path() /
+        ("basilisk-learned-policy-test-" + std::to_string(++counter) + ".model");
+    std::ofstream output(path, std::ios::out | std::ios::trunc);
+    output << contents;
+    return path;
+}
+
+void modelValidationAndDeterministicInference() {
+    LearnedPolicy policy{BASILISK_TEST_LEARNED_MODEL};
+    assert(policy.modelLoaded());
+    assert(policy.loadError().empty());
+
+    auto safe = snapshot();
+    AiKnowledgeState knowledge;
+    knowledge.observe(safe);
+    const AiConfig config{AiDifficulty::Hard, AiBehavior::Balanced, 7, 991};
+    const auto observation = makePolicyObservation(safe, knowledge, config);
+    assert(observation.legalActions.size() == 2);
+    assert(std::none_of(observation.legalActions.begin(),
+        observation.legalActions.end(), [](const EncodedAction& action) {
+            return action.action.targetCave == CaveId{2};
+        }));
+    const PolicyDecision first = policy.select(observation, config);
+    const PolicyDecision second = policy.select(observation, config);
+    assert(first.legalActionIndex == second.legalActionIndex);
+    assert(first.policyMetadata.starts_with("learned-linear-v3:"));
+    const auto& selected = resolvePolicyDecision(observation, first, config);
+    assert(selected.legalIndex < safe.availableActions.size());
+    assert(sameAction(selected.action, safe.availableActions[selected.legalIndex]));
+    HeuristicPolicy planner;
+    const auto [plannerDecision, plannerEvaluation] = planner.evaluate(
+        observation, config);
+    const ActionType selectedType = selected.action.type;
+    std::size_t bestTarget = first.legalActionIndex;
+    double bestTargetUtility = -std::numeric_limits<double>::infinity();
+    for (std::size_t index = 0; index < plannerEvaluation.actions.size(); ++index) {
+        if (plannerEvaluation.actions[index].action.type == selectedType &&
+            plannerEvaluation.actions[index].utility > bestTargetUtility) {
+            bestTarget = index;
+            bestTargetUtility = plannerEvaluation.actions[index].utility;
+        }
+    }
+    assert(first.legalActionIndex == bestTarget);
+}
+
+void incompatibleAndCorruptModelsFallBackToHeuristic() {
+    const auto incompatible = temporaryModel("BASILISK_LINEAR_POLICY 99 1 1 1 128\n");
+    LearnedPolicy learned{incompatible.string()};
+    assert(!learned.modelLoaded());
+    assert(!learned.loadError().empty());
+
+    auto safe = snapshot();
+    AiKnowledgeState knowledge;
+    knowledge.observe(safe);
+    const AiConfig config{AiDifficulty::Hard, AiBehavior::Balanced, 7, 991};
+    const auto observation = makePolicyObservation(safe, knowledge, config);
+    HeuristicPolicy heuristic;
+    const auto expected = heuristic.select(observation, config);
+    const auto fallback = learned.select(observation, config);
+    assert(fallback.legalActionIndex == expected.legalActionIndex);
+    assert(fallback.policyMetadata == "learned-fallback:heuristic");
+
+    LearnedPolicy missing{incompatible.string() + ".missing"};
+    assert(!missing.modelLoaded());
+    assert(missing.select(observation, config).legalActionIndex ==
+        expected.legalActionIndex);
+    std::filesystem::remove(incompatible);
+}
+
+void learnedPolicyCannotRestoreAStalledExplorationRoute() {
+    PlayerRoundSnapshot state;
+    state.player = 7; state.alive = true; state.health = 100; state.maxHealth = 100;
+    state.arrows = 3; state.maxArrows = 5;
+    state.map.caves = {
+        {1, {{1, CaveId{2}, false}, {2, CaveId{3}, false}}, false},
+        {2, {{1, CaveId{1}, false}, {3, CaveId{4}, false}}, false},
+        {3, {{2, CaveId{1}, false}, {4, CaveId{5}, false}}, false},
+        {4, {{3, CaveId{2}, false}}, true},
+        {5, {{4, CaveId{3}, false}}, true},
+    };
+    AiKnowledgeState knowledge;
+    for (const auto [round, cave] :
+        {std::pair<RoundNumber, CaveId>{1, 3}, {2, 1}, {3, 2}}) {
+        state.round = round; state.currentCave = cave; state.map.currentCave = cave;
+        state.availableActions.clear();
+        knowledge.observe(state);
+    }
+    state.round = 4; state.currentCave = 1; state.map.currentCave = 1;
+    state.availableActions = {moveTo(2), moveTo(3), searchAction()};
+    knowledge.observe(state);
+    const AiConfig config{AiDifficulty::Hard, AiBehavior::Aggressive, 7, 991};
+    const auto observation = makePolicyObservation(state, knowledge, config);
+    assert(observation.explorationPriorityApplied);
+    assert(observation.legalActions.size() == 1);
+    assert(observation.legalActions.front().action.targetCave == CaveId{3});
+    LearnedPolicy learned{BASILISK_TEST_LEARNED_MODEL};
+    const auto selected = resolvePolicyDecision(
+        observation, learned.select(observation, config), config);
+    assert(selected.action.targetCave == CaveId{3});
+}
+
+void directLoaderRejectsCorruptWeights() {
+    const auto corrupt = temporaryModel(
+        "BASILISK_LINEAR_POLICY 1 1 1 1 128\n0 1 not-a-number\n");
+    bool rejected = false;
+    try {
+        (void)LearnedPolicyModel::load(corrupt.string());
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    assert(rejected);
+    std::filesystem::remove(corrupt);
+}
+
+void runtimePolicyModesPreserveAuthorityAndFallback() {
+    auto safe = snapshot();
+    AiKnowledgeState knowledge;
+    knowledge.observe(safe);
+    const AiConfig config{AiDifficulty::Hard, AiBehavior::Balanced, 7, 991};
+    const auto observation = makePolicyObservation(safe, knowledge, config);
+
+    RuntimeAiPolicy defaultPolicy;
+    const auto heuristic = defaultPolicy.select(observation, config);
+    assert(defaultPolicy.mode() == RuntimeAiPolicyMode::Heuristic);
+    assert(!heuristic.learned.has_value());
+
+    auto telemetry = std::make_shared<AiShadowTelemetry>();
+    RuntimeAiPolicy shadow{{RuntimeAiPolicyMode::Shadow,
+        BASILISK_TEST_LEARNED_MODEL, "runtime-shadow", telemetry}};
+    const auto shadowed = shadow.select(observation, config);
+    assert(shadow.learnedModelLoaded());
+    assert(shadowed.learned.has_value());
+    assert(shadowed.authoritative.legalActionIndex ==
+        heuristic.authoritative.legalActionIndex);
+    assert(resolvePolicyDecision(observation, shadowed.authoritative, config).legalIndex ==
+        resolvePolicyDecision(observation, heuristic.authoritative, config).legalIndex);
+    const auto aggregate = telemetry->aggregate();
+    assert(aggregate.decisions == 1);
+    assert(aggregate.byDifficulty[static_cast<std::size_t>(AiDifficulty::Hard)].decisions == 1);
+    assert(aggregate.byBehavior[static_cast<std::size_t>(AiBehavior::Balanced)].decisions == 1);
+    assert(telemetry->lastRecord()->round == safe.round);
+    assert(telemetry->lastRecord()->player == safe.player);
+
+    RuntimeAiPolicy learned{{RuntimeAiPolicyMode::Learned,
+        BASILISK_TEST_LEARNED_MODEL, "runtime-learned", {}}};
+    const auto selected = learned.select(observation, config);
+    assert(selected.learned.has_value());
+    assert(selected.authoritative.legalActionIndex ==
+        selected.learned->legalActionIndex);
+    (void)resolvePolicyDecision(observation, selected.authoritative, config);
+
+    RuntimeAiPolicy missing{{RuntimeAiPolicyMode::Learned,
+        std::string{BASILISK_TEST_LEARNED_MODEL} + ".missing", "fallback", {}}};
+    const auto fallback = missing.select(observation, config);
+    assert(fallback.learnedFallback);
+    assert(fallback.authoritative.legalActionIndex ==
+        heuristic.authoritative.legalActionIndex);
+}
+
+void shadowTelemetryIsDeterministicAndPublicSafe() {
+    const auto outputPath = std::filesystem::temp_directory_path() /
+        "basilisk-shadow-policy-test.jsonl";
+    {
+        auto telemetry = std::make_shared<AiShadowTelemetry>(outputPath.string());
+        RuntimeAiPolicy policy{{RuntimeAiPolicyMode::Shadow,
+            BASILISK_TEST_LEARNED_MODEL, "shadow-episode", telemetry}};
+        auto safe = snapshot();
+        AiKnowledgeState knowledge;
+        knowledge.observe(safe);
+        const AiConfig config{AiDifficulty::Hard, AiBehavior::ObjectiveFocused, 7, 991};
+        const auto observation = makePolicyObservation(safe, knowledge, config);
+        const auto first = policy.select(observation, config);
+        const auto second = policy.select(observation, config);
+        assert(first.authoritative.legalActionIndex == second.authoritative.legalActionIndex);
+        assert(first.learned->legalActionIndex == second.learned->legalActionIndex);
+        telemetry->recordOutcome("shadow-episode", MatchOutcome::BasiliskKilled,
+            PlayerId{7});
+        const auto aggregate = telemetry->aggregate();
+        assert(aggregate.decisions == 2);
+        assert(aggregate.outcomes == 1);
+        assert(aggregate.byOutcome[static_cast<std::size_t>(
+            MatchOutcome::BasiliskKilled)].decisions == 2);
+        assert(telemetry->summary().find("decisions=2") != std::string::npos);
+    }
+    std::stringstream contents;
+    {
+        std::ifstream input(outputPath);
+        assert(input.is_open());
+        contents << input.rdbuf();
+    }
+    const std::string serialized = contents.str();
+    assert(serialized.find("\"kind\":\"decision\"") != std::string::npos);
+    assert(serialized.find("\"kind\":\"outcome\"") != std::string::npos);
+    assert(serialized.find("inventory") == std::string::npos);
+    assert(serialized.find("health") == std::string::npos);
+    assert(serialized.find("targetCave") == std::string::npos);
+    assert(serialized.find("pending") == std::string::npos);
+    std::filesystem::remove(outputPath);
+
+    auto fallbackTelemetry = std::make_shared<AiShadowTelemetry>();
+    RuntimeAiPolicy fallback{{RuntimeAiPolicyMode::Shadow,
+        std::string{BASILISK_TEST_LEARNED_MODEL} + ".missing", "missing",
+        fallbackTelemetry}};
+    auto safe = snapshot();
+    AiKnowledgeState knowledge;
+    knowledge.observe(safe);
+    const AiConfig config{AiDifficulty::Medium, AiBehavior::Explorer, 7, 992};
+    const auto observation = makePolicyObservation(safe, knowledge, config);
+    (void)fallback.select(observation, config);
+    const auto aggregate = fallbackTelemetry->aggregate();
+    assert(aggregate.fallbacks == 1);
+    assert(aggregate.modelErrors == 1);
+}
+
+void canaryAssignmentAndCompatibilityAreDeterministic() {
+    assert(parseRuntimeAiCanaryDifficulties("medium,hard") ==
+        kDefaultCanaryDifficulties);
+    assert(parseRuntimeAiCanaryDifficulties("easy") == kCanaryEasy);
+    assert(!parseRuntimeAiCanaryDifficulties("medium,unknown"));
+    assert(!runtimeAiCanaryDifficultyEligible(
+        kDefaultCanaryDifficulties, AiDifficulty::Easy));
+    assert(runtimeAiCanaryDifficultyEligible(
+        kDefaultCanaryDifficulties, AiDifficulty::Medium));
+    assert(runtimeAiCanaryDifficultyEligible(
+        kDefaultCanaryDifficulties, AiDifficulty::Hard));
+    for (PlayerId player = 1; player <= 32; ++player) {
+        assert(!runtimeAiCanaryAssigned("stable-match", player, 0));
+        assert(runtimeAiCanaryAssigned("stable-match", player, 100));
+        assert(runtimeAiCanaryAssigned("stable-match", player, 37) ==
+            runtimeAiCanaryAssigned("stable-match", player, 37));
+    }
+    bool assigned = false;
+    bool unassigned = false;
+    for (PlayerId player = 1; player <= 100; ++player) {
+        assigned |= runtimeAiCanaryAssigned("mixed-match", player, 50);
+        unassigned |= !runtimeAiCanaryAssigned("mixed-match", player, 50);
+    }
+    assert(assigned && unassigned);
+
+    auto safe = snapshot();
+    AiKnowledgeState knowledge;
+    knowledge.observe(safe);
+    AiConfig config{AiDifficulty::Hard, AiBehavior::Balanced, 7, 991};
+    const auto observation = makePolicyObservation(safe, knowledge, config);
+    RuntimeAiPolicy heuristic;
+    const auto expected = heuristic.select(observation, config);
+
+    RuntimeAiPolicy zero{{RuntimeAiPolicyMode::Canary,
+        BASILISK_TEST_LEARNED_MODEL, "zero", {}, 0}};
+    const auto zeroResult = zero.select(observation, config);
+    assert(!zeroResult.canaryAssigned && !zeroResult.learned.has_value());
+    assert(zeroResult.authoritative.legalActionIndex ==
+        expected.authoritative.legalActionIndex);
+
+    RuntimeAiPolicy all{{RuntimeAiPolicyMode::Canary,
+        BASILISK_TEST_LEARNED_MODEL, "all", {}, 100}};
+    const auto allResult = all.select(observation, config);
+    assert(allResult.canaryAssigned && allResult.learned.has_value());
+    assert(allResult.authoritative.legalActionIndex ==
+        allResult.learned->legalActionIndex);
+    (void)resolvePolicyDecision(observation, allResult.authoritative, config);
+
+    config.difficulty = AiDifficulty::Easy;
+    const auto easyResult = all.select(observation, config);
+    assert(!easyResult.canaryAssigned && !easyResult.learned.has_value());
+    assert(easyResult.authoritative.legalActionIndex ==
+        heuristic.select(observation, config).authoritative.legalActionIndex);
+    config.difficulty = AiDifficulty::Medium;
+    const auto mediumResult = all.select(observation, config);
+    assert(mediumResult.canaryAssigned && mediumResult.learned.has_value());
+
+    RuntimeAiPolicy bad{{RuntimeAiPolicyMode::Canary,
+        std::string{BASILISK_TEST_LEARNED_MODEL} + ".missing", "bad", {}, 100}};
+    const auto badResult = bad.select(observation, config);
+    assert(badResult.canaryAssigned && badResult.learnedFallback);
+    assert(badResult.authoritative.legalActionIndex ==
+        expected.authoritative.legalActionIndex);
+
+    LearnedPolicy old{BASILISK_TEST_LEARNED_MODEL_V1};
+    assert(!old.modelLoaded());
+    assert(old.select(observation, config).legalActionIndex ==
+        expected.authoritative.legalActionIndex);
+    LearnedPolicy v2{BASILISK_TEST_LEARNED_MODEL_V2};
+    assert(!v2.modelLoaded());
+    assert(v2.select(observation, config).legalActionIndex ==
+        expected.authoritative.legalActionIndex);
+}
+
+void canaryTelemetryIsCohortAttributedAndPublicSafe() {
+    const auto outputPath = std::filesystem::temp_directory_path() /
+        "basilisk-canary-policy-test.jsonl";
+    {
+        auto telemetry = std::make_shared<AiShadowTelemetry>(outputPath.string());
+        RuntimeAiPolicy policy{{RuntimeAiPolicyMode::Canary,
+            BASILISK_TEST_LEARNED_MODEL, "canary-episode", telemetry, 100}};
+        auto safe = snapshot();
+        AiKnowledgeState knowledge;
+        knowledge.observe(safe);
+        const AiConfig config{AiDifficulty::Hard, AiBehavior::Survivalist, 7, 991};
+        (void)policy.select(makePolicyObservation(safe, knowledge, config), config);
+        telemetry->recordCanaryOutcome("canary-episode",
+            MatchOutcome::BasiliskKilled, PlayerId{7});
+    }
+    std::stringstream contents;
+    {
+        std::ifstream input(outputPath);
+        assert(input.is_open());
+        contents << input.rdbuf();
+    }
+    const std::string serialized = contents.str();
+    assert(serialized.find("\"kind\":\"canary-decision\"") != std::string::npos);
+    assert(serialized.find("\"authoritativePolicy\":\"learned\"") !=
+        std::string::npos);
+    assert(serialized.find("\"kind\":\"canary-outcome\"") != std::string::npos);
+    assert(serialized.find("inventory") == std::string::npos);
+    assert(serialized.find("health") == std::string::npos);
+    assert(serialized.find("targetCave") == std::string::npos);
+    assert(serialized.find("pending") == std::string::npos);
+    std::filesystem::remove(outputPath);
+}
+
+void productionTelemetryAppendsAndOpenFailuresAreReported() {
+    const auto outputPath = std::filesystem::temp_directory_path() /
+        "basilisk-canary-append-test.jsonl";
+    std::filesystem::remove(outputPath);
+    {
+        AiShadowTelemetry telemetry{outputPath.string(), true};
+        telemetry.recordCanaryOutcome("first", MatchOutcome::Draw, std::nullopt);
+    }
+    {
+        AiShadowTelemetry telemetry{outputPath.string(), true};
+        telemetry.recordCanaryOutcome("second", MatchOutcome::Draw, std::nullopt);
+    }
+    std::stringstream contents;
+    {
+        std::ifstream input(outputPath);
+        assert(input.is_open());
+        contents << input.rdbuf();
+    }
+    assert(contents.str().find("\"context\":\"first\"") != std::string::npos);
+    assert(contents.str().find("\"context\":\"second\"") != std::string::npos);
+    std::filesystem::remove(outputPath);
+
+    bool rejected = false;
+    try {
+        AiShadowTelemetry unavailable{
+            (std::filesystem::temp_directory_path() /
+             "basilisk-missing-telemetry-parent" / "canary.jsonl").string(), true};
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    assert(rejected);
+}
+
+} // namespace
+
+int main() {
+    modelValidationAndDeterministicInference();
+    learnedPolicyCannotRestoreAStalledExplorationRoute();
+    incompatibleAndCorruptModelsFallBackToHeuristic();
+    directLoaderRejectsCorruptWeights();
+    runtimePolicyModesPreserveAuthorityAndFallback();
+    shadowTelemetryIsDeterministicAndPublicSafe();
+    canaryAssignmentAndCompatibilityAreDeterministic();
+    canaryTelemetryIsCohortAttributedAndPublicSafe();
+    productionTelemetryAppendsAndOpenFailuresAreReported();
+    std::cout << "Basilisk learned policy tests passed.\n";
+}

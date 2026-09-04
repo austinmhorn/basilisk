@@ -9,6 +9,7 @@
 
 #include "basilisk/MatchState.hpp"
 #include "basilisk/client/ai/AiKnowledgeState.hpp"
+#include "basilisk/client/ai/LearnedPolicy.hpp"
 #include "basilisk/systems/MatchCoordinator.hpp"
 #include "basilisk/systems/SnapshotSystem.hpp"
 #include "basilisk/world/MapGenerator.hpp"
@@ -142,38 +143,24 @@ struct Agent {
     std::optional<Pending> pending;
 };
 
-TrainingKnowledgeFeatures knowledgeFeatures(const PlayerRoundSnapshot& snapshot,
-    const client::ai::AiKnowledgeState& knowledge) {
-    TrainingKnowledgeFeatures result;
-    result.previousCave = knowledge.previousCave();
-    result.pitWarning = knowledge.pitWarningHere();
-    result.basiliskAdjacentWarning = knowledge.basiliskWarningHere();
-    result.basiliskDistantWarning = knowledge.basiliskDistantWarningHere();
-    result.jackalWarning = knowledge.jackalWarningHere();
-    result.rivalWarning = knowledge.rivalWarningHere();
-    result.unresolvedPitCandidates = knowledge.unresolvedPitCandidateCount();
-    result.repeatedSearches = knowledge.repeatedSearchCount();
-    result.materialRevision = knowledge.materialRevision();
-    for (const auto& action : snapshot.availableActions) {
-        if (action.type == ActionType::Shoot &&
-            !knowledge.isDisprovenBasiliskTarget(snapshot.currentCave, action))
-            ++result.basiliskCandidateCount;
+class CanaryPolicy final : public AgentPolicy {
+public:
+    explicit CanaryPolicy(client::ai::RuntimeAiPolicyConfig config)
+        : policy_(std::move(config)) {}
+    AgentDecision select(const AgentObservation& observation,
+        const client::ai::AiConfig& config) override {
+        return policy_.select(observation, config).authoritative;
     }
-    return result;
-}
+private:
+    client::ai::RuntimeAiPolicy policy_;
+};
 
 AgentObservation makeObservation(const PlayerRoundSnapshot& snapshot,
     const client::ai::AiKnowledgeState& knowledge,
-    const std::optional<EncodedAction>& previousAction) {
-    AgentObservation result;
-    result.sourceSnapshot = snapshot;
-    result.knowledgeState = knowledge;
-    result.knowledge = knowledgeFeatures(snapshot, knowledge);
-    result.previousAction = previousAction;
-    result.legalActions.reserve(snapshot.availableActions.size());
-    for (std::size_t index = 0; index < snapshot.availableActions.size(); ++index)
-        result.legalActions.push_back({index, snapshot.availableActions[index]});
-    return result;
+    const std::optional<EncodedAction>& previousAction,
+    const client::ai::AiConfig& config) {
+    return client::ai::makePolicyObservation(
+        snapshot, knowledge, config, previousAction);
 }
 
 RewardComponents rewardFor(const MatchState& state, PlayerId player) {
@@ -220,20 +207,6 @@ void flushPending(const SimulationConfig& config, const EpisodeTelemetry& episod
 
 } // namespace
 
-AgentDecision HeuristicPolicy::select(const AgentObservation& observation,
-    const client::ai::AiConfig& config) {
-    const auto selected = engine_.choose(
-        observation.sourceSnapshot, config, observation.knowledgeState);
-    if (!selected) return {observation.legalActions.size(), "no-action"};
-    const auto it = std::find_if(observation.legalActions.begin(),
-        observation.legalActions.end(), [&](const EncodedAction& legal) {
-            return sameAction(legal.action, *selected);
-        });
-    return {it == observation.legalActions.end() ? observation.legalActions.size()
-        : static_cast<std::size_t>(std::distance(observation.legalActions.begin(), it)),
-        "heuristic"};
-}
-
 AgentDecision RandomPolicy::select(const AgentObservation& observation,
     const client::ai::AiConfig&) {
     if (observation.legalActions.empty()) return {0, "no-action"};
@@ -242,16 +215,9 @@ AgentDecision RandomPolicy::select(const AgentObservation& observation,
 }
 
 const EncodedAction& resolveDecision(const AgentObservation& observation,
-    const AgentDecision& decision) {
-    if (decision.legalActionIndex >= observation.legalActions.size())
-        throw std::runtime_error("AI policy selected an illegal action index");
-    const EncodedAction& selected = observation.legalActions[decision.legalActionIndex];
-    if (selected.legalIndex != decision.legalActionIndex ||
-        selected.legalIndex >= observation.sourceSnapshot.availableActions.size() ||
-        !sameAction(selected.action,
-            observation.sourceSnapshot.availableActions[selected.legalIndex]))
-        throw std::runtime_error("AI legal-action encoding does not match the player-safe action set");
-    return selected;
+    const AgentDecision& decision, const client::ai::AiConfig& config) {
+    return client::ai::resolvePolicyDecision(
+        observation, decision, config);
 }
 
 EpisodeTelemetry runEpisode(const SimulationConfig& config, std::uint64_t episodeIndex) {
@@ -265,6 +231,9 @@ EpisodeTelemetry runEpisode(const SimulationConfig& config, std::uint64_t episod
     std::unordered_map<PlayerId, Agent> agents;
     const AgentSpec specs[] = {config.p1, config.p2};
     const PolicyKind policyKinds[] = {config.p1Policy, config.p2Policy};
+    const std::string* modelPaths[] = {&config.p1ModelPath, &config.p2ModelPath};
+    const std::string context = "sim-" + std::to_string(episode.mapSeed) + "-" +
+        std::to_string(episode.matchSeed);
     if (state.players.size() != 2) throw std::runtime_error("AI simulation currently requires two generated hunters");
     for (std::size_t index = 0; index < state.players.size(); ++index) {
         const PlayerId id = state.players[index].id;
@@ -273,6 +242,12 @@ EpisodeTelemetry runEpisode(const SimulationConfig& config, std::uint64_t episod
         std::unique_ptr<AgentPolicy> policy;
         if (policyKinds[index] == PolicyKind::Random)
             policy = std::make_unique<RandomPolicy>(mix(aiSeed ^ 0x504f4c494359ULL));
+        else if (policyKinds[index] == PolicyKind::Learned)
+            policy = std::make_unique<client::ai::LearnedPolicy>(*modelPaths[index]);
+        else if (policyKinds[index] == PolicyKind::Canary)
+            policy = std::make_unique<CanaryPolicy>(client::ai::RuntimeAiPolicyConfig{
+                client::ai::RuntimeAiPolicyMode::Canary, *modelPaths[index], context,
+                config.canaryTelemetry, config.canaryPercent, config.canaryDifficulties});
         else policy = std::make_unique<HeuristicPolicy>();
         Agent agent;
         agent.requested = specs[index];
@@ -293,11 +268,12 @@ EpisodeTelemetry runEpisode(const SimulationConfig& config, std::uint64_t episod
                 state, playerState.id, previousEvents);
             agent.knowledge.observe(snapshot);
             AgentObservation observation = makeObservation(
-                snapshot, agent.knowledge, agent.previousAction);
+                snapshot, agent.knowledge, agent.previousAction, agent.config);
             flushPending(config, episode, state, agent, observation);
             if (!playerState.alive) continue;
             const AgentDecision decision = agent.policy->select(observation, agent.config);
-            const EncodedAction selected = resolveDecision(observation, decision);
+            const EncodedAction selected = client::ai::resolvePolicyDecision(
+                observation, decision, agent.config);
             if (!coordinator.submitAction(commandFor(playerState.id, selected.action)))
                 throw std::runtime_error("MatchCoordinator rejected a legal AI action");
             agent.knowledge.recordDecision(selected.action);
@@ -344,7 +320,8 @@ EpisodeTelemetry runEpisode(const SimulationConfig& config, std::uint64_t episod
                     state, playerState.id, previousEvents);
                 agent.knowledge.observe(snapshot);
                 flushPending(config, episode, state, agent,
-                    makeObservation(snapshot, agent.knowledge, agent.previousAction));
+                    makeObservation(snapshot, agent.knowledge,
+                        agent.previousAction, agent.config));
             }
         }
         if (state.result.status == MatchStatus::Active && state.round == before)
@@ -360,7 +337,8 @@ EpisodeTelemetry runEpisode(const SimulationConfig& config, std::uint64_t episod
             state, playerState.id, previousEvents);
         agent.knowledge.observe(snapshot);
         flushPending(config, episode, state, agent,
-            makeObservation(snapshot, agent.knowledge, agent.previousAction));
+            makeObservation(snapshot, agent.knowledge,
+                agent.previousAction, agent.config));
     }
 
     episode.status = state.result.status;
@@ -377,6 +355,11 @@ EpisodeTelemetry runEpisode(const SimulationConfig& config, std::uint64_t episod
         metrics.health = player == state.players.end() ? 0 : player->health;
         metrics.arrows = player == state.players.end() ? 0 : player->arrows;
     }
+    if (config.canaryTelemetry != nullptr &&
+        (config.p1Policy == PolicyKind::Canary || config.p2Policy == PolicyKind::Canary))
+        config.canaryTelemetry->recordCanaryOutcome(context, state.result.outcome,
+            state.result.winner, state.result.status == MatchStatus::Completed,
+            state.result.status != MatchStatus::Completed);
     return episode;
 }
 
@@ -435,7 +418,10 @@ std::string episodeJson(const EpisodeTelemetry& episode) {
 }
 
 const char* policyName(PolicyKind policy) noexcept {
-    return policy == PolicyKind::Random ? "random" : "heuristic";
+    if (policy == PolicyKind::Random) return "random";
+    if (policy == PolicyKind::Learned) return "learned";
+    if (policy == PolicyKind::Canary) return "canary";
+    return "heuristic";
 }
 
 std::string observationJson(const AgentObservation& observation) {

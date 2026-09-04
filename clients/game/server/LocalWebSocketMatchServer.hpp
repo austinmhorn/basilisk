@@ -12,6 +12,7 @@
 #include "AccountAuth.hpp"
 #include "basilisk/Types.hpp"
 #include "basilisk/client/PlayerProfile.hpp"
+#include "basilisk/client/ai/RuntimeAiPolicy.hpp"
 
 namespace basilisk::game::server {
 
@@ -51,6 +52,7 @@ struct LocalWebSocketServerConfig {
     std::shared_ptr<SQLiteAccountAuth> authentication;
     std::optional<AccountIdentity> p1AuthenticatedAccount;
     std::optional<AccountIdentity> p2AuthenticatedAccount;
+    client::ai::RuntimeAiPolicyConfig aiPolicy;
 };
 
 // Native-only localhost WebSocket shell for fixed development and assigned

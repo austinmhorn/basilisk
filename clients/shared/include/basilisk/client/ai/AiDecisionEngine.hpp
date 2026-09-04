@@ -45,6 +45,12 @@ struct AiDecisionEvaluation {
 
 [[nodiscard]] AiBehavior resolveBehavior(AiBehavior requested, AiSeed seed);
 
+[[nodiscard]] bool passesAiSafetyFilter(
+    const PlayerRoundSnapshot& snapshot,
+    const AvailableAction& action,
+    const AiConfig& config,
+    const AiKnowledgeState& knowledge);
+
 class AiDecisionEngine {
 public:
     [[nodiscard]] std::optional<AvailableAction> choose(

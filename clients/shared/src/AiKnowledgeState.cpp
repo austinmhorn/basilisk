@@ -154,11 +154,54 @@ void AiKnowledgeState::observe(const PlayerRoundSnapshot& snapshot) {
     updatePitKnowledge(snapshot);
     updateJackalKnowledge(snapshot);
 
+    const std::uint64_t exploration = explorationFingerprint(snapshot);
+    if (!lastExplorationFingerprint_.has_value() ||
+        *lastExplorationFingerprint_ != exploration) {
+        recentExplorationCaves_.clear();
+        explorationVisitCounts_.clear();
+        explorationTraversalCounts_.clear();
+        searchExplorationRevisions_.clear();
+        ++explorationRevision_;
+        turnsSinceExplorationProgress_ = 0;
+        lastExplorationFingerprint_ = exploration;
+    } else {
+        ++turnsSinceExplorationProgress_;
+    }
+    if (moved && previousCave_)
+        ++explorationTraversalCounts_[edgeKey(*previousCave_, snapshot.currentCave)];
+    ++explorationVisitCounts_[snapshot.currentCave];
+    if (recentExplorationCaves_.empty() ||
+        recentExplorationCaves_.back() != snapshot.currentCave) {
+        recentExplorationCaves_.push_back(snapshot.currentCave);
+        if (recentExplorationCaves_.size() > 8)
+            recentExplorationCaves_.erase(recentExplorationCaves_.begin());
+    }
+
     const std::uint64_t fingerprint = materialFingerprint(snapshot);
     if (!lastMaterialFingerprint_.has_value() || *lastMaterialFingerprint_ != fingerprint) {
         ++materialRevision_;
         lastMaterialFingerprint_ = fingerprint;
     }
+}
+
+std::uint64_t AiKnowledgeState::explorationFingerprint(
+    const PlayerRoundSnapshot& snapshot) const {
+    std::uint64_t hash = 0x84222325cbf29ce4ULL;
+    for (const DiscoveredCaveView& cave : snapshot.map.caves) {
+        hashValue(hash, cave.cave);
+        hashValue(hash, cave.surveyed);
+        for (const TunnelView& tunnel : cave.exits) {
+            hashValue(hash, tunnel.id);
+            hashValue(hash, tunnel.destination.value_or(0));
+            hashValue(hash, tunnel.strongColdDraft);
+        }
+    }
+    for (const CaveId cave : knownSafeCaves_) hashValue(hash, cave);
+    for (const CaveId cave : confirmedPitCaves_) hashValue(hash, cave + 0x20000U);
+    for (const AiExitKey exit : confirmedPitExits_)
+        hashValue(hash, ((static_cast<std::uint64_t>(exit.source) << 32U) | exit.tunnel) ^
+            0x8000000000000000ULL);
+    return hash;
 }
 
 void AiKnowledgeState::recordDecision(const AvailableAction& action) {
@@ -175,6 +218,7 @@ void AiKnowledgeState::recordDecision(const AvailableAction& action) {
         lastSearchRevision_.reset();
         return;
     }
+    if (currentCave_) searchExplorationRevisions_[*currentCave_] = explorationRevision_;
     if (lastSearchRevision_ == materialRevision_) ++repeatedSearches_;
     else {
         repeatedSearches_ = 1;
@@ -226,11 +270,17 @@ void AiKnowledgeState::updatePitKnowledge(const PlayerRoundSnapshot& snapshot) {
     for (const PlayerObservation& observation : snapshot.observations) {
         if (observation.type != ObservationType::PitInvestigationSucceeded ||
             !observation.tunnel.has_value()) continue;
-        const AiExitKey exit{snapshot.currentCave, *observation.tunnel};
+        // Investigation can resolve before a Jackal/Clash relocates the hunter.
+        // Tunnel IDs are local to the reported source, not the final position.
+        const CaveId source = observation.cave.value_or(snapshot.currentCave);
+        const AiExitKey exit{source, *observation.tunnel};
         confirmedPitExits_.insert(exit);
-        const auto tunnel = std::find_if(cave->exits.begin(), cave->exits.end(),
+        const auto sourceView = std::find_if(snapshot.map.caves.begin(), snapshot.map.caves.end(),
+            [&](const DiscoveredCaveView& candidate) { return candidate.cave == source; });
+        if (sourceView == snapshot.map.caves.end()) continue;
+        const auto tunnel = std::find_if(sourceView->exits.begin(), sourceView->exits.end(),
             [&](const TunnelView& candidate) { return candidate.id == *observation.tunnel; });
-        if (tunnel != cave->exits.end() && tunnel->destination.has_value())
+        if (tunnel != sourceView->exits.end() && tunnel->destination.has_value())
             confirmedPitCaves_.insert(*tunnel->destination);
     }
     for (const TunnelView& tunnel : cave->exits) {
@@ -297,6 +347,9 @@ bool AiKnowledgeState::isKnownSafe(CaveId cave) const { return knownSafeCaves_.c
 bool AiKnowledgeState::isPitCandidate(CaveId cave) const { return pitCandidateCaves_.contains(cave); }
 bool AiKnowledgeState::isConfirmedPit(CaveId cave) const { return confirmedPitCaves_.contains(cave); }
 bool AiKnowledgeState::isConfirmedPitExit(AiExitKey exit) const { return confirmedPitExits_.contains(exit); }
+bool AiKnowledgeState::isPitCandidateExit(AiExitKey exit) const {
+    return pitCandidateExits_.contains(exit);
+}
 bool AiKnowledgeState::isDisprovenBasiliskTarget(
     CaveId source, const AvailableAction& action) const {
     if (action.targetCave && disprovenBasiliskCaves_.contains(*action.targetCave))
@@ -329,6 +382,41 @@ std::size_t AiKnowledgeState::repeatedSearchCount() const noexcept {
     return lastSearchRevision_ == materialRevision_ ? repeatedSearches_ : 0;
 }
 std::uint64_t AiKnowledgeState::materialRevision() const noexcept { return materialRevision_; }
+
+std::size_t AiKnowledgeState::explorationCyclePenalty(CaveId destination) const {
+    if (recentExplorationCaves_.size() < 2) return 0;
+    std::size_t penalty = 0;
+    for (std::size_t index = 0; index + 1 < recentExplorationCaves_.size(); ++index) {
+        if (recentExplorationCaves_[index] != destination) continue;
+        // Repeated visits make a first hop less attractive; an immediate
+        // reversal receives the strongest bounded penalty. The route remains
+        // legal when it is the only route to a frontier.
+        ++penalty;
+        if (index + 2 == recentExplorationCaves_.size())
+            penalty += recentExplorationCaves_.size();
+    }
+    return penalty;
+}
+
+std::size_t AiKnowledgeState::turnsSinceExplorationProgress() const noexcept {
+    return turnsSinceExplorationProgress_;
+}
+
+std::size_t AiKnowledgeState::explorationVisitCount(CaveId cave) const {
+    const auto found = explorationVisitCounts_.find(cave);
+    return found == explorationVisitCounts_.end() ? 0 : found->second;
+}
+
+std::size_t AiKnowledgeState::explorationTraversalCount(CaveId a, CaveId b) const {
+    const auto found = explorationTraversalCounts_.find(edgeKey(a, b));
+    return found == explorationTraversalCounts_.end() ? 0 : found->second;
+}
+
+bool AiKnowledgeState::searchedWithoutExplorationProgress(CaveId cave) const {
+    const auto found = searchExplorationRevisions_.find(cave);
+    return found != searchExplorationRevisions_.end() &&
+        found->second == explorationRevision_;
+}
 
 bool AiKnowledgeState::temporarilyAvoids(CaveId a, CaveId b, RoundNumber round) const {
     const auto found = avoidedKnownEdgesUntil_.find(edgeKey(a, b));

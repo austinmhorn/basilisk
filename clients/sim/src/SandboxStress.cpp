@@ -10,8 +10,8 @@
 
 #include "basilisk/MatchState.hpp"
 #include "basilisk/client/SandboxConfiguration.hpp"
-#include "basilisk/client/ai/AiDecisionEngine.hpp"
 #include "basilisk/client/ai/AiKnowledgeState.hpp"
+#include "basilisk/client/ai/AiPolicy.hpp"
 #include "basilisk/systems/MatchCoordinator.hpp"
 #include "basilisk/systems/SnapshotSystem.hpp"
 #include "basilisk/world/MapGenerator.hpp"
@@ -117,7 +117,7 @@ void verifyState(const MatchState& state, const MatchCoordinator& coordinator,
 
 struct StressAgent {
     client::ai::AiConfig config;
-    client::ai::AiDecisionEngine engine;
+    client::ai::HeuristicPolicy policy;
     client::ai::AiKnowledgeState knowledge;
     std::optional<RoundNumber> decisionRound;
 };
@@ -185,8 +185,8 @@ SandboxStressCountResult runCount(const SandboxStressConfig& config,
                 const PlayerRoundSnapshot snapshot = SnapshotSystem::buildForPlayer(
                     state, player.id, previousEvents);
                 agent.knowledge.observe(snapshot);
-                const auto action = agent.engine.choose(
-                    snapshot, agent.config, agent.knowledge);
+                const auto action = client::ai::choosePolicyAction(
+                    agent.policy, snapshot, agent.config, agent.knowledge);
                 require(action.has_value(), playerCount, episode, state.round,
                     "living AI has no legal decision");
                 const bool legal = std::find_if(snapshot.availableActions.begin(),

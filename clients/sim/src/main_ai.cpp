@@ -41,8 +41,10 @@ basilisk::sim::BenchmarkSuite suite(std::string_view value) {
 }
 basilisk::sim::PolicyKind policy(std::string_view value) {
     if (value == "heuristic") return basilisk::sim::PolicyKind::Heuristic;
+    if (value == "learned") return basilisk::sim::PolicyKind::Learned;
     if (value == "random") return basilisk::sim::PolicyKind::Random;
-    throw std::invalid_argument("policy must be heuristic or random");
+    if (value == "canary") return basilisk::sim::PolicyKind::Canary;
+    throw std::invalid_argument("policy must be heuristic, learned, random, or canary");
 }
 
 class JsonlTransitionSink final : public basilisk::sim::TransitionSink {
@@ -66,15 +68,20 @@ int main(int argc, char** argv) {
         std::string outputPath;
         std::string transitionsOutput;
         std::string benchmarkOutput;
+        std::string canaryTelemetryOutput;
         std::optional<basilisk::sim::BenchmarkSuite> benchmarkSuite;
+        std::optional<std::uint64_t> episodeIndex;
         std::uint64_t matchesPerOrientation = 2000;
         for (int i = 1; i < argc; ++i) {
             const std::string_view option = argv[i];
             if (option == "--help") {
-                std::cout << "Usage: BasiliskAiSim [--matches N] [--seed N] [--output episodes.jsonl]\n"
+                std::cout << "Usage: BasiliskAiSim [--matches N | --episode-index N] [--seed N] [--output episodes.jsonl]\n"
                     "  [--p1-difficulty easy|medium|hard] [--p1-behavior balanced|explorer|aggressive|objective|survivalist|opportunist|random]\n"
                     "  [--p2-difficulty easy|medium|hard] [--p2-behavior ...]\n"
-                    "  [--p1-policy heuristic|random] [--p2-policy heuristic|random]\n"
+                    "  [--p1-policy heuristic|learned|random|canary] [--p2-policy heuristic|learned|random|canary]\n"
+                    "  [--p1-model policy.model] [--p2-model policy.model]\n"
+                    "  [--ai-canary-percent 0-100] [--ai-canary-difficulties medium,hard]\n"
+                    "  [--ai-canary-telemetry canary.jsonl]\n"
                     "  [--transitions-output transitions.jsonl]\n"
                     "Benchmark: BasiliskAiSim --benchmark difficulty|hard-behaviors|all\n"
                     "  [--matches-per-orientation N] [--seed N] [--benchmark-output results.csv]\n";
@@ -83,6 +90,7 @@ int main(int argc, char** argv) {
             if (i + 1 >= argc) throw std::invalid_argument(std::string(option) + " requires a value");
             const std::string_view value = argv[++i];
             if (option == "--matches") config.matches = number(value, option);
+            else if (option == "--episode-index") episodeIndex = number(value, option);
             else if (option == "--seed") config.seed = number(value, option);
             else if (option == "--output") outputPath = value;
             else if (option == "--transitions-output") transitionsOutput = value;
@@ -96,9 +104,26 @@ int main(int argc, char** argv) {
             else if (option == "--p2-behavior") config.p2.behavior = behavior(value);
             else if (option == "--p1-policy") config.p1Policy = policy(value);
             else if (option == "--p2-policy") config.p2Policy = policy(value);
+            else if (option == "--p1-model") config.p1ModelPath = value;
+            else if (option == "--p2-model") config.p2ModelPath = value;
+            else if (option == "--ai-canary-percent") {
+                const auto percent = number(value, option);
+                if (percent > 100) throw std::invalid_argument(
+                    "--ai-canary-percent must be between 0 and 100");
+                config.canaryPercent = static_cast<std::uint8_t>(percent);
+            }
+            else if (option == "--ai-canary-difficulties") {
+                const auto difficulties = parseRuntimeAiCanaryDifficulties(value);
+                if (!difficulties) throw std::invalid_argument(
+                    "--ai-canary-difficulties must be a comma-separated subset of easy,medium,hard");
+                config.canaryDifficulties = *difficulties;
+            }
+            else if (option == "--ai-canary-telemetry") canaryTelemetryOutput = value;
             else throw std::invalid_argument("unknown option: " + std::string(option));
         }
         if (benchmarkSuite) {
+            if (episodeIndex)
+                throw std::invalid_argument("--episode-index is unavailable in aggregate benchmark mode");
             if (matchesPerOrientation == 0)
                 throw std::invalid_argument("--matches-per-orientation must be greater than zero");
             if (!outputPath.empty())
@@ -129,7 +154,10 @@ int main(int argc, char** argv) {
             basilisk::sim::writeBenchmarkSummary(std::cout, name, config.seed, results);
             return 0;
         }
-        if (config.matches == 0) throw std::invalid_argument("--matches must be greater than zero");
+        if (!episodeIndex && config.matches == 0)
+            throw std::invalid_argument("--matches must be greater than zero");
+        if (!canaryTelemetryOutput.empty())
+            config.canaryTelemetry = std::make_shared<AiShadowTelemetry>(canaryTelemetryOutput);
         std::unique_ptr<JsonlTransitionSink> transitionSink;
         if (!transitionsOutput.empty()) {
             transitionSink = std::make_unique<JsonlTransitionSink>(transitionsOutput);
@@ -142,7 +170,10 @@ int main(int argc, char** argv) {
         }
         basilisk::sim::BatchAggregate aggregate;
         const auto start = std::chrono::steady_clock::now();
-        for (std::uint64_t index = 0; index < config.matches; ++index) {
+        const std::uint64_t firstEpisode = episodeIndex.value_or(0);
+        const std::uint64_t episodeCount = episodeIndex ? 1 : config.matches;
+        for (std::uint64_t offset = 0; offset < episodeCount; ++offset) {
+            const std::uint64_t index = firstEpisode + offset;
             auto episode = basilisk::sim::runEpisode(config, index);
             aggregate.add(episode);
             if (episodes) episodes << basilisk::sim::episodeJson(episode) << '\n';
