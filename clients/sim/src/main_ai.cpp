@@ -70,11 +70,12 @@ int main(int argc, char** argv) {
         std::string benchmarkOutput;
         std::string canaryTelemetryOutput;
         std::optional<basilisk::sim::BenchmarkSuite> benchmarkSuite;
+        std::optional<std::uint64_t> episodeIndex;
         std::uint64_t matchesPerOrientation = 2000;
         for (int i = 1; i < argc; ++i) {
             const std::string_view option = argv[i];
             if (option == "--help") {
-                std::cout << "Usage: BasiliskAiSim [--matches N] [--seed N] [--output episodes.jsonl]\n"
+                std::cout << "Usage: BasiliskAiSim [--matches N | --episode-index N] [--seed N] [--output episodes.jsonl]\n"
                     "  [--p1-difficulty easy|medium|hard] [--p1-behavior balanced|explorer|aggressive|objective|survivalist|opportunist|random]\n"
                     "  [--p2-difficulty easy|medium|hard] [--p2-behavior ...]\n"
                     "  [--p1-policy heuristic|learned|random|canary] [--p2-policy heuristic|learned|random|canary]\n"
@@ -89,6 +90,7 @@ int main(int argc, char** argv) {
             if (i + 1 >= argc) throw std::invalid_argument(std::string(option) + " requires a value");
             const std::string_view value = argv[++i];
             if (option == "--matches") config.matches = number(value, option);
+            else if (option == "--episode-index") episodeIndex = number(value, option);
             else if (option == "--seed") config.seed = number(value, option);
             else if (option == "--output") outputPath = value;
             else if (option == "--transitions-output") transitionsOutput = value;
@@ -120,6 +122,8 @@ int main(int argc, char** argv) {
             else throw std::invalid_argument("unknown option: " + std::string(option));
         }
         if (benchmarkSuite) {
+            if (episodeIndex)
+                throw std::invalid_argument("--episode-index is unavailable in aggregate benchmark mode");
             if (matchesPerOrientation == 0)
                 throw std::invalid_argument("--matches-per-orientation must be greater than zero");
             if (!outputPath.empty())
@@ -150,7 +154,8 @@ int main(int argc, char** argv) {
             basilisk::sim::writeBenchmarkSummary(std::cout, name, config.seed, results);
             return 0;
         }
-        if (config.matches == 0) throw std::invalid_argument("--matches must be greater than zero");
+        if (!episodeIndex && config.matches == 0)
+            throw std::invalid_argument("--matches must be greater than zero");
         if (!canaryTelemetryOutput.empty())
             config.canaryTelemetry = std::make_shared<AiShadowTelemetry>(canaryTelemetryOutput);
         std::unique_ptr<JsonlTransitionSink> transitionSink;
@@ -165,7 +170,10 @@ int main(int argc, char** argv) {
         }
         basilisk::sim::BatchAggregate aggregate;
         const auto start = std::chrono::steady_clock::now();
-        for (std::uint64_t index = 0; index < config.matches; ++index) {
+        const std::uint64_t firstEpisode = episodeIndex.value_or(0);
+        const std::uint64_t episodeCount = episodeIndex ? 1 : config.matches;
+        for (std::uint64_t offset = 0; offset < episodeCount; ++offset) {
+            const std::uint64_t index = firstEpisode + offset;
             auto episode = basilisk::sim::runEpisode(config, index);
             aggregate.add(episode);
             if (episodes) episodes << basilisk::sim::episodeJson(episode) << '\n';

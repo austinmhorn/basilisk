@@ -178,6 +178,11 @@ if(TARGET BasiliskAiSimulation)
     target_compile_definitions(BasiliskAiSimulationTests PRIVATE
         BASILISK_TEST_LEARNED_MODEL="${CMAKE_SOURCE_DIR}/clients/shared/models/heuristic-imitation-v3.model")
     add_test(NAME BasiliskAiSimulationTests COMMAND BasiliskAiSimulationTests)
+    add_test(NAME BasiliskAiSimEpisodeReplayTests
+        COMMAND ${CMAKE_COMMAND}
+            -DAI_SIM=$<TARGET_FILE:BasiliskAiSim>
+            -DTEST_OUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/ai_sim_episode_replay_test.cmake)
 
     add_executable(BasiliskSandboxStressTests sandbox_stress_tests.cpp)
     target_link_libraries(BasiliskSandboxStressTests PRIVATE Basilisk::AiSimulation)
